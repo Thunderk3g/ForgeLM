@@ -10,6 +10,7 @@ import { StatusCard } from './components/StatusCard';
 import { ProgressBar } from './components/ProgressBar';
 import { LogViewer } from './components/LogViewer';
 import { MetricsChart } from './components/MetricsChart';
+import { ActiveSessionsPanel } from './components/ActiveSessionsPanel';
 
 // API
 import { 
@@ -55,6 +56,7 @@ function App() {
   const [streamConnection, setStreamConnection] = useState<{ close: () => void } | null>(null);
   const [activeSessions, setActiveSessions] = useState<Record<string, any>>({});
   const [showActiveSessionsModal, setShowActiveSessionsModal] = useState<boolean>(false);
+  const [activeSessionsRefresh, setActiveSessionsRefresh] = useState(0);
   const [loading, setLoading] = useState({
     model: false,
     data: false,
@@ -272,6 +274,10 @@ function App() {
         setTrainingStatus({ status: 'running', message: response.message });
         setLogs([]);
         setMetrics([]);
+        
+        // Trigger refresh of active sessions
+        setActiveSessionsRefresh(prev => prev + 1);
+        
         toast.success('Training started!');
       } else {
         toast.error(response.message);
