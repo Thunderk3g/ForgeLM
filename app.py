@@ -2,6 +2,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from pathlib import Path
 from model_selection import select_model, SelectModelRequest, scan_available_models
 from data_preparation import prepare_data, PrepareDataRequest  
 from fine_tuning import fine_tune, FineTuneRequest, TrainingStatus, task_log_queues, task_completion_flags, get_active_sessions

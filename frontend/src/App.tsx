@@ -57,6 +57,8 @@ function App() {
   const [activeSessions, setActiveSessions] = useState<Record<string, any>>({});
   const [showActiveSessionsModal, setShowActiveSessionsModal] = useState<boolean>(false);
   const [activeSessionsRefresh, setActiveSessionsRefresh] = useState(0);
+  const [showActiveSessions, setShowActiveSessions] = useState(true);
+  const [viewingLogsTaskId, setViewingLogsTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState({
     model: false,
     data: false,
@@ -120,42 +122,42 @@ function App() {
     };
   }, []);
 
-  // SSE streaming for training logs
-  useEffect(() => {
-    if (currentTaskId && trainingStatus?.status === 'running') {
-      // Close existing connection if any
-      if (streamConnection) {
-        streamConnection.close();
-      }
+  // Function to start log streaming for any task
+  const startLogStreaming = (taskId: string, updateStatus: boolean = true) => {
+    // Close existing connection if any
+    if (streamConnection) {
+      streamConnection.close();
+    }
       
-      const connection = streamTrainingLogs(
-        currentTaskId,
-        // onLog
-        (logEntry: LogEntry) => {
-          setLogs(prev => [...prev, logEntry]);
+    const connection = streamTrainingLogs(
+      taskId,
+      // onLog
+      (logEntry: LogEntry) => {
+        setLogs(prev => [...prev, logEntry]);
+        
+        // Update metrics if log contains training data
+        if (logEntry.type === 'training' && logEntry.step && logEntry.loss !== undefined) {
+          const newMetric: MetricData = {
+            epoch: logEntry.epoch ?? 0,
+            step: logEntry.step,
+            loss: logEntry.loss ?? undefined,
+            eval_loss: undefined, // Will be updated by status events
+            learning_rate: logEntry.learning_rate ?? undefined,
+          };
           
-          // Update metrics if log contains training data
-          if (logEntry.type === 'training' && logEntry.step && logEntry.loss !== undefined) {
-            const newMetric: MetricData = {
-              epoch: logEntry.epoch ?? 0,
-              step: logEntry.step,
-              loss: logEntry.loss ?? undefined,
-              eval_loss: undefined, // Will be updated by status events
-              learning_rate: logEntry.learning_rate ?? undefined,
-            };
-            
-            setMetrics(prev => {
-              const exists = prev.find(m => m.step === newMetric.step);
-              if (exists) return prev;
-              return [...prev, newMetric];
-            });
-          }
-        },
-        // onStatus
-        (status: TrainingStatus) => {
+          setMetrics(prev => {
+            const exists = prev.find(m => m.step === newMetric.step);
+            if (exists) return prev;
+            return [...prev, newMetric];
+          });
+        }
+      },
+      // onStatus - only update status if this is the current task
+      (status: TrainingStatus) => {
+        if (updateStatus) {
           // Ensure status has the required fields with fallbacks
           const validatedStatus: TrainingStatus = {
-            task_id: status.task_id || currentTaskId || '',
+            task_id: status.task_id || taskId || '',
             status: status.status || 'pending',
             progress: status.progress || 'No progress information',
             current_step: status.current_step || null,
@@ -167,12 +169,16 @@ function App() {
             message: status.message || null
           };
           setTrainingStatus(validatedStatus);
-        },
+        }
+      },
         // onComplete
         () => {
           console.log('Training stream completed');
           setIsStreamConnected(false);
           setCurrentTaskId(null);
+          
+          // Refresh active sessions to remove completed session
+          setActiveSessionsRefresh(prev => prev + 1);
         },
         // onError
         (error: string) => {
@@ -180,7 +186,7 @@ function App() {
           toast.error(`Streaming error: ${error}`);
           setIsStreamConnected(false);
           // Fall back to polling on error
-          fallbackToPolling(currentTaskId);
+          fallbackToPolling(taskId);
         },
         // onConnect
         () => {
@@ -189,12 +195,13 @@ function App() {
         }
       );
       
-      setStreamConnection(connection);
-      
-      return () => {
-        connection.close();
-        setIsStreamConnected(false);
-      };
+    setStreamConnection(connection);
+  };
+
+  // SSE streaming for current training task
+  useEffect(() => {
+    if (currentTaskId && trainingStatus?.status === 'running') {
+      startLogStreaming(currentTaskId, true);
     } else {
       // Clean up connection when not training
       if (streamConnection) {
@@ -203,6 +210,13 @@ function App() {
         setIsStreamConnected(false);
       }
     }
+    
+    return () => {
+      if (streamConnection) {
+        streamConnection.close();
+        setIsStreamConnected(false);
+      }
+    };
   }, [currentTaskId, trainingStatus?.status]);
   
   // Fallback polling function in case SSE fails
@@ -324,7 +338,22 @@ function App() {
     // Start streaming logs
     startLogStreaming(taskId);
     
-    toast.success(`Reconnected to training session ${taskId.slice(0, 8)}...`);
+    // Trigger refresh of active sessions to update UI
+    setActiveSessionsRefresh(prev => prev + 1);
+    
+    toast.success(`Connected to training session ${taskId.slice(0, 8)}...`);
+  };
+
+  const handleViewLogs = (taskId: string) => {
+    // Clear current logs and set new viewing task
+    setLogs([]);
+    setMetrics([]);
+    setViewingLogsTaskId(taskId);
+    
+    // Start streaming logs for the selected task (don't update training status)
+    startLogStreaming(taskId, false);
+    
+    toast.success(`Viewing logs for session ${taskId.slice(0, 8)}...`);
   };
 
   return (
@@ -348,19 +377,34 @@ function App() {
               <Brain className="w-8 h-8 text-blue-400" />
               <h1 className="text-2xl font-bold text-gradient">LLMForge Dashboard</h1>
             </div>
-            <div className="flex items-center space-x-2">
-              <Activity className={`w-5 h-5 ${
-                apiStatus === 'online' ? 'status-online' : 
-                apiStatus === 'offline' ? 'status-error' : 
-                'status-warning'
-              }`} />
-              <span className={`text-sm font-medium ${
-                apiStatus === 'online' ? 'text-green-300' : 
-                apiStatus === 'offline' ? 'text-red-300' : 
-                'text-yellow-300'
-              }`}>
-                API {apiStatus === 'checking' ? 'Checking...' : apiStatus}
-              </span>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={() => setShowActiveSessions(!showActiveSessions)}
+                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                  showActiveSessions 
+                    ? 'bg-primary/20 text-primary border border-primary/30' 
+                    : 'bg-accent text-accent-foreground border border-border hover:bg-accent/80'
+                }`}
+                title="Toggle Active Sessions Panel"
+              >
+                <Activity className="w-4 h-4 inline mr-1" />
+                Active Training
+              </button>
+              
+              <div className="flex items-center space-x-2">
+                <Activity className={`w-5 h-5 ${
+                  apiStatus === 'online' ? 'status-online' : 
+                  apiStatus === 'offline' ? 'status-error' : 
+                  'status-warning'
+                }`} />
+                <span className={`text-sm font-medium ${
+                  apiStatus === 'online' ? 'text-green-300' : 
+                  apiStatus === 'offline' ? 'text-red-300' : 
+                  'text-yellow-300'
+                }`}>
+                  API {apiStatus === 'checking' ? 'Checking...' : apiStatus}
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -382,7 +426,7 @@ function App() {
                   label="Overall Progress" 
                 />
                 
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-sm">
                   <div>
                     <span className="text-muted-foreground">Status:</span>
                     <span className={`ml-2 font-medium capitalize ${
@@ -408,6 +452,12 @@ function App() {
                     <div>
                       <span className="text-muted-foreground">Loss:</span>
                       <span className="ml-2 font-medium font-mono text-green-400">{trainingStatus.loss.toFixed(4)}</span>
+                    </div>
+                  )}
+                  {trainingStatus.learning_rate !== undefined && (
+                    <div>
+                      <span className="text-muted-foreground">Learning Rate:</span>
+                      <span className="ml-2 font-medium font-mono text-blue-400">{trainingStatus.learning_rate.toExponential(2)}</span>
                     </div>
                   )}
                 </div>
@@ -466,6 +516,16 @@ function App() {
               )}
             </div>
 
+            {/* Active Training Sessions Panel */}
+            {showActiveSessions && (
+              <ActiveSessionsPanel 
+                onConnectToSession={connectToActiveSession}
+                onViewLogs={handleViewLogs}
+                currentTaskId={currentTaskId}
+                refreshTrigger={activeSessionsRefresh}
+              />
+            )}
+
             {/* Metrics Chart */}
             {metrics.length > 0 && (
               <MetricsChart data={metrics} />
@@ -474,7 +534,13 @@ function App() {
             {/* Enhanced Terminal Logs - Always show for all LLM operations */}
             <LogViewer 
               logs={logs.map(log => `[${log.timestamp}] ${log.type.toUpperCase()}: ${log.message}`)} 
-              title="LLM Training Logs"
+              title={
+                viewingLogsTaskId ? 
+                  `Training Logs - Session ${viewingLogsTaskId.slice(0, 8)}...` : 
+                  currentTaskId ? 
+                    `Training Logs - Session ${currentTaskId.slice(0, 8)}...` :
+                    "LLM Training Logs"
+              }
               maxHeight="600px"
               isConnected={isStreamConnected}
               onReconnect={() => {

@@ -10,19 +10,23 @@ import {
   AlertCircle,
   CheckCircle,
   XCircle,
-  ArrowRight
+  ArrowRight,
+  FileText,
+  ExternalLink
 } from 'lucide-react';
 import { getActiveTrainingSessions } from '../services/api';
 import type { ActiveSession, ActiveSessionsResponse } from '../types/api';
 
 interface ActiveSessionsPanelProps {
   onConnectToSession: (taskId: string) => void;
+  onViewLogs?: (taskId: string) => void;
   currentTaskId?: string | null;
   refreshTrigger?: number;
 }
 
 export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   onConnectToSession,
+  onViewLogs,
   currentTaskId,
   refreshTrigger = 0
 }) => {
@@ -210,6 +214,18 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                         <span className="px-2 py-1 text-xs bg-primary/20 text-primary rounded-full">
                           Connected
                         </span>
+                      )}
+                      
+                      {/* View Logs Button - available for all sessions */}
+                      {onViewLogs && (
+                        <button
+                          onClick={() => onViewLogs(taskId)}
+                          className="flex items-center space-x-1 px-2 py-1 text-xs bg-accent hover:bg-accent/80 text-accent-foreground rounded-md transition-colors"
+                          title="View logs for this session"
+                        >
+                          <FileText className="w-3 h-3" />
+                          <span>Logs</span>
+                        </button>
                       )}
                       
                       {!isCurrentSession && isRunning && (
