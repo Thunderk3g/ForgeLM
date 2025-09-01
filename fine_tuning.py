@@ -1,7 +1,19 @@
-# CRITICAL: Import Unsloth FIRST
+# CRITICAL: Import Unsloth FIRST before any transformers imports
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+
+# Import Unsloth immediately after environment setup
+try:
+    import unsloth
+    from unsloth import FastLanguageModel, is_bfloat16_supported
+    UNSLOTH_AVAILABLE = True
+    print(f"🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.")
+    print(f"🦥 Unsloth Zoo will now patch everything to make training faster!")
+    print(f"Unsloth imported successfully (v{unsloth.__version__})")
+except (ImportError, NotImplementedError) as e:
+    UNSLOTH_AVAILABLE = False
+    print(f"WARNING: Unsloth not available ({e})")
 
 # Kubernetes and container optimization settings
 KUBERNETES_MODE = os.environ.get("KUBERNETES_MODE", "false").lower() == "true"
@@ -59,14 +71,7 @@ if KUBERNETES_MODE:
     atexit.register(cleanup_resources)
     print("Kubernetes graceful shutdown handlers registered")
 
-try:
-    import unsloth
-    from unsloth import FastLanguageModel, is_bfloat16_supported
-    UNSLOTH_AVAILABLE = True
-    print(f"Unsloth imported successfully (v{unsloth.__version__})")
-except (ImportError, NotImplementedError) as e:
-    UNSLOTH_AVAILABLE = False
-    print(f"WARNING: Unsloth not available ({e})")
+# Unsloth already imported at top of file for optimal performance
 
 import torch
 import gc
@@ -100,6 +105,78 @@ logger = logging.getLogger(__name__)
 task_log_queues = defaultdict(queue.Queue)
 task_completion_flags = defaultdict(bool)
 
+# Active training sessions storage
+ACTIVE_SESSIONS_FILE = Path("logs") / "active_sessions.json"
+
+def load_active_sessions():
+    """Load active training sessions from persistent storage."""
+    try:
+        if ACTIVE_SESSIONS_FILE.exists():
+            with open(ACTIVE_SESSIONS_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Error loading active sessions: {e}")
+    return {}
+
+def save_active_sessions(sessions):
+    """Save active training sessions to persistent storage."""
+    try:
+        ACTIVE_SESSIONS_FILE.parent.mkdir(exist_ok=True)
+        with open(ACTIVE_SESSIONS_FILE, "w") as f:
+            json.dump(sessions, f, indent=2)
+    except Exception as e:
+        print(f"Error saving active sessions: {e}")
+
+def register_active_session(task_id: str, request_data: dict):
+    """Register a new active training session."""
+    sessions = load_active_sessions()
+    sessions[task_id] = {
+        "task_id": task_id,
+        "status": "running",
+        "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+        "request_data": request_data,
+        "last_activity": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    }
+    save_active_sessions(sessions)
+
+def update_session_activity(task_id: str):
+    """Update last activity time for a session."""
+    sessions = load_active_sessions()
+    if task_id in sessions:
+        sessions[task_id]["last_activity"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        save_active_sessions(sessions)
+
+def remove_active_session(task_id: str):
+    """Remove a completed/failed training session."""
+    sessions = load_active_sessions()
+    if task_id in sessions:
+        del sessions[task_id]
+        save_active_sessions(sessions)
+
+def get_active_sessions():
+    """Get all active training sessions."""
+    sessions = load_active_sessions()
+    # Clean up stale sessions (older than 24 hours without activity)
+    current_time = time.time()
+    stale_sessions = []
+    
+    for task_id, session in sessions.items():
+        try:
+            last_activity = time.strptime(session["last_activity"], "%Y-%m-%d %H:%M:%S")
+            last_activity_timestamp = time.mktime(last_activity)
+            if current_time - last_activity_timestamp > 24 * 60 * 60:  # 24 hours
+                stale_sessions.append(task_id)
+        except Exception:
+            stale_sessions.append(task_id)  # Remove sessions with invalid timestamps
+    
+    for task_id in stale_sessions:
+        del sessions[task_id]
+    
+    if stale_sessions:
+        save_active_sessions(sessions)
+    
+    return sessions
+
 print("Environment setup complete:")
 print(f"   PyTorch version: {torch.__version__}")
 print(f"   CUDA available: {torch.cuda.is_available()}")
@@ -129,11 +206,14 @@ class TrainingStatus(BaseModel):
     progress: str
     current_step: Optional[int] = None
     total_steps: Optional[int] = None
-    current_epoch: Optional[int] = None
+    current_epoch: Optional[float] = None
     total_epochs: Optional[int] = None
     loss: Optional[float] = None
     learning_rate: Optional[float] = None
+    progress_percentage: Optional[float] = None
     message: Optional[str] = None
+    started_at: Optional[str] = None
+    updated_at: Optional[str] = None
     
     def save(self):
         """Save status to file for persistence"""
@@ -144,6 +224,7 @@ class TrainingStatus(BaseModel):
     
     def update(self, status: str = None, progress: str = None, **kwargs):
         """Update status fields"""
+        import time
         if status:
             self.status = status
         if progress:
@@ -151,6 +232,8 @@ class TrainingStatus(BaseModel):
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        # Always update the timestamp
+        self.updated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         self.save()
 
 
@@ -161,18 +244,36 @@ class StreamingLoggingCallback(TrainerCallback):
         self.status = status
         self.task_id = status.task_id
         
-    def _add_log_to_queue(self, message: str, log_type: str = "info"):
+    def _add_log_to_queue(self, message, log_type: str = "info"):
         """Add a log message to the streaming queue."""
         timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        formatted_log = {
-            "timestamp": timestamp,
-            "type": log_type,
-            "message": message,
-            "step": getattr(self.status, 'current_step', None),
-            "epoch": getattr(self.status, 'current_epoch', None),
-            "loss": getattr(self.status, 'loss', None),
-            "learning_rate": getattr(self.status, 'learning_rate', None)
-        }
+        
+        # Handle both simple string messages and structured log objects
+        if isinstance(message, dict) and "message" in message:
+            # Structured log with metrics
+            formatted_log = {
+                "timestamp": timestamp,
+                "type": log_type,
+                "message": message["message"],
+                "step": getattr(self.status, 'current_step', None),
+                "epoch": getattr(self.status, 'current_epoch', None),
+                "loss": getattr(self.status, 'loss', None),
+                "learning_rate": getattr(self.status, 'learning_rate', None),
+                "progress_percentage": getattr(self.status, 'progress_percentage', None),
+                "metrics": message.get("metrics", {})
+            }
+        else:
+            # Simple string message
+            formatted_log = {
+                "timestamp": timestamp,
+                "type": log_type,
+                "message": str(message),
+                "step": getattr(self.status, 'current_step', None),
+                "epoch": getattr(self.status, 'current_epoch', None),
+                "loss": getattr(self.status, 'loss', None),
+                "learning_rate": getattr(self.status, 'learning_rate', None),
+                "progress_percentage": getattr(self.status, 'progress_percentage', None)
+            }
         
         try:
             task_log_queues[self.task_id].put(formatted_log)
@@ -193,25 +294,64 @@ class StreamingLoggingCallback(TrainerCallback):
         if logs is not None:
             # Update status with training metrics
             updates = {}
-            if 'loss' in logs:
-                updates['loss'] = logs['loss']
-            if 'learning_rate' in logs:
-                updates['learning_rate'] = logs['learning_rate']
-            if 'epoch' in logs:
-                updates['current_epoch'] = int(logs['epoch']) if logs['epoch'] else None
-                updates['total_epochs'] = args.num_train_epochs
-            if 'step' in logs or hasattr(state, 'global_step'):
-                updates['current_step'] = state.global_step
-                updates['total_steps'] = state.max_steps
             
-            # Create progress message
+            # Extract training metrics
+            if 'loss' in logs:
+                updates['loss'] = float(logs['loss'])
+            if 'learning_rate' in logs:
+                updates['learning_rate'] = float(logs['learning_rate'])
+            if 'epoch' in logs:
+                updates['current_epoch'] = float(logs['epoch'])
+                updates['total_epochs'] = int(args.num_train_epochs)
+            
+            # Handle step progress - check multiple possible sources
+            current_step = None
+            if 'step' in logs:
+                current_step = int(logs['step'])
+            elif hasattr(state, 'global_step'):
+                current_step = int(state.global_step)
+            
+            if current_step is not None:
+                updates['current_step'] = current_step
+                
+            # Calculate total steps properly
+            total_steps = None
+            if hasattr(state, 'max_steps') and state.max_steps > 0:
+                total_steps = int(state.max_steps)
+            elif hasattr(args, 'max_steps') and args.max_steps and args.max_steps > 0:
+                total_steps = int(args.max_steps)
+            elif hasattr(state, 'num_train_epochs') and hasattr(state, 'train_dataloader'):
+                # Calculate from epochs and dataset size if max_steps not set
+                try:
+                    steps_per_epoch = len(state.train_dataloader)
+                    total_steps = int(steps_per_epoch * args.num_train_epochs)
+                except:
+                    pass
+                    
+            if total_steps is not None and total_steps > 0:
+                updates['total_steps'] = total_steps
+            
+            # Calculate progress percentage
+            progress_percentage = 0.0
+            if current_step and updates.get('total_steps'):
+                progress_percentage = min(100.0, (current_step / updates['total_steps']) * 100)
+            elif updates.get('current_epoch') and updates.get('total_epochs'):
+                progress_percentage = min(100.0, (updates['current_epoch'] / updates['total_epochs']) * 100)
+                
+            updates['progress_percentage'] = round(progress_percentage, 2)
+            
+            # Create comprehensive progress message
             progress_parts = []
+            if current_step and updates.get('total_steps'):
+                progress_parts.append(f"Step: {current_step}/{updates['total_steps']}")
+            if 'current_epoch' in updates and 'total_epochs' in updates:
+                progress_parts.append(f"Epoch: {updates['current_epoch']:.2f}/{updates['total_epochs']}")
             if 'loss' in logs:
                 progress_parts.append(f"Loss: {logs['loss']:.4f}")
             if 'learning_rate' in logs:
                 progress_parts.append(f"LR: {logs['learning_rate']:.2e}")
-            if 'epoch' in logs:
-                progress_parts.append(f"Epoch: {logs['epoch']:.2f}")
+            if progress_percentage > 0:
+                progress_parts.append(f"Progress: {progress_percentage:.1f}%")
             
             progress_msg = " | ".join(progress_parts) if progress_parts else "Training in progress..."
             updates['progress'] = progress_msg
@@ -219,11 +359,34 @@ class StreamingLoggingCallback(TrainerCallback):
             # Update status (save to file)
             self.status.update(**updates)
             
-            # Add to streaming queue
-            self._add_log_to_queue(progress_msg, "training")
+            # Create structured log entry for streaming
+            structured_log = {
+                "message": progress_msg,
+                "metrics": {
+                    "loss": updates.get('loss'),
+                    "learning_rate": updates.get('learning_rate'),
+                    "current_step": updates.get('current_step'),
+                    "total_steps": updates.get('total_steps'),
+                    "current_epoch": updates.get('current_epoch'),
+                    "total_epochs": updates.get('total_epochs'),
+                    "progress_percentage": updates.get('progress_percentage')
+                }
+            }
+            
+            # Add to streaming queue with metrics
+            self._add_log_to_queue(structured_log, "training")
             
             # Print to console for Docker logs
             print(f"Training Update: {progress_msg}")
+            
+            # Also log structured metrics for debugging and update session activity
+            if current_step and current_step % 10 == 0:  # Every 10 steps
+                metrics_msg = f"Metrics - Step: {current_step}, Loss: {updates.get('loss', 'N/A')}, Progress: {progress_percentage:.1f}%"
+                logger.info(metrics_msg)
+                print(f"DEBUG: {metrics_msg}")
+                
+                # Update session activity every 10 steps
+                update_session_activity(self.task_id)
             
     def on_train_end(self, args, state, control, **kwargs):
         """Called when training ends."""
@@ -272,21 +435,14 @@ def get_optimal_device_map(hardware_info: dict):
     )
     
     if should_offload:
-        # For low VRAM or Kubernetes constraints, use manual device mapping to force CPU offloading
+        # For low VRAM or Kubernetes constraints, use sequential device mapping to avoid conflicts
         print(f"Using CPU offloading - Available VRAM: {available_vram:.1f}GB, K8s mode: {KUBERNETES_MODE}")
-        return {
-            "model.embed_tokens": "cuda:0",
-            "model.layers.0": "cuda:0",
-            "model.layers.1": "cuda:0", 
-            "model.layers.2": "cuda:0",
-            "model.layers.3": "cuda:0",
-            "model.layers.4": "cpu",
-            "model.layers.5": "cpu",
-            "model.layers.6": "cpu",
-            "model.layers.7": "cpu",
-            "model.norm": "cpu",
-            "lm_head": "cpu"
-        }
+        if available_vram < 6:
+            # Very conservative mapping for <6GB VRAM
+            return "sequential"
+        else:
+            # Balanced approach for 6-8GB VRAM (like RTX 4060)
+            return "balanced_low_0"
     elif hardware_info["gpu_count"] == 1:
         return "auto"
     else:
@@ -402,14 +558,25 @@ def setup_unsloth_model(model_dir: str, max_seq_length: int, hardware_info: dict
         )
         
         if needs_optimization:
+            from transformers import BitsAndBytesConfig
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                llm_int8_enable_fp32_cpu_offload=True,
+            )
             additional_kwargs.update({
                 "low_cpu_mem_usage": True,
-                "llm_int8_enable_fp32_cpu_offload": True,
-                "bnb_4bit_compute_dtype": torch.float16,
-                "bnb_4bit_quant_storage": torch.float16,
+                "quantization_config": quantization_config,
             })
             optimization_reason = "Kubernetes" if KUBERNETES_MODE else f"low VRAM ({available_vram:.1f}GB)"
             print(f"Applied aggressive memory optimization for {optimization_reason}")
+        else:
+            # Standard 4-bit quantization - let Unsloth handle it automatically
+            additional_kwargs.update({
+                "low_cpu_mem_usage": True,
+            })
         
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_dir,
@@ -724,8 +891,19 @@ def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
     if task_id is None:
         task_id = str(uuid.uuid4())
     
-    status = TrainingStatus(task_id=task_id, status="running", progress="Starting fine-tuning...")
+    import time
+    current_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    status = TrainingStatus(
+        task_id=task_id, 
+        status="running", 
+        progress="Starting fine-tuning...",
+        started_at=current_time,
+        updated_at=current_time
+    )
     status.save()
+    
+    # Register active training session
+    register_active_session(task_id, request.dict())
 
     def run_training():
         try:
@@ -803,26 +981,75 @@ def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
                 KUBERNETES_MODE
             )
             
+            # Configure quantization properly using BitsAndBytesConfig approach
             if needs_optimization:
+                from transformers import BitsAndBytesConfig
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                    llm_int8_enable_fp32_cpu_offload=True,  # Enable CPU offloading for memory
+                )
                 additional_kwargs.update({
                     "low_cpu_mem_usage": True,
-                    "llm_int8_enable_fp32_cpu_offload": True,
-                    "bnb_4bit_compute_dtype": torch.float16,
-                    "bnb_4bit_quant_storage": torch.float16,
+                    "quantization_config": quantization_config,
                 })
                 optimization_reason = "Kubernetes" if KUBERNETES_MODE else f"low VRAM ({available_vram:.1f}GB)"
                 memory_opt_msg = f"Applied aggressive memory optimization for {optimization_reason}"
                 logger.info(memory_opt_msg)
                 status._add_log_to_queue(memory_opt_msg, "info")
+            else:
+                # Standard 4-bit quantization - let Unsloth handle it automatically
+                additional_kwargs.update({
+                    "low_cpu_mem_usage": True,
+                })
             
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=request.base_model_dir,
-                load_in_4bit=True,
-                max_seq_length=request.max_seq_length,
-                dtype=None,
-                device_map=optimal_device_map,
-                **additional_kwargs
-            )
+            # Clear CUDA cache before loading model
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                gc.collect()
+            
+            try:
+                model, tokenizer = FastLanguageModel.from_pretrained(
+                    model_name=request.base_model_dir,
+                    load_in_4bit=True,
+                    max_seq_length=request.max_seq_length,
+                    dtype=None,
+                    device_map=optimal_device_map,
+                    **additional_kwargs
+                )
+            except Exception as e:
+                if "Some modules are dispatched on the CPU or the disk" in str(e):
+                    error_msg = f"GPU memory insufficient. Retrying with more aggressive CPU offloading..."
+                    logger.warning(error_msg)
+                    status._add_log_to_queue(error_msg, "warning")
+                    
+                    # Force more aggressive CPU offloading with proper BitsAndBytesConfig
+                    from transformers import BitsAndBytesConfig
+                    aggressive_quantization_config = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_compute_dtype=torch.float16,
+                        llm_int8_enable_fp32_cpu_offload=True,
+                    )
+                    additional_kwargs.update({
+                        "low_cpu_mem_usage": True,
+                        "quantization_config": aggressive_quantization_config,
+                    })
+                    
+                    # Use sequential device mapping for maximum memory efficiency
+                    model, tokenizer = FastLanguageModel.from_pretrained(
+                        model_name=request.base_model_dir,
+                        load_in_4bit=True,
+                        max_seq_length=min(request.max_seq_length, 1024),  # Reduce sequence length
+                        dtype=None,
+                        device_map="sequential",
+                        **additional_kwargs
+                    )
+                else:
+                    raise e
             
             model_success_msg = "Model loaded successfully"
             logger.info(model_success_msg)
@@ -863,6 +1090,7 @@ def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
                 batch_size = 1
                 gradient_accumulation = 32  # More aggressive accumulation for very low VRAM
             elif hardware_info["total_vram_gb"] < 10:
+                # Optimized for RTX 4060 (8GB VRAM) - conservative but efficient
                 batch_size = 1
                 gradient_accumulation = 16
             else:
@@ -939,8 +1167,9 @@ def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
 
             status.update(status="completed", progress="Fine-tuning completed successfully.")
             
-            # Mark completion
+            # Mark completion and clean up session
             task_completion_flags[task_id] = True
+            remove_active_session(task_id)
 
         except Exception as e:
             logger.exception("Fine-tuning failed")
@@ -948,7 +1177,8 @@ def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
             status.update(status="failed", progress=error_msg)
             status._add_log_to_queue(error_msg, "error")
             
-            # Mark completion even on error
+            # Clean up failed session
+            remove_active_session(task_id)
             task_completion_flags[task_id] = True
 
     threading.Thread(target=run_training, daemon=True).start()

@@ -18,4 +18,4 @@ imbalanced-learn>=0.11.0
 xformers>=0.0.22
 # Unsloth - latest version for maximum optimization
 git+https://github.com/unslothai/unsloth.git
-unsloth_zoo
+unsloth_zoo 

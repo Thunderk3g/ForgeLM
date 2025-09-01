@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from model_selection import select_model, SelectModelRequest, scan_available_models
 from data_preparation import prepare_data, PrepareDataRequest  
-from fine_tuning import fine_tune, FineTuneRequest, TrainingStatus, task_log_queues, task_completion_flags
+from fine_tuning import fine_tune, FineTuneRequest, TrainingStatus, task_log_queues, task_completion_flags, get_active_sessions
 import asyncio
 from typing import Dict
 
@@ -165,6 +165,46 @@ async def fine_tune_endpoint(request: FineTuneRequest, background_tasks: Backgro
         raise HTTPException(status_code=500, detail=f"Failed to start fine-tuning: {str(e)}")
 
 
+@app.get("/fine-tune/active")
+async def get_active_training_sessions():
+    """
+    Get all currently active training sessions.
+    
+    Returns:
+        JSON response with active training sessions and their status
+    """
+    try:
+        active_sessions = get_active_sessions()
+        
+        # Enhance session data with current status from status files
+        enhanced_sessions = {}
+        for task_id, session in active_sessions.items():
+            enhanced_sessions[task_id] = session.copy()
+            
+            # Try to get current status from status file
+            try:
+                status_file = Path("logs") / f"{task_id}_status.json"
+                if status_file.exists():
+                    import json
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    enhanced_sessions[task_id]["current_status"] = status_data
+                else:
+                    enhanced_sessions[task_id]["current_status"] = None
+            except Exception as e:
+                print(f"Error reading status for {task_id}: {e}")
+                enhanced_sessions[task_id]["current_status"] = None
+        
+        return JSONResponse(content={
+            "status": "success",
+            "active_sessions": enhanced_sessions,
+            "total_active": len(enhanced_sessions)
+        })
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get active sessions: {str(e)}")
+
+
 @app.get("/fine-tune/status/{task_id}")
 async def get_training_status(task_id: str):
     """
@@ -186,6 +226,36 @@ async def get_training_status(task_id: str):
         try:
             with open(status_file, "r") as f:
                 status_data = json.load(f)
+            
+            # Enhance with additional computed information
+            if status_data.get("current_step") and status_data.get("total_steps"):
+                progress_pct = (status_data["current_step"] / status_data["total_steps"]) * 100
+                status_data["progress_percentage"] = round(progress_pct, 2)
+            elif status_data.get("current_epoch") and status_data.get("total_epochs"):
+                progress_pct = (status_data["current_epoch"] / status_data["total_epochs"]) * 100
+                status_data["progress_percentage"] = round(progress_pct, 2)
+            
+            # Add estimated completion time if we have progress
+            if status_data.get("started_at") and status_data.get("progress_percentage", 0) > 0:
+                try:
+                    import time
+                    from datetime import datetime, timedelta
+                    
+                    start_time = datetime.strptime(status_data["started_at"], "%Y-%m-%d %H:%M:%S")
+                    current_time = datetime.now()
+                    elapsed = (current_time - start_time).total_seconds()
+                    
+                    if status_data["progress_percentage"] > 0:
+                        total_estimated_time = elapsed * (100 / status_data["progress_percentage"])
+                        remaining_time = total_estimated_time - elapsed
+                        
+                        if remaining_time > 0:
+                            eta = current_time + timedelta(seconds=remaining_time)
+                            status_data["estimated_completion"] = eta.strftime("%Y-%m-%d %H:%M:%S")
+                            status_data["estimated_remaining_minutes"] = round(remaining_time / 60, 1)
+                except Exception as e:
+                    print(f"Error calculating ETA: {e}")
+            
             return JSONResponse(content=status_data)
         except Exception as e:
             print(f"Error reading status file: {e}")
@@ -235,7 +305,15 @@ async def stream_training_logs(task_id: str):
                 if task_id in task_log_queues:
                     try:
                         log_entry = task_log_queues[task_id].get_nowait()
-                        yield f"event: log\n"
+                        
+                        # Determine event type based on log content
+                        event_type = "log"
+                        if log_entry.get("type") == "training" and log_entry.get("metrics"):
+                            event_type = "metrics"
+                        elif log_entry.get("type") in ["error", "warning"]:
+                            event_type = "error" if log_entry.get("type") == "error" else "warning"
+                        
+                        yield f"event: {event_type}\n"
                         yield f"data: {json.dumps(log_entry)}\n\n"
                     except queue.Empty:
                         pass
@@ -295,7 +373,9 @@ async def root():
             "/select-model": "POST - Download and prepare base model",
             "/prepare-data": "POST - Clean and prepare training data", 
             "/fine-tune": "POST - Start model fine-tuning",
+            "/fine-tune/active": "GET - List all active training sessions",
             "/fine-tune/status/{task_id}": "GET - Check training status",
+            "/fine-tune/logs/{task_id}": "SSE - Stream training logs",
             "/health": "GET - Health check"
         }
     }

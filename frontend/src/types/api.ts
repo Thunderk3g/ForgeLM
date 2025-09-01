@@ -43,9 +43,10 @@ export interface ApiResponse {
 }
 
 export interface TrainingStatus {
+  task_id: string;
   status: 'running' | 'completed' | 'error';
-  message: string;
-  progress?: number;
+  message?: string;
+  progress: string;
   current_epoch?: number;
   total_epochs?: number;
   current_step?: number;
@@ -53,9 +54,29 @@ export interface TrainingStatus {
   loss?: number;
   eval_loss?: number;
   learning_rate?: number;
+  progress_percentage?: number;
+  started_at?: string;
+  updated_at?: string;
+  estimated_completion?: string;
+  estimated_remaining_minutes?: number;
   logs?: string[];
   model_path?: string;
   eval_results?: Record<string, any>;
+}
+
+export interface ActiveSession {
+  task_id: string;
+  status: string;
+  started_at: string;
+  request_data: any;
+  last_activity: string;
+  current_status?: TrainingStatus;
+}
+
+export interface ActiveSessionsResponse {
+  status: string;
+  active_sessions: Record<string, ActiveSession>;
+  total_active: number;
 }
 
 export interface HealthResponse {

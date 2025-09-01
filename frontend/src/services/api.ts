@@ -6,7 +6,8 @@ import type {
   ApiResponse,
   TrainingStatus,
   HealthResponse,
-  AvailableModelsResponse
+  AvailableModelsResponse,
+  ActiveSessionsResponse
 } from '../types/api';
 
 const API_BASE = 'http://localhost:80';
@@ -97,6 +98,38 @@ export const streamTrainingLogs = (
     }
   });
   
+  // Handle metrics events (training progress with structured data)
+  eventSource.addEventListener('metrics', (event) => {
+    try {
+      const logEntry: LogEntry = JSON.parse(event.data);
+      onLog(logEntry);
+      
+      // If there's status information in the metrics, update status too
+      if (logEntry.step || logEntry.epoch || logEntry.loss) {
+        const statusUpdate: Partial<TrainingStatus> = {
+          current_step: logEntry.step,
+          current_epoch: logEntry.epoch,
+          loss: logEntry.loss,
+          learning_rate: logEntry.learning_rate,
+          progress_percentage: logEntry.progress_percentage
+        };
+        onStatus(statusUpdate as TrainingStatus);
+      }
+    } catch (error) {
+      console.error('Error parsing metrics entry:', error);
+    }
+  });
+  
+  // Handle warning events
+  eventSource.addEventListener('warning', (event) => {
+    try {
+      const logEntry: LogEntry = JSON.parse(event.data);
+      onLog(logEntry);
+    } catch (error) {
+      console.error('Error parsing warning entry:', error);
+    }
+  });
+  
   eventSource.addEventListener('status', (event) => {
     try {
       const status: TrainingStatus = JSON.parse(event.data);
@@ -147,6 +180,12 @@ export const streamTrainingLogs = (
       eventSource.close();
     }
   };
+};
+
+// Get active training sessions
+export const getActiveTrainingSessions = async (): Promise<ActiveSessionsResponse> => {
+  const response = await api.get('/fine-tune/active');
+  return response.data;
 };
 
 // API info

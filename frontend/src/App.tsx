@@ -19,7 +19,8 @@ import {
   startFineTuning, 
   getTrainingStatus,
   getAvailableModels,
-  streamTrainingLogs
+  streamTrainingLogs,
+  getActiveTrainingSessions
 } from './services/api';
 import type { LogEntry
 } from './services/api';
@@ -52,6 +53,8 @@ function App() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
   const [streamConnection, setStreamConnection] = useState<{ close: () => void } | null>(null);
+  const [activeSessions, setActiveSessions] = useState<Record<string, any>>({});
+  const [showActiveSessionsModal, setShowActiveSessionsModal] = useState<boolean>(false);
   const [loading, setLoading] = useState({
     model: false,
     data: false,
@@ -71,7 +74,7 @@ function App() {
     checkHealth();
   }, []);
 
-  // Load available models on mount
+  // Load available models and active sessions on mount
   useEffect(() => {
     const loadModels = async () => {
       try {
@@ -83,8 +86,28 @@ function App() {
         console.error('Failed to load available models:', error);
       }
     };
-    loadModels();
-  }, []);
+    
+    const loadActiveSessions = async () => {
+      try {
+        const response = await getActiveTrainingSessions();
+        if (response.status === 'success') {
+          setActiveSessions(response.active_sessions);
+          
+          // If there are active sessions and no current task, show modal
+          if (Object.keys(response.active_sessions).length > 0 && !currentTaskId) {
+            setShowActiveSessionsModal(true);
+          }
+        }
+      } catch (error) {
+        console.error('Error loading active sessions:', error);
+      }
+    };
+    
+    if (apiStatus === 'online') {
+      loadModels();
+      loadActiveSessions();
+    }
+  }, [apiStatus, currentTaskId]);
 
   // Cleanup SSE connections on unmount
   useEffect(() => {
@@ -262,6 +285,13 @@ function App() {
 
   const calculateProgress = (): number => {
     if (!trainingStatus) return 0;
+    
+    // Use the computed progress_percentage if available
+    if (trainingStatus.progress_percentage !== undefined) {
+      return trainingStatus.progress_percentage;
+    }
+    
+    // Fallback to manual calculation
     if (trainingStatus.current_step && trainingStatus.total_steps) {
       return (trainingStatus.current_step / trainingStatus.total_steps) * 100;
     }
@@ -269,6 +299,26 @@ function App() {
       return (trainingStatus.current_epoch / trainingStatus.total_epochs) * 100;
     }
     return 0;
+  };
+
+  const connectToActiveSession = async (taskId: string) => {
+    setCurrentTaskId(taskId);
+    setLogs([]);
+    setMetrics([]);
+    setShowActiveSessionsModal(false);
+    
+    // Load current status
+    try {
+      const status = await getTrainingStatus(taskId);
+      setTrainingStatus(status);
+    } catch (error) {
+      console.error('Error loading session status:', error);
+    }
+    
+    // Start streaming logs
+    startLogStreaming(taskId);
+    
+    toast.success(`Reconnected to training session ${taskId.slice(0, 8)}...`);
   };
 
   return (
