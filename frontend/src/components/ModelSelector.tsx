@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Download, Cpu, Check, AlertCircle, RefreshCw } from 'lucide-react';
 import { getAvailableModels } from '../services/api';
-import type { SelectModelRequest, ModelInfo, AvailableModelsResponse } from '../types/api';
+import type { SelectModelRequest, ModelInfo } from '../types/api';
 
 interface ModelSelectorProps {
   onSelectModel: (request: SelectModelRequest) => void;
@@ -69,9 +69,9 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({
     return availableModels.some(model => model.model_id === modelId);
   };
 
-  const getModelInfo = (modelId: string) => {
-    return availableModels.find(model => model.model_id === modelId);
-  };
+  // const getModelInfo = (modelId: string) => {
+  //   return availableModels.find(model => model.model_id === modelId);
+  // };
 
   return (
     <div className="bg-card rounded-lg shadow-sm border-border border p-6">

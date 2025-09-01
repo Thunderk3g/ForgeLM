@@ -3,6 +3,62 @@ import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
 
+# Kubernetes and container optimization settings
+KUBERNETES_MODE = os.environ.get("KUBERNETES_MODE", "false").lower() == "true"
+MAX_MEMORY_USAGE_GB = float(os.environ.get("MAX_MEMORY_USAGE_GB", "6"))
+FORCE_CPU_OFFLOAD = os.environ.get("FORCE_CPU_OFFLOAD", "false").lower() == "true"
+CONTAINER_MEMORY_LIMIT_GB = float(os.environ.get("CONTAINER_MEMORY_LIMIT_GB", "8"))
+
+print(f"Container configuration:")
+print(f"  Kubernetes mode: {KUBERNETES_MODE}")
+print(f"  Max memory usage: {MAX_MEMORY_USAGE_GB}GB")
+print(f"  Force CPU offload: {FORCE_CPU_OFFLOAD}")
+print(f"  Container memory limit: {CONTAINER_MEMORY_LIMIT_GB}GB")
+
+import queue
+import time
+import signal
+import atexit
+from collections import defaultdict
+
+# Global cleanup registry for Kubernetes graceful shutdown
+_cleanup_functions = []
+
+def register_cleanup(func):
+    """Register a function to be called on shutdown."""
+    _cleanup_functions.append(func)
+
+def cleanup_resources():
+    """Clean up resources on shutdown."""
+    print("Performing resource cleanup...")
+    for func in _cleanup_functions:
+        try:
+            func()
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+    
+    # Clear CUDA cache
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            print("CUDA cache cleared")
+    except Exception as e:
+        print(f"Error clearing CUDA cache: {e}")
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals in Kubernetes."""
+    print(f"Received signal {signum}, initiating graceful shutdown...")
+    cleanup_resources()
+    exit(0)
+
+# Register signal handlers for Kubernetes graceful shutdown
+if KUBERNETES_MODE:
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    atexit.register(cleanup_resources)
+    print("Kubernetes graceful shutdown handlers registered")
+
 try:
     import unsloth
     from unsloth import FastLanguageModel, is_bfloat16_supported
@@ -39,6 +95,10 @@ except ImportError:
 import transformers
 
 logger = logging.getLogger(__name__)
+
+# Global log queue system for real-time streaming
+task_log_queues = defaultdict(queue.Queue)
+task_completion_flags = defaultdict(bool)
 
 print("Environment setup complete:")
 print(f"   PyTorch version: {torch.__version__}")
@@ -94,11 +154,39 @@ class TrainingStatus(BaseModel):
         self.save()
 
 
-class LoggingCallback(TrainerCallback):
-    """Custom callback to capture training logs and update status."""
+class StreamingLoggingCallback(TrainerCallback):
+    """Custom callback to capture training logs, update status, and stream logs via queue."""
     
     def __init__(self, status: TrainingStatus):
         self.status = status
+        self.task_id = status.task_id
+        
+    def _add_log_to_queue(self, message: str, log_type: str = "info"):
+        """Add a log message to the streaming queue."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        formatted_log = {
+            "timestamp": timestamp,
+            "type": log_type,
+            "message": message,
+            "step": getattr(self.status, 'current_step', None),
+            "epoch": getattr(self.status, 'current_epoch', None),
+            "loss": getattr(self.status, 'loss', None),
+            "learning_rate": getattr(self.status, 'learning_rate', None)
+        }
+        
+        try:
+            task_log_queues[self.task_id].put(formatted_log)
+        except Exception as e:
+            print(f"Failed to add log to queue: {e}")
+        
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Called when training begins."""
+        self._add_log_to_queue("Training started successfully", "info")
+        
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        """Called at the beginning of each epoch."""
+        epoch = int(state.epoch) if hasattr(state, 'epoch') else state.epoch
+        self._add_log_to_queue(f"Starting epoch {epoch}", "info")
         
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Called when the trainer logs something."""
@@ -128,10 +216,20 @@ class LoggingCallback(TrainerCallback):
             progress_msg = " | ".join(progress_parts) if progress_parts else "Training in progress..."
             updates['progress'] = progress_msg
             
+            # Update status (save to file)
             self.status.update(**updates)
+            
+            # Add to streaming queue
+            self._add_log_to_queue(progress_msg, "training")
             
             # Print to console for Docker logs
             print(f"Training Update: {progress_msg}")
+            
+    def on_train_end(self, args, state, control, **kwargs):
+        """Called when training ends."""
+        self._add_log_to_queue("Training completed successfully", "success")
+        # Mark completion for SSE endpoint
+        task_completion_flags[self.task_id] = True
 
 
 def detect_hardware():
@@ -158,6 +256,41 @@ def detect_hardware():
         "has_ampere_or_newer": has_ampere_or_newer,
         "compute_capability": torch.cuda.get_device_capability(0) if gpu_count > 0 else None
     }
+
+
+def get_optimal_device_map(hardware_info: dict):
+    """Get optimal device map for limited memory scenarios and Kubernetes environments."""
+    if hardware_info["gpu_count"] == 0:
+        return "cpu"
+    
+    # Check if we should force CPU offloading for Kubernetes or resource constraints
+    available_vram = min(hardware_info["total_vram_gb"], MAX_MEMORY_USAGE_GB)
+    should_offload = (
+        available_vram < 8 or 
+        FORCE_CPU_OFFLOAD or 
+        (KUBERNETES_MODE and available_vram < CONTAINER_MEMORY_LIMIT_GB * 0.7)
+    )
+    
+    if should_offload:
+        # For low VRAM or Kubernetes constraints, use manual device mapping to force CPU offloading
+        print(f"Using CPU offloading - Available VRAM: {available_vram:.1f}GB, K8s mode: {KUBERNETES_MODE}")
+        return {
+            "model.embed_tokens": "cuda:0",
+            "model.layers.0": "cuda:0",
+            "model.layers.1": "cuda:0", 
+            "model.layers.2": "cuda:0",
+            "model.layers.3": "cuda:0",
+            "model.layers.4": "cpu",
+            "model.layers.5": "cpu",
+            "model.layers.6": "cpu",
+            "model.layers.7": "cpu",
+            "model.norm": "cpu",
+            "lm_head": "cpu"
+        }
+    elif hardware_info["gpu_count"] == 1:
+        return "auto"
+    else:
+        return "balanced"
 
 
 def validate_training_args_compatibility():
@@ -254,16 +387,40 @@ def setup_unsloth_model(model_dir: str, max_seq_length: int, hardware_info: dict
             print(f"Very high VRAM detected, setting max_seq_length to {max_seq_length}")
         
         # Enhanced Unsloth model loading with all optimizations
+        optimal_device_map = get_optimal_device_map(hardware_info)
         print(f"Loading model with Unsloth optimizations: {model_dir}")
+        print(f"Using device map: {optimal_device_map}")
+        print(f"Hardware info: {hardware_info['total_vram_gb']:.1f}GB VRAM")
+        
+        # Use additional memory optimization for limited VRAM or Kubernetes
+        additional_kwargs = {}
+        available_vram = min(hardware_info["total_vram_gb"], MAX_MEMORY_USAGE_GB)
+        needs_optimization = (
+            available_vram < 8 or 
+            FORCE_CPU_OFFLOAD or 
+            KUBERNETES_MODE
+        )
+        
+        if needs_optimization:
+            additional_kwargs.update({
+                "low_cpu_mem_usage": True,
+                "llm_int8_enable_fp32_cpu_offload": True,
+                "bnb_4bit_compute_dtype": torch.float16,
+                "bnb_4bit_quant_storage": torch.float16,
+            })
+            optimization_reason = "Kubernetes" if KUBERNETES_MODE else f"low VRAM ({available_vram:.1f}GB)"
+            print(f"Applied aggressive memory optimization for {optimization_reason}")
+        
         model, tokenizer = FastLanguageModel.from_pretrained(
             model_name=model_dir,
             max_seq_length=max_seq_length,
             dtype=dtype,
             load_in_4bit=True,  # Always use 4-bit for maximum memory savings
-            device_map="balanced" if hardware_info["gpu_count"] > 1 else "auto",
+            device_map=optimal_device_map,
             # Additional Unsloth optimizations
             token=None,  # Add HF token if needed
             trust_remote_code=False,  # Security setting
+            **additional_kwargs
         )
         
         # Verify tokenizer setup
@@ -331,18 +488,21 @@ def setup_standard_model(model_dir: str, peft_method: str, hardware_info: dict =
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
             bnb_4bit_quant_storage=torch_dtype,
+            llm_int8_enable_fp32_cpu_offload=True,  # Enable CPU offload for limited GPU memory
         )
+        optimal_device_map = get_optimal_device_map(hardware_info)
         model = AutoModelForCausalLM.from_pretrained(
             model_dir,
             quantization_config=bnb_config,
-            device_map="balanced" if hardware_info["gpu_count"] > 1 else "auto",
+            device_map=optimal_device_map,
             dtype=torch_dtype,
             attn_implementation="flash_attention_2" if (hardware_info["gpu_count"] > 0 and xformers_available) else None,
         )
     else:
+        optimal_device_map = get_optimal_device_map(hardware_info)
         model = AutoModelForCausalLM.from_pretrained(
             model_dir,
-            device_map="balanced" if hardware_info["gpu_count"] > 1 else "auto", 
+            device_map=optimal_device_map, 
             torch_dtype=torch_dtype,
             attn_implementation="flash_attention_2" if (hardware_info["gpu_count"] > 0 and xformers_available) else None,
         )
@@ -556,12 +716,14 @@ def format_sharegpt(examples, tokenizer=None):
 # Fine-tuning function
 # -----------------------
 
-def fine_tune(request: FineTuneRequest) -> dict:
+def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
     """
     Launch fine-tuning with Unsloth on prepared datasets.
     Auto-detects dataset format (ShareGPT, Instruction, Plain Text).
     """
-    task_id = str(uuid.uuid4())
+    if task_id is None:
+        task_id = str(uuid.uuid4())
+    
     status = TrainingStatus(task_id=task_id, status="running", progress="Starting fine-tuning...")
     status.save()
 
@@ -569,72 +731,179 @@ def fine_tune(request: FineTuneRequest) -> dict:
         try:
             logger.info("Starting fine-tuning process...")
             
+            # Initialize streaming for this task
+            status._add_log_to_queue = lambda msg, log_type="info": task_log_queues[task_id].put({
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                "type": log_type,
+                "message": msg,
+                "step": None,
+                "epoch": None,
+                "loss": None,
+                "learning_rate": None
+            })
+            
+            # Add initial logs
+            status._add_log_to_queue("Fine-tuning process initialized", "info")
+            
             # Load datasets from their respective directories
             logger.info(f"Loading datasets from {request.dataset_dir}")
+            status._add_log_to_queue(f"Loading datasets from {request.dataset_dir}", "info")
+            
             train_dataset = load_from_disk(f"{request.dataset_dir}/train")
             val_dataset = load_from_disk(f"{request.dataset_dir}/val")
-            logger.info(f"Loaded {len(train_dataset)} training samples and {len(val_dataset)} validation samples")
+            
+            dataset_msg = f"Loaded {len(train_dataset)} training samples and {len(val_dataset)} validation samples"
+            logger.info(dataset_msg)
+            status._add_log_to_queue(dataset_msg, "info")
 
             # Detect dataset type
             if "conversations" in train_dataset.column_names:
                 formatting_func = format_sharegpt
-                logger.info("Detected ShareGPT dataset format.")
+                format_msg = "Detected ShareGPT dataset format."
+                logger.info(format_msg)
+                status._add_log_to_queue(format_msg, "info")
             elif "instruction" in train_dataset.column_names:
                 formatting_func = format_instruction
-                logger.info("Detected Instruction dataset format.")
+                format_msg = "Detected Instruction dataset format."
+                logger.info(format_msg)
+                status._add_log_to_queue(format_msg, "info")
             elif "question" in train_dataset.column_names and "answer" in train_dataset.column_names:
                 formatting_func = format_plain_text
-                logger.info("Detected Question-Answer dataset format.")
+                format_msg = "Detected Question-Answer dataset format."
+                logger.info(format_msg)
+                status._add_log_to_queue(format_msg, "info")
             else:
                 formatting_func = format_plain_text
-                logger.info("Detected Plain Text dataset format.")
+                format_msg = "Detected Plain Text dataset format."
+                logger.info(format_msg)
+                status._add_log_to_queue(format_msg, "info")
 
+            # Detect hardware capabilities
+            hardware_info = detect_hardware()
+            hardware_msg = f"Hardware detected: {hardware_info['gpu_count']} GPU(s), {hardware_info['total_vram_gb']:.1f}GB VRAM"
+            logger.info(hardware_msg)
+            status._add_log_to_queue(hardware_msg, "info")
+            
             # Load base model with Unsloth optimizations
-            logger.info(f"Loading model from {request.base_model_dir}")
+            model_load_msg = f"Loading model from {request.base_model_dir}"
+            logger.info(model_load_msg)
+            status._add_log_to_queue(model_load_msg, "info")
+            
+            optimal_device_map = get_optimal_device_map(hardware_info)
+            device_map_msg = f"Using device map: {optimal_device_map}"
+            logger.info(device_map_msg)
+            status._add_log_to_queue(device_map_msg, "info")
+            
+            # Use additional memory optimization for limited VRAM or Kubernetes
+            additional_kwargs = {}
+            available_vram = min(hardware_info["total_vram_gb"], MAX_MEMORY_USAGE_GB)
+            needs_optimization = (
+                available_vram < 8 or 
+                FORCE_CPU_OFFLOAD or 
+                KUBERNETES_MODE
+            )
+            
+            if needs_optimization:
+                additional_kwargs.update({
+                    "low_cpu_mem_usage": True,
+                    "llm_int8_enable_fp32_cpu_offload": True,
+                    "bnb_4bit_compute_dtype": torch.float16,
+                    "bnb_4bit_quant_storage": torch.float16,
+                })
+                optimization_reason = "Kubernetes" if KUBERNETES_MODE else f"low VRAM ({available_vram:.1f}GB)"
+                memory_opt_msg = f"Applied aggressive memory optimization for {optimization_reason}"
+                logger.info(memory_opt_msg)
+                status._add_log_to_queue(memory_opt_msg, "info")
+            
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=request.base_model_dir,
                 load_in_4bit=True,
-                max_seq_length=512,
+                max_seq_length=request.max_seq_length,
                 dtype=None,
-                device_map="auto"
+                device_map=optimal_device_map,
+                **additional_kwargs
             )
-            logger.info("Model loaded successfully")
+            
+            model_success_msg = "Model loaded successfully"
+            logger.info(model_success_msg)
+            status._add_log_to_queue(model_success_msg, "success")
 
-            # Apply LoRA
-            logger.info("Applying LoRA configuration...")
+            # Apply LoRA with hardware-optimized configuration
+            lora_msg = "Applying LoRA configuration..."
+            logger.info(lora_msg)
+            status._add_log_to_queue(lora_msg, "info")
+            
+            lora_config = get_optimal_lora_config(request.base_model_dir, hardware_info)
+            lora_config_msg = f"LoRA config: r={lora_config['r']}, alpha={lora_config['lora_alpha']}"
+            logger.info(lora_config_msg)
+            status._add_log_to_queue(lora_config_msg, "info")
+            
             model = FastLanguageModel.get_peft_model(
                 model,
-                r=16,
-                target_modules=["q_proj", "v_proj"],
-                lora_alpha=16,
-                lora_dropout=0.0,  # Set to 0 for optimal Unsloth performance
-                bias="none",
+                r=lora_config["r"],
+                target_modules=lora_config["target_modules"],
+                lora_alpha=lora_config["lora_alpha"],
+                lora_dropout=lora_config["lora_dropout"],
+                bias=lora_config["bias"],
+                use_gradient_checkpointing=lora_config["use_gradient_checkpointing"],
+                random_state=lora_config["random_state"],
             )
-            logger.info("LoRA applied successfully")
+            
+            lora_success_msg = "LoRA applied successfully"
+            logger.info(lora_success_msg)
+            status._add_log_to_queue(lora_success_msg, "success")
 
-            # Training arguments (Unsloth defaults)
-            logger.info("Setting up training arguments...")
+            # Training arguments (hardware-optimized)
+            args_msg = "Setting up training arguments..."
+            logger.info(args_msg)
+            status._add_log_to_queue(args_msg, "info")
+            
+            # Optimize batch size and gradient accumulation based on VRAM
+            if hardware_info["total_vram_gb"] < 6:
+                batch_size = 1
+                gradient_accumulation = 32  # More aggressive accumulation for very low VRAM
+            elif hardware_info["total_vram_gb"] < 10:
+                batch_size = 1
+                gradient_accumulation = 16
+            else:
+                batch_size = min(request.batch_size, 2)
+                gradient_accumulation = request.gradient_accumulation_steps
+            
+            # Use bf16 only on supported hardware, fallback to fp16
+            use_bf16 = hardware_info["has_bf16"] and hardware_info["has_ampere_or_newer"]
+            use_fp16 = not use_bf16 and hardware_info["has_fp16"]
+            
             training_args = TrainingArguments(
                 output_dir=request.output_dir,
-                per_device_train_batch_size=1,
-                gradient_accumulation_steps=16,
-                learning_rate=2e-4,
-                num_train_epochs=1,
+                per_device_train_batch_size=batch_size,
+                gradient_accumulation_steps=gradient_accumulation,
+                learning_rate=request.learning_rate,
+                num_train_epochs=request.epochs,
                 logging_steps=10,
                 save_strategy="steps",
-                save_steps=50,
+                save_steps=100,
                 save_total_limit=2,
-                eval_strategy="steps",
-                eval_steps=50,
-                bf16=True,  # Ampere+ GPUs
+                eval_strategy="steps" if val_dataset and len(val_dataset) > 0 else "no",
+                eval_steps=100 if val_dataset and len(val_dataset) > 0 else None,
+                bf16=use_bf16,
+                fp16=use_fp16,
+                dataloader_pin_memory=False,  # Reduce memory usage
+                gradient_checkpointing=True,  # Enable gradient checkpointing for memory efficiency
                 report_to="none"
             )
+            
+            training_config_msg = f"Training config: batch_size={batch_size}, grad_accum={gradient_accumulation}, bf16={use_bf16}, fp16={use_fp16}"
+            logger.info(training_config_msg)
+            status._add_log_to_queue(training_config_msg, "info")
 
-            # Create logging callback
-            logging_callback = LoggingCallback(status)
+            # Create streaming logging callback
+            logging_callback = StreamingLoggingCallback(status)
             
             # Use SFTTrainer for instruction fine-tuning
-            logger.info("Creating SFTTrainer...")
+            trainer_msg = "Creating SFTTrainer..."
+            logger.info(trainer_msg)
+            status._add_log_to_queue(trainer_msg, "info")
+            
             trainer = SFTTrainer(
                 model=model,
                 args=training_args,
@@ -642,24 +911,45 @@ def fine_tune(request: FineTuneRequest) -> dict:
                 eval_dataset=val_dataset if len(val_dataset) > 0 else None,
                 tokenizer=tokenizer,
                 formatting_func=formatting_func,
-                max_seq_length=512,
+                max_seq_length=request.max_seq_length,
                 callbacks=[logging_callback],
             )
-            logger.info("SFTTrainer created successfully")
+            
+            trainer_success_msg = "SFTTrainer created successfully"
+            logger.info(trainer_success_msg)
+            status._add_log_to_queue(trainer_success_msg, "success")
 
             # Start training
-            logger.info("Starting training...")
+            training_start_msg = "Starting training..."
+            logger.info(training_start_msg)
+            status._add_log_to_queue(training_start_msg, "info")
+            
             trainer.train()
-            logger.info("Training completed, saving model...")
+            
+            save_msg = "Training completed, saving model..."
+            logger.info(save_msg)
+            status._add_log_to_queue(save_msg, "info")
+            
             trainer.save_model(request.output_dir)
             tokenizer.save_pretrained(request.output_dir)
-            logger.info("Model saved successfully")
+            
+            final_success_msg = "Model saved successfully"
+            logger.info(final_success_msg)
+            status._add_log_to_queue(final_success_msg, "success")
 
             status.update(status="completed", progress="Fine-tuning completed successfully.")
+            
+            # Mark completion
+            task_completion_flags[task_id] = True
 
         except Exception as e:
             logger.exception("Fine-tuning failed")
-            status.update(status="failed", progress=f"Fine-tuning failed: {str(e)}")
+            error_msg = f"Fine-tuning failed: {str(e)}"
+            status.update(status="failed", progress=error_msg)
+            status._add_log_to_queue(error_msg, "error")
+            
+            # Mark completion even on error
+            task_completion_flags[task_id] = True
 
     threading.Thread(target=run_training, daemon=True).start()
     return {"task_id": task_id, "status": "started"}

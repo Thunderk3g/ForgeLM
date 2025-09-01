@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
 import { Brain, Activity, Zap } from 'lucide-react';
 
@@ -18,7 +18,10 @@ import {
   prepareData, 
   startFineTuning, 
   getTrainingStatus,
-  getAvailableModels
+  getAvailableModels,
+  streamTrainingLogs
+} from './services/api';
+import type { LogEntry
 } from './services/api';
 
 // Types
@@ -42,10 +45,13 @@ function App() {
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [metrics, setMetrics] = useState<MetricData[]>([]);
   const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [selectedModelInfo, setSelectedModelInfo] = useState<ModelInfo | null>(null);
+  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
+  const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
+  const [streamConnection, setStreamConnection] = useState<{ close: () => void } | null>(null);
   const [loading, setLoading] = useState({
     model: false,
     data: false,
@@ -80,29 +86,37 @@ function App() {
     loadModels();
   }, []);
 
-  // Poll training status
+  // Cleanup SSE connections on unmount
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    
+    return () => {
+      if (streamConnection) {
+        streamConnection.close();
+      }
+    };
+  }, []);
+
+  // SSE streaming for training logs
+  useEffect(() => {
     if (currentTaskId && trainingStatus?.status === 'running') {
-      interval = setInterval(async () => {
-        try {
-          const status = await getTrainingStatus(currentTaskId);
-          setTrainingStatus(status);
+      // Close existing connection if any
+      if (streamConnection) {
+        streamConnection.close();
+      }
+      
+      const connection = streamTrainingLogs(
+        currentTaskId,
+        // onLog
+        (logEntry: LogEntry) => {
+          setLogs(prev => [...prev, logEntry]);
           
-          // Add new logs if available
-          if (status.logs && status.logs.length > logs.length) {
-            setLogs(status.logs);
-          }
-          
-          // Update metrics if available
-          if (status.current_step && status.loss !== undefined) {
+          // Update metrics if log contains training data
+          if (logEntry.type === 'training' && logEntry.step && logEntry.loss !== undefined) {
             const newMetric: MetricData = {
-              epoch: status.current_epoch || 0,
-              step: status.current_step,
-              loss: status.loss,
-              eval_loss: status.eval_loss,
-              learning_rate: status.learning_rate,
+              epoch: logEntry.epoch ?? 0,
+              step: logEntry.step,
+              loss: logEntry.loss ?? undefined,
+              eval_loss: undefined, // Will be updated by status events
+              learning_rate: logEntry.learning_rate ?? undefined,
             };
             
             setMetrics(prev => {
@@ -111,20 +125,67 @@ function App() {
               return [...prev, newMetric];
             });
           }
-          
-          if (status.status === 'completed' || status.status === 'error') {
-            setCurrentTaskId(null);
-          }
-        } catch (error) {
-          console.error('Failed to fetch training status:', error);
+        },
+        // onStatus
+        (status: TrainingStatus) => {
+          setTrainingStatus(status);
+        },
+        // onComplete
+        () => {
+          console.log('Training stream completed');
+          setIsStreamConnected(false);
+          setCurrentTaskId(null);
+        },
+        // onError
+        (error: string) => {
+          console.error('SSE Stream error:', error);
+          toast.error(`Streaming error: ${error}`);
+          setIsStreamConnected(false);
+          // Fall back to polling on error
+          fallbackToPolling(currentTaskId);
+        },
+        // onConnect
+        () => {
+          console.log('SSE Stream connected');
+          setIsStreamConnected(true);
         }
-      }, 2000);
+      );
+      
+      setStreamConnection(connection);
+      
+      return () => {
+        connection.close();
+        setIsStreamConnected(false);
+      };
+    } else {
+      // Clean up connection when not training
+      if (streamConnection) {
+        streamConnection.close();
+        setStreamConnection(null);
+        setIsStreamConnected(false);
+      }
     }
-    
-    return () => {
-      if (interval) clearInterval(interval);
+  }, [currentTaskId, trainingStatus?.status]);
+  
+  // Fallback polling function in case SSE fails
+  const fallbackToPolling = (taskId: string) => {
+    const pollStatus = async () => {
+      try {
+        const status = await getTrainingStatus(taskId);
+        setTrainingStatus(status);
+        
+        if (status.status === 'completed' || status.status === 'error') {
+          setCurrentTaskId(null);
+        } else {
+          // Continue polling every 5 seconds
+          setTimeout(pollStatus, 5000);
+        }
+      } catch (error) {
+        console.error('Failed to fetch training status:', error);
+      }
     };
-  }, [currentTaskId, trainingStatus?.status, logs.length]);
+    pollStatus();
+  };
 
   const handleSelectModel = async (request: SelectModelRequest) => {
     setLoading(prev => ({ ...prev, model: true }));
@@ -142,8 +203,6 @@ function App() {
       setLoading(prev => ({ ...prev, model: false }));
     }
   };
-
-  const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
 
   const handleModelSelected = (modelId: string) => {
     setSelectedModel(modelId);
@@ -345,19 +404,23 @@ function App() {
 
             {/* Enhanced Terminal Logs - Always show for all LLM operations */}
             <LogViewer 
-              logs={logs} 
+              logs={logs.map(log => `[${log.timestamp}] ${log.type.toUpperCase()}: ${log.message}`)} 
               title="LLM Training Logs"
               maxHeight="600px"
-              isConnected={trainingStatus?.status === 'running'}
+              isConnected={isStreamConnected}
               onReconnect={() => {
-                // Trigger a manual status check if needed
-                if (currentTaskId) {
-                  getTrainingStatus(currentTaskId).then(status => {
-                    setTrainingStatus(status);
-                    if (status.logs && status.logs.length > logs.length) {
-                      setLogs(status.logs);
-                    }
-                  });
+                // Try to reconnect SSE stream if we have a current task
+                if (currentTaskId && trainingStatus?.status === 'running') {
+                  // Close existing connection
+                  if (streamConnection) {
+                    streamConnection.close();
+                  }
+                  
+                  // Trigger re-creation of SSE connection by updating state
+                  setCurrentTaskId(currentTaskId);
+                } else if (currentTaskId) {
+                  // Fallback to polling
+                  fallbackToPolling(currentTaskId);
                 }
               }}
             />

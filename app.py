@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from model_selection import select_model, SelectModelRequest, scan_available_models
 from data_preparation import prepare_data, PrepareDataRequest  
-from fine_tuning import fine_tune, FineTuneRequest, TrainingStatus
+from fine_tuning import fine_tune, FineTuneRequest, TrainingStatus, task_log_queues, task_completion_flags
 import asyncio
 from typing import Dict
 
@@ -15,14 +15,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Disable CORS middleware since nginx handles it
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
+# Enable CORS middleware for SSE support
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Global variable to track background tasks
 training_status = {}
@@ -104,16 +104,34 @@ async def run_fine_tuning(request: FineTuneRequest, task_id: str):
         "message": "Fine-tuning in progress..."
     }
     
+    # Initialize the task in the log queue system
+    import queue
+    if task_id not in task_log_queues:
+        task_log_queues[task_id] = queue.Queue()
+    
+    task_completion_flags[task_id] = False
+    
     try:
-        result = fine_tune(request)
-        training_status[task_id] = result
+        # Create a modified request with the task_id
+        request_dict = request.dict() if hasattr(request, 'dict') else request.__dict__
+        
+        # Use the new fine_tune function that returns a proper response
+        from fine_tuning import fine_tune
+        result = fine_tune(request, task_id)  # Pass the API task_id to the fine_tune function
+        
+        training_status[task_id] = {
+            "status": "completed",
+            "message": "Fine-tuning completed successfully",
+            "task_id": result.get("task_id", task_id)
+        }
     except Exception as e:
         training_status[task_id] = {
             "status": "error",
             "message": f"Fine-tuning failed: {str(e)}",
-            "model_path": "",
-            "eval_results": {}
+            "task_id": task_id
         }
+        # Mark as complete even on error so SSE can close
+        task_completion_flags[task_id] = True
 
 
 @app.post("/fine-tune")
@@ -192,37 +210,76 @@ async def stream_training_logs(task_id: str):
     """
     import json
     import time
+    import queue
     from pathlib import Path
     
     async def generate_logs():
-        last_data = None
-        while True:
+        last_heartbeat = time.time()
+        
+        # Send initial connection message
+        yield f"event: connected\n"
+        yield f"data: {json.dumps({'message': 'Connected to training logs', 'task_id': task_id})}\n\n"
+        
+        # Check if task exists
+        if task_id not in task_log_queues:
+            # Try to read from status file as fallback
             status_file = Path("logs") / f"{task_id}_status.json"
-            if status_file.exists():
-                try:
-                    with open(status_file, "r") as f:
-                        data = json.load(f)
+            if not status_file.exists():
+                yield f"event: error\n"
+                yield f"data: {json.dumps({'error': 'Task not found', 'task_id': task_id})}\n\n"
+                return
+        
+        while True:
+            try:
+                # Try to get logs from queue (non-blocking)
+                if task_id in task_log_queues:
+                    try:
+                        log_entry = task_log_queues[task_id].get_nowait()
+                        yield f"event: log\n"
+                        yield f"data: {json.dumps(log_entry)}\n\n"
+                    except queue.Empty:
+                        pass
+                
+                # Send heartbeat every 30 seconds
+                current_time = time.time()
+                if current_time - last_heartbeat > 30:
+                    yield f"event: heartbeat\n"
+                    yield f"data: {json.dumps({'timestamp': current_time})}\n\n"
+                    last_heartbeat = current_time
+                
+                # Check if training is complete
+                if task_completion_flags.get(task_id, False):
+                    # Send final status
+                    status_file = Path("logs") / f"{task_id}_status.json"
+                    if status_file.exists():
+                        try:
+                            with open(status_file, "r") as f:
+                                final_status = json.load(f)
+                            yield f"event: status\n"
+                            yield f"data: {json.dumps(final_status)}\n\n"
+                        except Exception as e:
+                            print(f"Error reading final status: {e}")
                     
-                    # Only send if data has changed
-                    if data != last_data:
-                        yield f"data: {json.dumps(data)}\n\n"
-                        last_data = data
-                        
-                        # Stop streaming if completed or failed
-                        if data.get('status') in ['completed', 'failed']:
-                            break
-                            
-                except Exception as e:
-                    yield f"data: {json.dumps({'error': str(e)})}\n\n"
-            
-            await asyncio.sleep(1)  # Poll every second
+                    yield f"event: complete\n"
+                    yield f"data: {json.dumps({'message': 'Training completed', 'task_id': task_id})}\n\n"
+                    break
+                
+                await asyncio.sleep(0.5)  # Check every 500ms for responsive streaming
+                
+            except Exception as e:
+                print(f"Error in SSE stream: {e}")
+                yield f"event: error\n"
+                yield f"data: {json.dumps({'error': str(e), 'task_id': task_id})}\n\n"
+                break
     
     return StreamingResponse(
         generate_logs(),
-        media_type="text/plain",
+        media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control",
         }
     )
 

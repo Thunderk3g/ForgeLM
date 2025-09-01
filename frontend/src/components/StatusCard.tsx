@@ -36,8 +36,8 @@ const statusConfig = {
 };
 
 export const StatusCard: React.FC<StatusCardProps> = ({ title, status, message, details }) => {
-  const config = statusConfig[status];
-  const Icon = config.icon;
+  const config = statusConfig[status] || statusConfig.pending;
+  const Icon = config?.icon || Clock;
 
   return (
     <div className={`p-4 rounded-lg border ${config.bgColor} ${config.borderColor} animate-fade-in`}>

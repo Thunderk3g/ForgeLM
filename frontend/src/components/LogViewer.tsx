@@ -15,7 +15,6 @@ import {
   Circle,
   AlertTriangle,
   Info,
-  Zap,
   Bug,
   Activity
 } from 'lucide-react';
