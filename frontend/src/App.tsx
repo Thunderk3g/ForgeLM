@@ -128,7 +128,20 @@ function App() {
         },
         // onStatus
         (status: TrainingStatus) => {
-          setTrainingStatus(status);
+          // Ensure status has the required fields with fallbacks
+          const validatedStatus: TrainingStatus = {
+            task_id: status.task_id || currentTaskId || '',
+            status: status.status || 'pending',
+            progress: status.progress || 'No progress information',
+            current_step: status.current_step || null,
+            total_steps: status.total_steps || null,
+            current_epoch: status.current_epoch || null,
+            total_epochs: status.total_epochs || null,
+            loss: status.loss || null,
+            learning_rate: status.learning_rate || null,
+            message: status.message || null
+          };
+          setTrainingStatus(validatedStatus);
         },
         // onComplete
         () => {
