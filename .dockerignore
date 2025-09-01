@@ -1,0 +1,59 @@
+# Version control
+.git
+.gitignore
+
+# Python cache and bytecode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache
+
+# Virtual environments
+venv
+env
+.env
+.venv
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Documentation and README files
+*.md
+README*
+docs/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Build artifacts that shouldn't be copied
+dist/
+build/
+*.egg-info/
+
+# Data files that might be large
+data/input/*
+models/base/*
+models/finetuned/*
+
+# Keep the directory structure but ignore contents
+!data/input/.gitkeep
+!models/base/.gitkeep
+!models/finetuned/.gitkeep
