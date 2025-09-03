@@ -17,9 +17,9 @@ interface MetricsChartProps {
 export const MetricsChart: React.FC<MetricsChartProps> = ({ data, title = "Training Metrics" }) => {
   if (data.length === 0) {
     return (
-      <div className="bg-white rounded-lg shadow-sm border p-6">
-        <h3 className="font-semibold text-gray-900 mb-4">{title}</h3>
-        <div className="h-64 flex items-center justify-center text-gray-500">
+      <div className="bg-card rounded-lg shadow-sm border border-border p-6">
+        <h3 className="font-semibold text-card-foreground mb-4">{title}</h3>
+        <div className="h-64 flex items-center justify-center text-muted-foreground">
           No metrics data available yet...
         </div>
       </div>
@@ -27,8 +27,8 @@ export const MetricsChart: React.FC<MetricsChartProps> = ({ data, title = "Train
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-sm border p-6">
-      <h3 className="font-semibold text-gray-900 mb-4">{title}</h3>
+    <div className="bg-card rounded-lg shadow-sm border border-border p-6">
+      <h3 className="font-semibold text-card-foreground mb-4">{title}</h3>
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
@@ -37,10 +37,12 @@ export const MetricsChart: React.FC<MetricsChartProps> = ({ data, title = "Train
               dataKey="step" 
               label={{ value: 'Training Steps', position: 'insideBottom', offset: -5 }}
             />
-            <YAxis />
+            <YAxis yAxisId="left" />
+            <YAxis yAxisId="lr" orientation="right" />
             <Tooltip 
               formatter={(value, name) => [
-                typeof value === 'number' ? value.toFixed(4) : value, 
+                typeof value === 'number' ? 
+                  (name === 'Learning Rate' ? value.toExponential(2) : value.toFixed(4)) : value, 
                 name
               ]}
               labelFormatter={(step) => `Step: ${step}`}
@@ -54,6 +56,7 @@ export const MetricsChart: React.FC<MetricsChartProps> = ({ data, title = "Train
                 strokeWidth={2}
                 name="Training Loss"
                 dot={false}
+                yAxisId="left"
               />
             )}
             {data.some(d => d.eval_loss !== undefined) && (
@@ -64,6 +67,7 @@ export const MetricsChart: React.FC<MetricsChartProps> = ({ data, title = "Train
                 strokeWidth={2}
                 name="Validation Loss"
                 dot={false}
+                yAxisId="left"
               />
             )}
             {data.some(d => d.learning_rate !== undefined) && (

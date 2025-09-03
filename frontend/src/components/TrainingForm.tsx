@@ -124,7 +124,7 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
             min="0.00001"
             max="0.01"
             step="0.00001"
-            className="w-full p-2 border rounded-md focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+            className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
           />
         </div>
 

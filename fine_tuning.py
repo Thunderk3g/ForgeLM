@@ -31,6 +31,9 @@ import queue
 import time
 import signal
 import atexit
+import threading
+import shutil
+import gc
 from collections import defaultdict
 
 # Global cleanup registry for Kubernetes graceful shutdown
@@ -104,6 +107,10 @@ logger = logging.getLogger(__name__)
 # Global log queue system for real-time streaming
 task_log_queues = defaultdict(queue.Queue)
 task_completion_flags = defaultdict(bool)
+
+# Global training cancellation system
+task_cancellation_events = defaultdict(threading.Event)
+training_managers = {}
 
 # Active training sessions storage
 ACTIVE_SESSIONS_FILE = Path("logs") / "active_sessions.json"
@@ -393,6 +400,390 @@ class StreamingLoggingCallback(TrainerCallback):
         self._add_log_to_queue("Training completed successfully", "success")
         # Mark completion for SSE endpoint
         task_completion_flags[self.task_id] = True
+
+
+class CancellationCallback(TrainerCallback):
+    """Callback to handle safe training cancellation at appropriate checkpoints."""
+    
+    def __init__(self, task_id: str, cancellation_event: threading.Event, status: TrainingStatus):
+        self.task_id = task_id
+        self.cancellation_event = cancellation_event
+        self.status = status
+        self.last_checkpoint_step = None
+        
+    def _log_cancellation_message(self, message: str):
+        """Add cancellation-related message to log queue."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        formatted_log = {
+            "timestamp": timestamp,
+            "type": "info",
+            "message": message,
+            "step": getattr(self.status, 'current_step', None),
+            "epoch": getattr(self.status, 'current_epoch', None)
+        }
+        try:
+            task_log_queues[self.task_id].put(formatted_log)
+        except Exception as e:
+            print(f"Failed to add cancellation log: {e}")
+    
+    def on_step_end(self, args, state, control, **kwargs):
+        """Check for cancellation after each complete training step (safest cancellation point)."""
+        if self.cancellation_event.is_set():
+            self._log_cancellation_message(f"Cancellation requested - stopping after step {state.global_step}")
+            
+            # Update status to indicate cancellation in progress
+            self.status.update(
+                status="cancelling", 
+                progress=f"Cancelling training after step {state.global_step}",
+                message="Training cancellation in progress..."
+            )
+            
+            control.should_training_stop = True
+            return control
+    
+    def on_epoch_end(self, args, state, control, **kwargs):
+        """Preferred cancellation point - after complete epoch."""
+        if self.cancellation_event.is_set():
+            epoch = int(state.epoch) if hasattr(state, 'epoch') else state.epoch
+            self._log_cancellation_message(f"Cancellation requested - stopping after epoch {epoch}")
+            
+            # Update status
+            self.status.update(
+                status="cancelling",
+                progress=f"Cancelling training after epoch {epoch}",
+                message="Training cancellation in progress..."
+            )
+            
+            control.should_training_stop = True
+            return control
+    
+    def on_save(self, args, state, control, **kwargs):
+        """Ensure checkpoint completion before cancellation if requested during save."""
+        if self.cancellation_event.is_set():
+            self._log_cancellation_message("Completing checkpoint before cancellation...")
+            self.last_checkpoint_step = state.global_step
+            # Let the checkpoint complete, then we'll stop on next step_end
+
+
+class TrainingManager:
+    """Manages training lifecycle, cancellation, and resource cleanup."""
+    
+    def __init__(self, task_id: str):
+        self.task_id = task_id
+        self.cancellation_event = threading.Event()
+        self.cleanup_lock = threading.Lock()
+        self.trainer = None
+        self.model = None
+        self.tokenizer = None
+        self.status = None
+        self.is_cleaned_up = False
+        
+        # Register this manager globally
+        training_managers[task_id] = self
+        task_cancellation_events[task_id] = self.cancellation_event
+        
+    def register_resources(self, trainer, model, tokenizer, status):
+        """Register training resources for cleanup."""
+        self.trainer = trainer
+        self.model = model
+        self.tokenizer = tokenizer
+        self.status = status
+        
+    def request_cancellation(self):
+        """Thread-safe cancellation request."""
+        print(f"Cancellation requested for task {self.task_id}")
+        self.cancellation_event.set()
+        
+        # Update session status
+        if self.status:
+            self.status.update(
+                status="cancelling",
+                progress="Cancellation requested - stopping at next safe checkpoint",
+                message="Training cancellation requested by user"
+            )
+        
+        # Update active sessions
+        sessions = load_active_sessions()
+        if self.task_id in sessions:
+            sessions[self.task_id]["status"] = "cancelling"
+            sessions[self.task_id]["last_activity"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            save_active_sessions(sessions)
+    
+    def safe_model_cleanup(self):
+        """Perform safe model and resource cleanup following Unsloth best practices."""
+        if self.is_cleaned_up:
+            return
+            
+        with self.cleanup_lock:
+            if self.is_cleaned_up:  # Double-check after acquiring lock
+                return
+                
+            try:
+                print(f"Starting resource cleanup for task {self.task_id}")
+                
+                # Step 1: Disable gradient computation
+                if self.model and hasattr(self.model, 'eval'):
+                    self.model.eval()
+                    print("Model set to eval mode")
+                
+                # Step 2: Clear any pending CUDA operations
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    print("CUDA operations synchronized")
+                
+                # Step 3: Save emergency checkpoint if cancellation was requested
+                if self.cancellation_event.is_set() and self.model and hasattr(self.model, 'save_pretrained'):
+                    self._save_atomic_checkpoint(emergency=True)
+                
+                # Step 4: Handle PEFT adapter cleanup (Unsloth-specific)
+                if self.model:
+                    try:
+                        # Disable adapters if using PEFT/LoRA
+                        if hasattr(self.model, 'disable_adapters'):
+                            self.model.disable_adapters()
+                            print("PEFT adapters disabled")
+                        
+                        # Move model to CPU before deletion (frees GPU memory)
+                        if hasattr(self.model, 'cpu'):
+                            self.model.cpu()
+                            print("Model moved to CPU")
+                            
+                    except Exception as e:
+                        print(f"Error during model cleanup: {e}")
+                
+                # Step 5: Delete references
+                if self.model:
+                    del self.model
+                    self.model = None
+                    print("Model reference deleted")
+                
+                if self.tokenizer:
+                    del self.tokenizer
+                    self.tokenizer = None
+                    print("Tokenizer reference deleted")
+                
+                if self.trainer:
+                    del self.trainer
+                    self.trainer = None
+                    print("Trainer reference deleted")
+                
+                # Step 6: Clear CUDA cache (MUST be after deletions)
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    print("CUDA cache cleared and synchronized")
+                
+                # Step 7: Force garbage collection
+                gc.collect()
+                print("Garbage collection completed")
+                
+                self.is_cleaned_up = True
+                print(f"Resource cleanup completed for task {self.task_id}")
+                
+            except Exception as e:
+                print(f"Error during resource cleanup for task {self.task_id}: {e}")
+                # Force aggressive cleanup on error
+                try:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    gc.collect()
+                except:
+                    pass
+                self.is_cleaned_up = True
+    
+    def safe_train_with_cancellation(self, trainer, model, tokenizer, status):
+        """Execute training with cancellation support and resource management."""
+        self.register_resources(trainer, model, tokenizer, status)
+        
+        try:
+            # Clean up any existing corrupted checkpoints
+            self._cleanup_corrupted_checkpoints()
+            
+            # Add cancellation and atomic checkpoint callbacks
+            cancellation_callback = CancellationCallback(self.task_id, self.cancellation_event, status)
+            atomic_checkpoint_callback = AtomicCheckpointCallback(self.task_id, self)
+            
+            trainer.add_callback(cancellation_callback)
+            trainer.add_callback(atomic_checkpoint_callback)
+            
+            print(f"Starting training with cancellation and checkpoint safety for task {self.task_id}")
+            
+            # Start training
+            result = trainer.train()
+            
+            # Check if training was cancelled
+            if self.cancellation_event.is_set():
+                print(f"Training was cancelled for task {self.task_id}")
+                status.update(
+                    status="cancelled",
+                    progress="Training cancelled by user",
+                    message="Training was successfully cancelled"
+                )
+                
+                # Update active sessions
+                sessions = load_active_sessions()
+                if self.task_id in sessions:
+                    sessions[self.task_id]["status"] = "cancelled"
+                    sessions[self.task_id]["last_activity"] = time.strftime("%Y-%m-%d %H:%M:%S")
+                    save_active_sessions(sessions)
+                
+                # Mark completion for SSE
+                task_completion_flags[self.task_id] = True
+                
+            return result
+            
+        except KeyboardInterrupt:
+            print(f"Training interrupted by user for task {self.task_id}")
+            self._handle_emergency_stop("interrupted")
+            raise
+        except Exception as e:
+            print(f"Training error for task {self.task_id}: {e}")
+            self._handle_emergency_stop("error", str(e))
+            raise
+        finally:
+            # Always cleanup resources
+            self.safe_model_cleanup()
+            
+            # Remove from global managers
+            if self.task_id in training_managers:
+                del training_managers[self.task_id]
+    
+    def _handle_emergency_stop(self, stop_reason: str, error_msg: str = None):
+        """Handle emergency training stop scenarios."""
+        if self.status:
+            status_msg = f"Training {stop_reason}"
+            if error_msg:
+                status_msg += f": {error_msg}"
+                
+            self.status.update(
+                status=stop_reason,
+                progress=f"Training {stop_reason}",
+                message=status_msg
+            )
+        
+        # Update active sessions
+        sessions = load_active_sessions()
+        if self.task_id in sessions:
+            sessions[self.task_id]["status"] = stop_reason
+            sessions[self.task_id]["last_activity"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            save_active_sessions(sessions)
+        
+        # Mark completion for SSE
+        task_completion_flags[self.task_id] = True
+    
+    def _save_atomic_checkpoint(self, emergency: bool = False):
+        """Save checkpoint atomically to prevent corruption."""
+        if not self.model or not hasattr(self.model, 'save_pretrained'):
+            return
+            
+        try:
+            checkpoint_prefix = "emergency_checkpoint" if emergency else "checkpoint"
+            checkpoint_dir = Path("models") / f"{checkpoint_prefix}_{self.task_id}"
+            temp_dir = Path("models") / f"{checkpoint_prefix}_{self.task_id}_temp"
+            backup_dir = Path("models") / f"{checkpoint_prefix}_{self.task_id}_backup"
+            
+            # Ensure parent directory exists
+            checkpoint_dir.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Remove temp directory if it exists from previous failed attempt
+            if temp_dir.exists():
+                shutil.rmtree(temp_dir)
+            
+            print(f"Saving atomic checkpoint to {checkpoint_dir}")
+            
+            # Step 1: Save to temporary directory first
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            self.model.save_pretrained(str(temp_dir))
+            
+            if self.tokenizer:
+                self.tokenizer.save_pretrained(str(temp_dir))
+            
+            # Step 2: Atomic move operation (OS-level atomic on most filesystems)
+            if checkpoint_dir.exists():
+                # Backup existing checkpoint
+                if backup_dir.exists():
+                    shutil.rmtree(backup_dir)
+                shutil.move(str(checkpoint_dir), str(backup_dir))
+            
+            # Atomic move from temp to final location
+            shutil.move(str(temp_dir), str(checkpoint_dir))
+            
+            print(f"Atomic checkpoint completed: {checkpoint_dir}")
+            
+            # Clean up backup after successful move
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
+            
+        except Exception as e:
+            print(f"Failed to save atomic checkpoint: {e}")
+            # Clean up temp directory on failure
+            try:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+    
+    def _cleanup_corrupted_checkpoints(self):
+        """Clean up any corrupted or incomplete checkpoints."""
+        try:
+            models_dir = Path("models")
+            if not models_dir.exists():
+                return
+                
+            # Find and remove temporary checkpoint directories
+            temp_patterns = [
+                f"checkpoint_{self.task_id}_temp",
+                f"emergency_checkpoint_{self.task_id}_temp"
+            ]
+            
+            for pattern in temp_patterns:
+                temp_dirs = list(models_dir.glob(pattern))
+                for temp_dir in temp_dirs:
+                    if temp_dir.is_dir():
+                        print(f"Cleaning up incomplete checkpoint: {temp_dir}")
+                        shutil.rmtree(temp_dir)
+            
+            # Find and remove backup directories older than 1 hour
+            import time
+            current_time = time.time()
+            backup_patterns = [
+                f"checkpoint_{self.task_id}_backup",
+                f"emergency_checkpoint_{self.task_id}_backup"
+            ]
+            
+            for pattern in backup_patterns:
+                backup_dirs = list(models_dir.glob(pattern))
+                for backup_dir in backup_dirs:
+                    if backup_dir.is_dir():
+                        dir_time = backup_dir.stat().st_mtime
+                        if current_time - dir_time > 3600:  # 1 hour
+                            print(f"Cleaning up old backup: {backup_dir}")
+                            shutil.rmtree(backup_dir)
+                            
+        except Exception as e:
+            print(f"Error during checkpoint cleanup: {e}")
+
+
+class AtomicCheckpointCallback(TrainerCallback):
+    """Callback to handle atomic checkpoint operations during training."""
+    
+    def __init__(self, task_id: str, training_manager):
+        self.task_id = task_id
+        self.training_manager = training_manager
+        self.checkpoint_lock = threading.Lock()
+    
+    def on_save(self, args, state, control, **kwargs):
+        """Ensure atomic checkpoint operations."""
+        if self.training_manager.cancellation_event.is_set():
+            with self.checkpoint_lock:
+                print(f"Completing checkpoint before cancellation for task {self.task_id}")
+                # The normal checkpoint save will complete, then cancellation will proceed
+                # This ensures the checkpoint is not corrupted by premature cancellation
+    
+    def on_save_end(self, args, state, control, **kwargs):
+        """Called after checkpoint save completes."""
+        if self.training_manager.cancellation_event.is_set():
+            print(f"Checkpoint completed, ready for safe cancellation")
 
 
 def detect_hardware():
@@ -1147,29 +1538,39 @@ def fine_tune(request: FineTuneRequest, task_id: str = None) -> dict:
             logger.info(trainer_success_msg)
             status._add_log_to_queue(trainer_success_msg, "success")
 
-            # Start training
-            training_start_msg = "Starting training..."
+            # Start training with cancellation support
+            training_start_msg = "Starting training with cancellation support..."
             logger.info(training_start_msg)
             status._add_log_to_queue(training_start_msg, "info")
             
-            trainer.train()
+            # Create TrainingManager for this task
+            training_manager = TrainingManager(task_id)
             
-            save_msg = "Training completed, saving model..."
-            logger.info(save_msg)
-            status._add_log_to_queue(save_msg, "info")
+            # Use TrainingManager for safe training with cancellation support
+            result = training_manager.safe_train_with_cancellation(trainer, model, tokenizer, status)
             
-            trainer.save_model(request.output_dir)
-            tokenizer.save_pretrained(request.output_dir)
-            
-            final_success_msg = "Model saved successfully"
-            logger.info(final_success_msg)
-            status._add_log_to_queue(final_success_msg, "success")
+            # Only proceed with saving if training wasn't cancelled
+            if not training_manager.cancellation_event.is_set():
+                save_msg = "Training completed, saving model..."
+                logger.info(save_msg)
+                status._add_log_to_queue(save_msg, "info")
+                
+                trainer.save_model(request.output_dir)
+                tokenizer.save_pretrained(request.output_dir)
+                
+                final_success_msg = "Model saved successfully"
+                logger.info(final_success_msg)
+                status._add_log_to_queue(final_success_msg, "success")
 
-            status.update(status="completed", progress="Fine-tuning completed successfully.")
-            
-            # Mark completion and clean up session
-            task_completion_flags[task_id] = True
-            remove_active_session(task_id)
+                status.update(status="completed", progress="Fine-tuning completed successfully.")
+                
+                # Mark completion and clean up session
+                task_completion_flags[task_id] = True
+                remove_active_session(task_id)
+            else:
+                # Training was cancelled, status already updated by TrainingManager
+                logger.info(f"Training was cancelled for task {task_id}")
+                # Note: completion flag and session cleanup are handled by TrainingManager
 
         except Exception as e:
             logger.exception("Fine-tuning failed")

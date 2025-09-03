@@ -20,6 +20,7 @@ import type { ActiveSession, ActiveSessionsResponse } from '../types/api';
 interface ActiveSessionsPanelProps {
   onConnectToSession: (taskId: string) => void;
   onViewLogs?: (taskId: string) => void;
+  onCancelTraining?: (taskId: string) => void;
   currentTaskId?: string | null;
   refreshTrigger?: number;
 }
@@ -27,6 +28,7 @@ interface ActiveSessionsPanelProps {
 export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   onConnectToSession,
   onViewLogs,
+  onCancelTraining,
   currentTaskId,
   refreshTrigger = 0
 }) => {
@@ -84,7 +86,7 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
     const current = session.current_status;
     if (!current) return { progress: 0, text: 'No status available' };
 
-    if (current.progress_percentage !== undefined) {
+    if (current.progress_percentage !== undefined && current.progress_percentage !== null && typeof current.progress_percentage === 'number') {
       return {
         progress: current.progress_percentage,
         text: `${current.progress_percentage.toFixed(1)}%`
@@ -103,7 +105,7 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
       const progress = (current.current_epoch / current.total_epochs) * 100;
       return {
         progress,
-        text: `${current.current_epoch.toFixed(1)}/${current.total_epochs} epochs`
+        text: `${Number(current.current_epoch).toFixed(1)}/${current.total_epochs} epochs`
       };
     }
 
@@ -235,6 +237,22 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                         >
                           <ArrowRight className="w-3 h-3" />
                           <span>Connect</span>
+                        </button>
+                      )}
+                      
+                      {/* Cancel Button - for running sessions only */}
+                      {onCancelTraining && (status === 'running' || status === 'started') && (
+                        <button
+                          onClick={() => {
+                            if (window.confirm(`Are you sure you want to cancel training session ${taskId.slice(0, 8)}...?\n\nThe training will stop at the next safe checkpoint to preserve data integrity.`)) {
+                              onCancelTraining(taskId);
+                            }
+                          }}
+                          className="flex items-center space-x-1 px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+                          title="Cancel this training session"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          <span>Cancel</span>
                         </button>
                       )}
                     </div>

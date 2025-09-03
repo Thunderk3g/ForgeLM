@@ -56,6 +56,12 @@ export const getTrainingStatus = async (taskId: string): Promise<TrainingStatus>
   return response.data;
 };
 
+// Cancel training
+export const cancelTraining = async (taskId: string): Promise<ApiResponse> => {
+  const response = await api.delete(`/fine-tune/cancel/${taskId}`);
+  return response.data;
+};
+
 // SSE Log streaming types
 export interface LogEntry {
   timestamp: string;

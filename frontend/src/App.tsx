@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Toaster, toast } from 'react-hot-toast';
-import { Brain, Activity, Zap } from 'lucide-react';
+import { Brain, Activity, Zap, XCircle, MessageSquare, Settings } from 'lucide-react';
 
 // Components
 import { ModelSelector } from './components/ModelSelector';
@@ -11,6 +11,7 @@ import { ProgressBar } from './components/ProgressBar';
 import { LogViewer } from './components/LogViewer';
 import { MetricsChart } from './components/MetricsChart';
 import { ActiveSessionsPanel } from './components/ActiveSessionsPanel';
+import { ComparisonChatInterface } from './components/ComparisonChatInterface';
 
 // API
 import { 
@@ -21,7 +22,8 @@ import {
   getTrainingStatus,
   getAvailableModels,
   streamTrainingLogs,
-  getActiveTrainingSessions
+  getActiveTrainingSessions,
+  cancelTraining
 } from './services/api';
 import type { LogEntry
 } from './services/api';
@@ -44,6 +46,7 @@ interface MetricData {
 }
 
 function App() {
+  const [activeTab, setActiveTab] = useState<'training' | 'chat'>('training');
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus | null>(null);
@@ -54,6 +57,7 @@ function App() {
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
   const [streamConnection, setStreamConnection] = useState<{ close: () => void } | null>(null);
+  const streamConnectionRef = useRef<{ close: () => void } | null>(null);
   const [activeSessions, setActiveSessions] = useState<Record<string, any>>({});
   const [showActiveSessionsModal, setShowActiveSessionsModal] = useState<boolean>(false);
   const [activeSessionsRefresh, setActiveSessionsRefresh] = useState(0);
@@ -123,10 +127,10 @@ function App() {
   }, []);
 
   // Function to start log streaming for any task
-  const startLogStreaming = (taskId: string, updateStatus: boolean = true) => {
+  const startLogStreaming = useCallback((taskId: string, updateStatus: boolean = true) => {
     // Close existing connection if any
-    if (streamConnection) {
-      streamConnection.close();
+    if (streamConnectionRef.current) {
+      streamConnectionRef.current.close();
     }
       
     const connection = streamTrainingLogs(
@@ -196,7 +200,8 @@ function App() {
       );
       
     setStreamConnection(connection);
-  };
+    streamConnectionRef.current = connection;
+  }, []);
 
   // SSE streaming for current training task
   useEffect(() => {
@@ -210,14 +215,7 @@ function App() {
         setIsStreamConnected(false);
       }
     }
-    
-    return () => {
-      if (streamConnection) {
-        streamConnection.close();
-        setIsStreamConnected(false);
-      }
-    };
-  }, [currentTaskId, trainingStatus?.status]);
+  }, [currentTaskId, trainingStatus?.status, startLogStreaming]);
   
   // Fallback polling function in case SSE fails
   const fallbackToPolling = (taskId: string) => {
@@ -356,6 +354,32 @@ function App() {
     toast.success(`Viewing logs for session ${taskId.slice(0, 8)}...`);
   };
 
+  const handleCancelTraining = async (taskId: string) => {
+    try {
+      const response = await cancelTraining(taskId);
+      if (response.status === 'cancellation_requested') {
+        toast.success(`Cancellation requested for ${taskId.slice(0, 8)}...`);
+        
+        // Refresh active sessions to show updated status
+        setActiveSessionsRefresh(prev => prev + 1);
+        
+        // If this is the current task, update status
+        if (taskId === currentTaskId) {
+          setTrainingStatus(prevStatus => prevStatus ? {
+            ...prevStatus,
+            status: 'cancelling',
+            message: 'Cancellation requested - stopping at next safe checkpoint'
+          } : null);
+        }
+      } else {
+        toast.error(response.message || 'Failed to cancel training');
+      }
+    } catch (error: any) {
+      console.error('Cancellation error:', error);
+      toast.error(`Failed to cancel training: ${error?.response?.data?.detail || error.message}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Toaster 
@@ -373,23 +397,54 @@ function App() {
       <header className="bg-card shadow-sm border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-3">
-              <Brain className="w-8 h-8 text-blue-400" />
-              <h1 className="text-2xl font-bold text-gradient">LLMForge Dashboard</h1>
+            <div className="flex items-center space-x-6">
+              <div className="flex items-center space-x-3">
+                <Brain className="w-8 h-8 text-blue-400" />
+                <h1 className="text-2xl font-bold text-gradient">LLMForge</h1>
+              </div>
+              
+              {/* Navigation Tabs */}
+              <nav className="flex space-x-8">
+                <button
+                  onClick={() => setActiveTab('training')}
+                  className={`flex items-center space-x-2 px-3 py-2 text-sm font-medium transition-colors ${
+                    activeTab === 'training'
+                      ? 'text-purple-400 border-b-2 border-purple-400'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Fine-tuning</span>
+                </button>
+                
+                <button
+                  onClick={() => setActiveTab('chat')}
+                  className={`flex items-center space-x-2 px-3 py-2 text-sm font-medium transition-colors ${
+                    activeTab === 'chat'
+                      ? 'text-purple-400 border-b-2 border-purple-400'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  <span>Model Comparison</span>
+                </button>
+              </nav>
             </div>
             <div className="flex items-center space-x-4">
-              <button
-                onClick={() => setShowActiveSessions(!showActiveSessions)}
-                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                  showActiveSessions 
-                    ? 'bg-primary/20 text-primary border border-primary/30' 
-                    : 'bg-accent text-accent-foreground border border-border hover:bg-accent/80'
-                }`}
-                title="Toggle Active Sessions Panel"
-              >
-                <Activity className="w-4 h-4 inline mr-1" />
-                Active Training
-              </button>
+              {activeTab === 'training' && (
+                <button
+                  onClick={() => setShowActiveSessions(!showActiveSessions)}
+                  className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
+                    showActiveSessions 
+                      ? 'bg-primary/20 text-primary border border-primary/30' 
+                      : 'bg-accent text-accent-foreground border border-border hover:bg-accent/80'
+                  }`}
+                  title="Toggle Active Sessions Panel"
+                >
+                  <Activity className="w-4 h-4 inline mr-1" />
+                  Active Training
+                </button>
+              )}
               
               <div className="flex items-center space-x-2">
                 <Activity className={`w-5 h-5 ${
@@ -409,15 +464,37 @@ function App() {
           </div>
         </div>
       </header>
-
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      
+      {/* Main Content */}
+      {activeTab === 'chat' ? (
+        <ComparisonChatInterface />
+      ) : (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Training Progress Overview */}
         {trainingStatus && (
           <div className="mb-8">
             <div className="card p-6 animate-fade-in">
-              <div className="flex items-center space-x-2 mb-4">
-                <Zap className="w-5 h-5 text-orange-400" />
-                <h2 className="text-lg font-semibold text-card-foreground">Training Progress</h2>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-2">
+                  <Zap className="w-5 h-5 text-orange-400" />
+                  <h2 className="text-lg font-semibold text-card-foreground">Training Progress</h2>
+                </div>
+                
+                {/* Cancel Button for current training */}
+                {currentTaskId && (trainingStatus.status === 'running' || trainingStatus.status === 'started') && (
+                  <button
+                    onClick={() => {
+                      if (window.confirm(`Are you sure you want to cancel the current training session?\n\nThe training will stop at the next safe checkpoint to preserve data integrity.`)) {
+                        handleCancelTraining(currentTaskId);
+                      }
+                    }}
+                    className="flex items-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors text-sm font-medium"
+                    title="Cancel current training session"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    <span>Cancel Training</span>
+                  </button>
+                )}
               </div>
               
               <div className="space-y-4">
@@ -448,16 +525,16 @@ function App() {
                       <span className="ml-2 font-medium text-foreground">{trainingStatus.current_step}/{trainingStatus.total_steps}</span>
                     </div>
                   )}
-                  {trainingStatus.loss !== undefined && (
+                  {trainingStatus.loss !== undefined && trainingStatus.loss !== null && (
                     <div>
                       <span className="text-muted-foreground">Loss:</span>
                       <span className="ml-2 font-medium font-mono text-green-400">{trainingStatus.loss.toFixed(4)}</span>
                     </div>
                   )}
-                  {trainingStatus.learning_rate !== undefined && (
+                  {trainingStatus.learning_rate !== undefined && trainingStatus.learning_rate !== null && (
                     <div>
                       <span className="text-muted-foreground">Learning Rate:</span>
-                      <span className="ml-2 font-medium font-mono text-blue-400">{trainingStatus.learning_rate.toExponential(2)}</span>
+                      <span className="ml-2 font-medium font-mono text-blue-400 bg-transparent">{trainingStatus.learning_rate.toExponential(2)}</span>
                     </div>
                   )}
                 </div>
@@ -521,6 +598,7 @@ function App() {
               <ActiveSessionsPanel 
                 onConnectToSession={connectToActiveSession}
                 onViewLogs={handleViewLogs}
+                onCancelTraining={handleCancelTraining}
                 currentTaskId={currentTaskId}
                 refreshTrigger={activeSessionsRefresh}
               />
@@ -561,7 +639,8 @@ function App() {
             />
           </div>
         </div>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

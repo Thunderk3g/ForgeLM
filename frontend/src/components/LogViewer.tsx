@@ -65,7 +65,7 @@ export const LogViewer: React.FC<LogViewerProps> = ({
   // Enhanced state management
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilters, setActiveFilters] = useState<Set<LogLevel>>(new Set());
-  const [isAutoscrollEnabled, setIsAutoscrollEnabled] = useState(true);
+  const [isAutoscrollEnabled, setIsAutoscrollEnabled] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [hoveredLine, setHoveredLine] = useState<number | null>(null);
