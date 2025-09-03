@@ -107,11 +107,23 @@ class ComparisonChatService:
         self.sessions_file = Path("logs/chat_sessions.json")
         self.sessions_file.parent.mkdir(exist_ok=True)
         
-        # Start background tasks
-        asyncio.create_task(self._periodic_optimization())
+        # Start background tasks (only if event loop is running)
+        try:
+            asyncio.create_task(self._periodic_optimization())
+        except RuntimeError:
+            # No event loop running, skip background task for now
+            print("Skipping background optimization task (no event loop)")
         
         print(f"ComparisonChatService initialized with {max_hbm_gb}GB memory limit")
         print(f"Maximum concurrent sessions: {max_sessions}")
+        
+    async def start_background_tasks(self):
+        """Start background tasks when event loop is available"""
+        try:
+            asyncio.create_task(self._periodic_optimization())
+            print("Background optimization task started")
+        except Exception as e:
+            print(f"Failed to start background tasks: {e}")
     
     async def get_available_model_pairs(self) -> List[Dict[str, Any]]:
         """Get all available base model + LoRA adapter pairs"""
@@ -216,6 +228,17 @@ class ComparisonChatService:
                 raise HTTPException(status_code=404, detail="Session not found")
             
             session = self.active_sessions[request.session_id]
+            
+            # Ensure model pair is loaded for this session
+            if request.session_id not in self.dual_model_manager.active_pairs:
+                print(f"Loading model pair for session {request.session_id}")
+                try:
+                    # Load the model pair
+                    await self.dual_model_manager.load_model_pair(session.model_pair, request.session_id)
+                    print(f"Model pair loaded successfully for session {request.session_id}")
+                except Exception as load_error:
+                    print(f"Failed to load model pair: {load_error}")
+                    raise HTTPException(status_code=500, detail=f"Failed to load models: {str(load_error)}")
             
             # Convert Pydantic messages to dict format
             messages = [
@@ -337,6 +360,17 @@ class ComparisonChatService:
                 raise HTTPException(status_code=404, detail="Session not found")
             
             session = self.active_sessions[request.session_id]
+            
+            # Ensure model pair is loaded for this session
+            if request.session_id not in self.dual_model_manager.active_pairs:
+                print(f"Loading model pair for session {request.session_id}")
+                try:
+                    # Load the model pair
+                    await self.dual_model_manager.load_model_pair(session.model_pair, request.session_id)
+                    print(f"Model pair loaded successfully for session {request.session_id}")
+                except Exception as load_error:
+                    print(f"Failed to load model pair: {load_error}")
+                    raise HTTPException(status_code=500, detail=f"Failed to load models: {str(load_error)}")
             
             # Convert Pydantic messages to dict format
             messages = [
