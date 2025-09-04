@@ -194,7 +194,7 @@ else:
     print("   CUDA not available - Unsloth optimizations will be used in Docker/NVIDIA environments")
 
 class FineTuneRequest(BaseModel):
-    base_model_dir: str = "/app/models/base/unsloth_llama-3.1-8b-unsloth-bnb-4bit"
+    base_model_dir: str = "/app/models/base/Qwen_Qwen2.5-3B"
     dataset_dir: str = "/app/data/prepared"
     output_dir: str = "/app/models/finetuned"
     ft_type: str = "sft"  # unsupervised, sft, instruction
