@@ -29,7 +29,9 @@ class TrainingController:
         self.training_status = {}
     
     async def run_fine_tuning(self, request: FineTuneRequest, task_id: str):
-        """Run fine-tuning in the background"""
+        """Run fine-tuning in the background using thread executor"""
+        import asyncio
+        import concurrent.futures
         
         self.training_status[task_id] = {
             "status": "running", 
@@ -43,23 +45,48 @@ class TrainingController:
         
         task_completion_flags[task_id] = False
         
+        # Create a thread executor to run training without blocking the event loop
+        def run_training():
+            """Run training in a separate thread"""
+            try:
+                self.logger.info(f"Starting training in thread for task {task_id}")
+                result = self.training_service.fine_tune(request, task_id)
+                
+                self.training_status[task_id] = {
+                    "status": "completed",
+                    "message": "Fine-tuning completed successfully",
+                    "task_id": result.get("task_id", task_id)
+                }
+                self.logger.info(f"Training completed successfully for task {task_id}")
+                
+                return result
+                
+            except Exception as e:
+                self.logger.error(f"Training failed for task {task_id}: {e}")
+                self.training_status[task_id] = {
+                    "status": "error",
+                    "message": f"Fine-tuning failed: {str(e)}",
+                    "task_id": task_id
+                }
+                # Mark as complete even on error so SSE can close
+                task_completion_flags[task_id] = True
+                raise e
+        
         try:
-            # Use the training service to run fine-tuning
-            result = self.training_service.fine_tune(request, task_id)
-            
-            self.training_status[task_id] = {
-                "status": "completed",
-                "message": "Fine-tuning completed successfully",
-                "task_id": result.get("task_id", task_id)
-            }
-            
+            # Run the training in a thread executor to avoid blocking the event loop
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                self.logger.info(f"Submitting training task {task_id} to thread executor")
+                future = loop.run_in_executor(executor, run_training)
+                # Don't await here - let it run in background
+                
         except Exception as e:
+            self.logger.error(f"Failed to start training thread: {e}")
             self.training_status[task_id] = {
                 "status": "error",
-                "message": f"Fine-tuning failed: {str(e)}",
+                "message": f"Failed to start fine-tuning: {str(e)}",
                 "task_id": task_id
             }
-            # Mark as complete even on error so SSE can close
             task_completion_flags[task_id] = True
     
     async def fine_tune_endpoint(self, request: FineTuneRequest, background_tasks: BackgroundTasks) -> JSONResponse:
@@ -253,25 +280,39 @@ class TrainingController:
         async def generate_logs():
             last_heartbeat = time.time()
             last_status_update = None
+            connection_start = time.time()
             
-            # Send initial connection message
-            yield f"event: connected\n"
-            yield f"data: {json.dumps({'message': 'Connected to training logs', 'task_id': task_id})}\n\n"
-            
-            # Check if task exists in status files
-            status_file = Path("logs") / f"{task_id}_status.json"
-            if not status_file.exists():
+            try:
+                # Send initial connection message
+                yield f"event: connected\n"
+                yield f"data: {json.dumps({'message': 'Connected to training logs', 'task_id': task_id})}\n\n"
+                
+                # Check if task exists in status files
+                status_file = Path("logs") / f"{task_id}_status.json"
+                if not status_file.exists():
+                    self.logger.warning(f"Status file not found for task {task_id}")
+                    yield f"event: error\n"
+                    yield f"data: {json.dumps({'error': 'Task not found', 'task_id': task_id})}\n\n"
+                    return
+                
+                self.logger.info(f"Starting SSE stream for task {task_id}")
+                
+            except Exception as e:
+                self.logger.error(f"Error in SSE initialization: {e}")
                 yield f"event: error\n"
-                yield f"data: {json.dumps({'error': 'Task not found', 'task_id': task_id})}\n\n"
+                yield f"data: {json.dumps({'error': str(e), 'task_id': task_id})}\n\n"
                 return
             
             while True:
                 try:
+                    has_update = False
+                    
                     # Read status from file instead of queue
                     if status_file.exists():
                         try:
                             with open(status_file, "r") as f:
                                 status_data = json.load(f)
+                            has_update = True
                             
                             # Check if status was updated since last read
                             current_updated_at = status_data.get("updated_at")

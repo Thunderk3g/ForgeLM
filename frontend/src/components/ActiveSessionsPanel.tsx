@@ -123,60 +123,64 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
   const sessionCount = Object.keys(activeSessions).length;
 
   return (
-    <div className="bg-card rounded-lg border border-border shadow-sm">
+    <div className="card">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-border">
-        <div className="flex items-center space-x-3">
-          <div className="flex items-center space-x-2">
-            <Activity className="w-5 h-5 text-primary" />
-            <h3 className="font-semibold text-card-foreground">Active Training Sessions</h3>
+      <div className="card-header">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="rounded-md bg-primary/10 p-2">
+              <Activity className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="text-lg font-semibold tracking-tight">Active Training Sessions</h3>
+              <p className="text-sm text-muted-foreground">
+                {sessionCount} active session{sessionCount !== 1 ? 's' : ''}
+              </p>
+            </div>
           </div>
-          
-          <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-            <Monitor className="w-4 h-4" />
-            <span>{sessionCount} active</span>
-          </div>
-        </div>
 
-        <div className="flex items-center space-x-2">
-          {lastUpdated && (
-            <span className="text-xs text-muted-foreground">
-              Updated: {lastUpdated}
-            </span>
-          )}
-          
-          <button
-            onClick={loadActiveSessions}
-            disabled={loading}
-            className="p-2 text-muted-foreground hover:text-primary hover:bg-accent rounded-md transition-colors disabled:opacity-50"
-            title="Refresh sessions"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
+          <div className="flex items-center space-x-3">
+            {lastUpdated && (
+              <span className="text-xs text-muted-foreground">
+                Updated: {lastUpdated}
+              </span>
+            )}
+            
+            <button
+              onClick={loadActiveSessions}
+              disabled={loading}
+              className="btn-outline p-2"
+              title="Refresh sessions"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Content */}
-      <div className="p-4">
+      <div className="card-content">
         {error && (
-          <div className="flex items-center space-x-2 p-3 bg-destructive/10 border border-destructive/20 rounded-md mb-4">
-            <AlertCircle className="w-4 h-4 text-destructive" />
+          <div className="mb-4 flex items-center space-x-2 rounded-md border border-destructive/20 bg-destructive/10 p-3">
+            <AlertCircle className="h-4 w-4 text-destructive" />
             <span className="text-sm text-destructive">{error}</span>
           </div>
         )}
 
         {loading && sessionCount === 0 && (
-          <div className="flex items-center justify-center p-8 text-muted-foreground">
-            <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+          <div className="flex items-center justify-center py-12 text-muted-foreground">
+            <RefreshCw className="mr-2 h-5 w-5 animate-spin" />
             <span>Loading active sessions...</span>
           </div>
         )}
 
         {!loading && sessionCount === 0 && !error && (
-          <div className="flex flex-col items-center justify-center p-8 text-muted-foreground">
-            <Pause className="w-8 h-8 mb-2 opacity-50" />
-            <p className="text-center">No active training sessions</p>
-            <p className="text-sm text-center mt-1">Start a new training to see it here</p>
+          <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+            <div className="rounded-full bg-muted p-3 mb-4">
+              <Pause className="h-6 w-6 opacity-50" />
+            </div>
+            <h4 className="font-medium text-foreground mb-1">No active training sessions</h4>
+            <p className="text-sm">Start a new training to see it here</p>
           </div>
         )}
 
@@ -190,22 +194,24 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
               return (
                 <div
                   key={taskId}
-                  className={`p-4 rounded-lg border transition-all ${
+                  className={`rounded-lg border p-4 transition-all ${
                     isCurrentSession 
                       ? 'border-primary bg-primary/5' 
-                      : 'border-border bg-card hover:bg-accent/50'
+                      : 'border-border hover:bg-accent/50'
                   }`}
                 >
                   {/* Session Header */}
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="mb-4 flex items-center justify-between">
                     <div className="flex items-center space-x-3">
-                      {getStatusIcon(session.current_status?.status || session.status)}
+                      <div className="flex-shrink-0">
+                        {getStatusIcon(session.current_status?.status || session.status)}
+                      </div>
                       
-                      <div>
-                        <p className="font-medium text-sm text-card-foreground">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">
                           Task {taskId.slice(0, 8)}...
                         </p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-muted-foreground truncate">
                           {session.request_data?.base_model_dir?.split('/').pop() || 'Unknown model'}
                         </p>
                       </div>
@@ -213,19 +219,19 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
 
                     <div className="flex items-center space-x-2">
                       {isCurrentSession && (
-                        <span className="px-2 py-1 text-xs bg-primary/20 text-primary rounded-full">
-                          Connected
-                        </span>
+                        <div className="rounded-full bg-primary/10 px-3 py-1">
+                          <span className="text-xs font-medium text-primary">Connected</span>
+                        </div>
                       )}
                       
                       {/* View Logs Button - available for all sessions */}
                       {onViewLogs && (
                         <button
                           onClick={() => onViewLogs(taskId)}
-                          className="flex items-center space-x-1 px-2 py-1 text-xs bg-accent hover:bg-accent/80 text-accent-foreground rounded-md transition-colors"
+                          className="btn-outline px-2 py-1 text-xs"
                           title="View logs for this session"
                         >
-                          <FileText className="w-3 h-3" />
+                          <FileText className="mr-1 h-3 w-3" />
                           <span>Logs</span>
                         </button>
                       )}
@@ -233,25 +239,25 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                       {!isCurrentSession && isRunning && (
                         <button
                           onClick={() => onConnectToSession(taskId)}
-                          className="flex items-center space-x-1 px-3 py-1 text-xs bg-primary hover:bg-primary/90 text-primary-foreground rounded-md transition-colors"
+                          className="btn-primary px-3 py-1 text-xs"
                         >
-                          <ArrowRight className="w-3 h-3" />
+                          <ArrowRight className="mr-1 h-3 w-3" />
                           <span>Connect</span>
                         </button>
                       )}
                       
                       {/* Cancel Button - for running sessions only */}
-                      {onCancelTraining && (status === 'running' || status === 'started') && (
+                      {onCancelTraining && (session.current_status?.status === 'running' || session.status === 'running') && (
                         <button
                           onClick={() => {
                             if (window.confirm(`Are you sure you want to cancel training session ${taskId.slice(0, 8)}...?\n\nThe training will stop at the next safe checkpoint to preserve data integrity.`)) {
                               onCancelTraining(taskId);
                             }
                           }}
-                          className="flex items-center space-x-1 px-3 py-1 text-xs bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
+                          className="btn-destructive px-3 py-1 text-xs"
                           title="Cancel this training session"
                         >
-                          <XCircle className="w-3 h-3" />
+                          <XCircle className="mr-1 h-3 w-3" />
                           <span>Cancel</span>
                         </button>
                       )}
@@ -260,14 +266,14 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
 
                   {/* Progress Bar */}
                   {progressInfo.progress > 0 && (
-                    <div className="mb-3">
-                      <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                        <span>Progress</span>
-                        <span>{progressInfo.text}</span>
+                    <div className="mb-4 space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span className="font-medium">{progressInfo.text}</span>
                       </div>
-                      <div className="w-full bg-accent rounded-full h-1.5">
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-secondary">
                         <div
-                          className="bg-primary h-1.5 rounded-full transition-all duration-300"
+                          className="h-full bg-primary transition-all duration-300 ease-out"
                           style={{ width: `${Math.min(progressInfo.progress, 100)}%` }}
                         />
                       </div>
@@ -278,20 +284,20 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                   <div className="grid grid-cols-2 gap-4 text-xs">
                     <div className="space-y-1">
                       <div className="flex items-center space-x-1 text-muted-foreground">
-                        <Clock className="w-3 h-3" />
-                        <span>Started:</span>
+                        <Clock className="h-3 w-3" />
+                        <span>Started</span>
                       </div>
-                      <p className="text-card-foreground">
+                      <p className="font-medium">
                         {formatTime(session.started_at)}
                       </p>
                     </div>
 
                     <div className="space-y-1">
                       <div className="flex items-center space-x-1 text-muted-foreground">
-                        <Zap className="w-3 h-3" />
-                        <span>Status:</span>
+                        <Zap className="h-3 w-3" />
+                        <span>Status</span>
                       </div>
-                      <p className="text-card-foreground">
+                      <p className="font-medium">
                         {session.current_status?.progress || 'Running...'}
                       </p>
                     </div>
@@ -299,10 +305,10 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                     {session.current_status?.loss && (
                       <div className="space-y-1">
                         <div className="flex items-center space-x-1 text-muted-foreground">
-                          <Activity className="w-3 h-3" />
-                          <span>Loss:</span>
+                          <Activity className="h-3 w-3" />
+                          <span>Loss</span>
                         </div>
-                        <p className="text-card-foreground">
+                        <p className="font-mono font-medium text-green-600">
                           {session.current_status.loss.toFixed(4)}
                         </p>
                       </div>
@@ -311,10 +317,10 @@ export const ActiveSessionsPanel: React.FC<ActiveSessionsPanelProps> = ({
                     {session.current_status?.estimated_remaining_minutes && (
                       <div className="space-y-1">
                         <div className="flex items-center space-x-1 text-muted-foreground">
-                          <Clock className="w-3 h-3" />
-                          <span>ETA:</span>
+                          <Clock className="h-3 w-3" />
+                          <span>ETA</span>
                         </div>
-                        <p className="text-card-foreground">
+                        <p className="font-medium text-blue-600">
                           ~{Math.round(session.current_status.estimated_remaining_minutes)} min
                         </p>
                       </div>

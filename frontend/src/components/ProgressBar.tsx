@@ -16,20 +16,25 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   const clampedProgress = Math.max(0, Math.min(100, progress));
 
   return (
-    <div className={`w-full ${className}`}>
+    <div className={`w-full space-y-2 ${className}`}>
       {label && (
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-sm font-medium text-gray-700">{label}</span>
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium leading-none">{label}</span>
           {showPercentage && (
-            <span className="text-sm text-gray-500">{clampedProgress.toFixed(1)}%</span>
+            <span className="text-sm font-medium text-muted-foreground">
+              {clampedProgress.toFixed(1)}%
+            </span>
           )}
         </div>
       )}
-      <div className="w-full bg-gray-200 rounded-full h-2.5">
+      <div className="relative h-2 w-full overflow-hidden rounded-full bg-secondary">
         <div
-          className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
-          style={{ width: `${clampedProgress}%` }}
-        ></div>
+          className="h-full w-full flex-1 bg-primary transition-all duration-500 ease-out"
+          style={{ 
+            transform: `translateX(-${100 - clampedProgress}%)`,
+            transition: 'transform 0.5s ease-out'
+          }}
+        />
       </div>
     </div>
   );

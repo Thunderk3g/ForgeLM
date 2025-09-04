@@ -1,7 +1,7 @@
 export interface SelectModelRequest {
   model_id: string;
-  output_dir?: string;
-  quantize?: 'none' | '4bit' | '8bit';
+  output_dir: string;
+  quantization?: string;
 }
 
 export interface PrepareDataRequest {
@@ -17,11 +17,10 @@ export interface PrepareDataRequest {
 export interface FineTuneRequest {
   base_model_dir: string;
   dataset_dir: string;
-  model_name: string;
   output_dir?: string;
-  ft_type: 'sft' | 'instruction' | 'unsupervised';
-  peft_method?: 'qlora';
-  alignment?: string;
+  ft_type: string;
+  peft_method: string;
+  alignment: string;
   epochs: number;
   batch_size: number;
   learning_rate: number;
@@ -31,7 +30,7 @@ export interface FineTuneRequest {
 }
 
 export interface ApiResponse {
-  status: 'success' | 'error' | 'started' | 'running' | 'completed';
+  status: 'success' | 'error' | 'started' | 'running' | 'completed' | 'cancellation_requested';
   message: string;
   model_path?: string;
   train_path?: string;
@@ -44,7 +43,7 @@ export interface ApiResponse {
 
 export interface TrainingStatus {
   task_id: string;
-  status: 'running' | 'completed' | 'error';
+  status: 'running' | 'completed' | 'error' | 'cancelling' | 'cancelled' | 'started';
   message?: string;
   progress: string;
   current_epoch?: number;

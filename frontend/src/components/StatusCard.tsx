@@ -11,27 +11,27 @@ interface StatusCardProps {
 const statusConfig = {
   pending: {
     icon: Clock,
-    color: 'text-slate-400',
-    bgColor: 'bg-slate-900/20',
-    borderColor: 'border-slate-700/30'
+    color: 'text-muted-foreground',
+    bgColor: 'bg-muted/50',
+    dotColor: 'bg-muted-foreground'
   },
   running: {
     icon: Play,
-    color: 'text-blue-400',
-    bgColor: 'bg-blue-950/20',
-    borderColor: 'border-blue-800/30'
+    color: 'text-blue-500',
+    bgColor: 'bg-blue-50/10',
+    dotColor: 'bg-blue-500'
   },
   completed: {
     icon: CheckCircle,
-    color: 'text-green-400',
-    bgColor: 'bg-green-950/20',
-    borderColor: 'border-green-800/30'
+    color: 'text-green-500',
+    bgColor: 'bg-green-50/10',
+    dotColor: 'bg-green-500'
   },
   error: {
     icon: AlertCircle,
-    color: 'text-red-400',
-    bgColor: 'bg-red-950/20',
-    borderColor: 'border-red-800/30'
+    color: 'text-destructive',
+    bgColor: 'bg-destructive/10',
+    dotColor: 'bg-destructive'
   }
 };
 
@@ -40,18 +40,27 @@ export const StatusCard: React.FC<StatusCardProps> = ({ title, status, message, 
   const Icon = config?.icon || Clock;
 
   return (
-    <div className={`p-4 rounded-lg border ${config.bgColor} ${config.borderColor} animate-fade-in`}>
-      <div className="flex items-center space-x-3">
-        <Icon className={`w-6 h-6 ${config.color}`} />
-        <div className="flex-1">
-          <h3 className="font-semibold text-foreground">{title}</h3>
-          {message && <p className="text-sm text-muted-foreground mt-1">{message}</p>}
+    <div className="rounded-lg border bg-card p-4 transition-colors">
+      <div className="flex items-start space-x-3">
+        <div className={`rounded-md p-2 ${config.bgColor}`}>
+          <Icon className={`h-4 w-4 ${config.color}`} />
+        </div>
+        <div className="flex-1 space-y-2">
+          <div className="flex items-center space-x-2">
+            <h4 className="text-sm font-semibold">{title}</h4>
+            <div className={`h-2 w-2 rounded-full ${config.dotColor}`} />
+          </div>
+          {message && (
+            <p className="text-sm text-muted-foreground">{message}</p>
+          )}
           {details && Object.keys(details).length > 0 && (
-            <div className="mt-2 text-xs text-muted-foreground">
+            <div className="space-y-1">
               {Object.entries(details).map(([key, value]) => (
-                <div key={key} className="flex justify-between">
-                  <span className="capitalize">{key.replace(/_/g, ' ')}:</span>
-                  <span className="font-mono text-foreground">{String(value)}</span>
+                <div key={key} className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground capitalize">
+                    {key.replace(/_/g, ' ')}
+                  </span>
+                  <span className="font-mono font-medium">{String(value)}</span>
                 </div>
               ))}
             </div>

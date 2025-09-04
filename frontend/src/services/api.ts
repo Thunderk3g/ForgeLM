@@ -71,6 +71,7 @@ export interface LogEntry {
   epoch?: number | null;
   loss?: number | null;
   learning_rate?: number | null;
+  progress_percentage?: number;
 }
 
 export interface SSEEvent {
@@ -113,11 +114,11 @@ export const streamTrainingLogs = (
       // If there's status information in the metrics, update status too
       if (logEntry.step || logEntry.epoch || logEntry.loss) {
         const statusUpdate: Partial<TrainingStatus> = {
-          current_step: logEntry.step,
-          current_epoch: logEntry.epoch,
-          loss: logEntry.loss,
-          learning_rate: logEntry.learning_rate,
-          progress_percentage: logEntry.progress_percentage
+          current_step: logEntry.step ?? undefined,
+          current_epoch: logEntry.epoch ?? undefined,
+          loss: logEntry.loss ?? undefined,
+          learning_rate: logEntry.learning_rate ?? undefined,
+          progress_percentage: logEntry.progress_percentage ?? undefined
         };
         onStatus(statusUpdate as TrainingStatus);
       }

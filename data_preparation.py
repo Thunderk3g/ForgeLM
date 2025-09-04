@@ -312,6 +312,29 @@ def prepare_data(request: PrepareDataRequest) -> Dict[str, str]:
         train_ds.save_to_disk(str(train_path))
         val_ds.save_to_disk(str(val_path))
 
+        # Create dataset_dict.json for proper DatasetDict loading
+        dataset_dict_info = {
+            "splits": {
+                "train": {
+                    "name": "train",
+                    "num_bytes": train_ds.data.nbytes if hasattr(train_ds.data, 'nbytes') else None,
+                    "num_examples": len(train_ds),
+                    "shard_lengths": None,
+                    "dataset_name": "prepared_dataset"
+                },
+                "val": {
+                    "name": "val", 
+                    "num_bytes": val_ds.data.nbytes if hasattr(val_ds.data, 'nbytes') else None,
+                    "num_examples": len(val_ds),
+                    "shard_lengths": None,
+                    "dataset_name": "prepared_dataset"
+                }
+            }
+        }
+        with open(output_path / "dataset_dict.json", "w", encoding="utf-8") as f:
+            json.dump(dataset_dict_info, f, indent=2)
+        print(f"[DataPrep] Created dataset_dict.json for DatasetDict loading")
+
         # Save also as parquet for quick inspection (requires pyarrow, which datasets pulls in)
         train_parquet = output_path / "train.parquet"
         val_parquet = output_path / "val.parquet"

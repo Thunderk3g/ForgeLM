@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 import torch
+from datasets import load_from_disk
 
 from models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
@@ -31,6 +32,15 @@ from config.settings import settings
 # Environment optimization
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
+
+# Import common dependencies first
+try:
+    from transformers import TrainingArguments, AutoTokenizer, AutoModelForCausalLM, Trainer, TrainerCallback
+    from trl import SFTTrainer
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
+    print("WARNING: Transformers/TRL not available")
 
 # Import Unsloth with proper error handling
 try:
@@ -43,15 +53,6 @@ try:
 except (ImportError, NotImplementedError) as e:
     UNSLOTH_AVAILABLE = False
     print(f"WARNING: Unsloth not available ({e})")
-    
-    # Fallback imports
-    try:
-        from transformers import TrainingArguments, AutoTokenizer, AutoModelForCausalLM, Trainer, TrainerCallback
-        from trl import SFTTrainer
-        TRANSFORMERS_AVAILABLE = True
-    except ImportError:
-        TRANSFORMERS_AVAILABLE = False
-        print("WARNING: Neither Unsloth nor Transformers available")
 
 # Optional PEFT import
 try:
@@ -115,7 +116,7 @@ if KUBERNETES_MODE:
     print("Kubernetes graceful shutdown handlers registered")
 
 
-class UnslothProgressCallback:
+class UnslothProgressCallback(TrainerCallback):
     """Custom callback for Unsloth training progress tracking"""
     
     def __init__(self, task_id: str, log_queue: queue.Queue):
@@ -123,6 +124,24 @@ class UnslothProgressCallback:
         self.log_queue = log_queue
         self.start_time = time.time()
         self.logger = get_logger(f"training.{task_id}")
+        
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Called at the beginning of training"""
+        try:
+            message = f"Starting training with {state.max_steps} total steps"
+            
+            log_entry = {
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "type": "train_start",
+                "message": message,
+                "total_steps": state.max_steps,
+                "total_epochs": args.num_train_epochs
+            }
+            
+            self.log_queue.put(log_entry)
+            self.logger.info(message)
+        except Exception as e:
+            self.logger.error(f"Error in train begin callback: {e}")
         
     def on_epoch_begin(self, args, state, control, **kwargs):
         """Called at the beginning of each epoch"""
@@ -142,6 +161,12 @@ class UnslothProgressCallback:
             self.logger.info(message)
         except Exception as e:
             self.logger.error(f"Error in epoch begin callback: {e}")
+    
+    def on_step_begin(self, args, state, control, **kwargs):
+        """Called at the beginning of each training step"""
+        # We don't need to log every step begin to avoid spam
+        # This method exists just to satisfy the trainer callback interface
+        pass
     
     def on_step_end(self, args, state, control, **kwargs):
         """Called at the end of each training step"""
@@ -388,7 +413,7 @@ class TrainingService:
                 request.base_model_dir,
                 trust_remote_code=True,
                 device_map="auto",
-                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             )
             
             # Add padding token if missing

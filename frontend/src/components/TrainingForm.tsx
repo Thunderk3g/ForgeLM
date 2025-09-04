@@ -10,12 +10,14 @@ interface TrainingFormProps {
 }
 
 export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isLoading, selectedModel, selectedModelInfo }) => {
-  const [ftType, setFtType] = useState<'sft' | 'instruction' | 'unsupervised'>('instruction');
-  const [epochs, setEpochs] = useState(3);
-  const [batchSize, setBatchSize] = useState(4);
-  const [learningRate, setLearningRate] = useState(1e-4);
+  const [ftType, setFtType] = useState<string>('instruction');
+  const [peftMethod, setPeftMethod] = useState<string>('qlora');
+  const [alignment, setAlignment] = useState<string>('none');
+  const [epochs, setEpochs] = useState(1);
+  const [batchSize, setBatchSize] = useState(20);
+  const [learningRate, setLearningRate] = useState(0.0001);
   const [gradientAccumulation, setGradientAccumulation] = useState(4);
-  const [maxSeqLength, setMaxSeqLength] = useState(512);
+  const [maxSeqLength, setMaxSeqLength] = useState(256);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,9 +29,10 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
     onStartTraining({
       base_model_dir: selectedModelInfo?.path || '/app/models/base',
       dataset_dir: '/app/data/prepared',
-      model_name: selectedModel,
+      output_dir: '/app/models/fine_tuned',
       ft_type: ftType,
-      peft_method: 'qlora',
+      peft_method: peftMethod,
+      alignment: alignment,
       epochs,
       batch_size: batchSize,
       learning_rate: learningRate,
@@ -39,134 +42,222 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
   };
 
   return (
-    <div className="bg-card rounded-lg shadow-sm border-border border p-6">
-      <div className="flex items-center space-x-2 mb-4">
-        <Settings className="w-5 h-5 text-purple-500" />
-        <h3 className="font-semibold text-foreground">Fine-tuning Configuration</h3>
+    <div className="card">
+      <div className="card-header">
+        <div className="flex items-center space-x-3">
+          <div className="rounded-md bg-primary/10 p-2">
+            <Settings className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold tracking-tight">Fine-tuning Configuration</h3>
+            <p className="text-sm text-muted-foreground">
+              Configure training parameters for optimal results
+            </p>
+          </div>
+        </div>
       </div>
 
-      {selectedModel && (
-        <div className="mb-4 p-3 bg-green-500/10 border border-green-500/20 rounded-md">
-          <p className="text-sm text-green-400">
-            <span className="font-medium">Selected Model:</span> {selectedModel}
-          </p>
-        </div>
-      )}
+      <div className="card-content">
+        {selectedModel && (
+          <div className="mb-6 rounded-md border border-green-200/20 bg-green-50/5 p-4">
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 rounded-full bg-green-500" />
+              <p className="text-sm font-medium text-green-400">
+                Selected Model: {selectedModel}
+              </p>
+            </div>
+          </div>
+        )}
 
-      {!selectedModel && (
-        <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-md">
-          <p className="text-sm text-yellow-400">
-            Please select a model first before configuring fine-tuning.
-          </p>
-        </div>
-      )}
+        {!selectedModel && (
+          <div className="mb-6 rounded-md border border-yellow-200/20 bg-yellow-50/5 p-4">
+            <div className="flex items-center space-x-2">
+              <div className="h-2 w-2 rounded-full bg-yellow-500" />
+              <p className="text-sm font-medium text-yellow-400">
+                Please select a model first before configuring fine-tuning
+              </p>
+            </div>
+          </div>
+        )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">
-            Training Type
-          </label>
-          <div className="space-y-2">
-            {(['instruction', 'sft', 'unsupervised'] as const).map((option) => (
-              <label key={option} className="flex items-center space-x-2">
-                <input
-                  type="radio"
-                  value={option}
-                  checked={ftType === option}
-                  onChange={(e) => setFtType(e.target.value as typeof ftType)}
-                  className="text-purple-500 accent-purple-500"
-                />
-                <span className="capitalize">
-                  {option === 'sft' ? 'Supervised Fine-tuning' : `${option} Tuning`}
-                </span>
+        <form onSubmit={handleSubmit} className="space-y-8">
+          <div className="space-y-6">
+            <div className="space-y-3">
+              <label className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70">
+                Training Type
               </label>
-            ))}
-          </div>
-        </div>
+              <div className="grid gap-3">
+                {(['instruction', 'sft', 'unsupervised'] as const).map((option) => (
+                  <label key={option} className="flex items-center space-x-3 cursor-pointer">
+                    <input
+                      type="radio"
+                      value={option}
+                      checked={ftType === option}
+                      onChange={(e) => setFtType(e.target.value)}
+                      className="h-4 w-4 border border-primary text-primary focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <div>
+                      <p className="text-sm font-medium">
+                        {option === 'sft' ? 'Supervised Fine-tuning' : `${option.charAt(0).toUpperCase() + option.slice(1)} Tuning`}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {option === 'instruction' ? 'Train on instruction-response pairs' : 
+                         option === 'sft' ? 'Standard supervised fine-tuning' : 
+                         'Train on unlabeled text data'}
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Epochs
-            </label>
-            <input
-              type="number"
-              value={epochs}
-              onChange={(e) => setEpochs(parseInt(e.target.value))}
-              min="1"
-              max="20"
-              className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Batch Size
-            </label>
-            <input
-              type="number"
-              value={batchSize}
-              onChange={(e) => setBatchSize(parseInt(e.target.value))}
-              min="1"
-              max="32"
-              className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            />
-          </div>
-        </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">
+                  PEFT Method
+                </label>
+                <select
+                  value={peftMethod}
+                  onChange={(e) => setPeftMethod(e.target.value)}
+                  className="input"
+                >
+                  <option value="qlora">QLoRA - 4-bit quantized</option>
+                  <option value="lora">LoRA - Standard precision</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Parameter-efficient fine-tuning method
+                </p>
+              </div>
 
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1">
-            Learning Rate
-          </label>
-          <input
-            type="number"
-            value={learningRate}
-            onChange={(e) => setLearningRate(parseFloat(e.target.value))}
-            min="0.00001"
-            max="0.01"
-            step="0.00001"
-            className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Gradient Accumulation
-            </label>
-            <input
-              type="number"
-              value={gradientAccumulation}
-              onChange={(e) => setGradientAccumulation(parseInt(e.target.value))}
-              min="1"
-              max="32"
-              className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            />
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">
+                  Alignment Method
+                </label>
+                <select
+                  value={alignment}
+                  onChange={(e) => setAlignment(e.target.value)}
+                  className="input"
+                >
+                  <option value="none">None</option>
+                  <option value="dpo">DPO - Direct Preference</option>
+                  <option value="ipo">IPO - Identity Preference</option>
+                  <option value="kto">KTO - Kahneman-Tversky</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Human preference alignment technique
+                </p>
+              </div>
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Max Sequence Length
-            </label>
-            <input
-              type="number"
-              value={maxSeqLength}
-              onChange={(e) => setMaxSeqLength(parseInt(e.target.value))}
-              min="128"
-              max="4096"
-              step="128"
-              className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            />
-          </div>
-        </div>
 
-        <button
-          type="submit"
-          disabled={isLoading || !selectedModel}
-          className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          <Play className="w-4 h-4" />
-          <span>{isLoading ? 'Starting Training...' : 'Start Fine-tuning'}</span>
-        </button>
-      </form>
+          <div className="space-y-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">
+                  Epochs
+                </label>
+                <input
+                  type="number"
+                  value={epochs}
+                  onChange={(e) => setEpochs(parseInt(e.target.value))}
+                  min="1"
+                  max="20"
+                  className="input"
+                  placeholder="1"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Number of training passes through dataset
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">
+                  Batch Size
+                </label>
+                <input
+                  type="number"
+                  value={batchSize}
+                  onChange={(e) => setBatchSize(parseInt(e.target.value))}
+                  min="1"
+                  max="32"
+                  className="input"
+                  placeholder="20"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Samples processed per training step
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium leading-none">
+                Learning Rate
+              </label>
+              <input
+                type="number"
+                value={learningRate}
+                onChange={(e) => setLearningRate(parseFloat(e.target.value))}
+                min="0.00001"
+                max="0.01"
+                step="0.00001"
+                className="input"
+                placeholder="0.0001"
+              />
+              <p className="text-xs text-muted-foreground">
+                Controls the step size during optimization (0.00001 - 0.01)
+              </p>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">
+                  Gradient Accumulation Steps
+                </label>
+                <input
+                  type="number"
+                  value={gradientAccumulation}
+                  onChange={(e) => setGradientAccumulation(parseInt(e.target.value))}
+                  min="1"
+                  max="32"
+                  className="input"
+                  placeholder="4"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Accumulate gradients for effective larger batch size
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium leading-none">
+                  Max Sequence Length
+                </label>
+                <input
+                  type="number"
+                  value={maxSeqLength}
+                  onChange={(e) => setMaxSeqLength(parseInt(e.target.value))}
+                  min="128"
+                  max="4096"
+                  step="128"
+                  className="input"
+                  placeholder="256"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maximum input token length (128 - 4096)
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={isLoading || !selectedModel}
+            className="btn-primary w-full"
+          >
+            <Play className="mr-2 h-4 w-4" />
+            {isLoading ? 'Starting Training...' : 'Start Fine-tuning'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 };

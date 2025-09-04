@@ -58,8 +58,7 @@ function App() {
   const [isStreamConnected, setIsStreamConnected] = useState<boolean>(false);
   const [streamConnection, setStreamConnection] = useState<{ close: () => void } | null>(null);
   const streamConnectionRef = useRef<{ close: () => void } | null>(null);
-  const [activeSessions, setActiveSessions] = useState<Record<string, any>>({});
-  const [showActiveSessionsModal, setShowActiveSessionsModal] = useState<boolean>(false);
+  // Removed unused state variables
   const [activeSessionsRefresh, setActiveSessionsRefresh] = useState(0);
   const [showActiveSessions, setShowActiveSessions] = useState(true);
   const [viewingLogsTaskId, setViewingLogsTaskId] = useState<string | null>(null);
@@ -99,12 +98,8 @@ function App() {
       try {
         const response = await getActiveTrainingSessions();
         if (response.status === 'success') {
-          setActiveSessions(response.active_sessions);
-          
-          // If there are active sessions and no current task, show modal
-          if (Object.keys(response.active_sessions).length > 0 && !currentTaskId) {
-            setShowActiveSessionsModal(true);
-          }
+          // Active sessions loaded - trigger UI refresh if needed
+          setActiveSessionsRefresh(prev => prev + 1);
         }
       } catch (error) {
         console.error('Error loading active sessions:', error);
@@ -162,15 +157,15 @@ function App() {
           // Ensure status has the required fields with fallbacks
           const validatedStatus: TrainingStatus = {
             task_id: status.task_id || taskId || '',
-            status: status.status || 'pending',
+            status: status.status || 'running',
             progress: status.progress || 'No progress information',
-            current_step: status.current_step || null,
-            total_steps: status.total_steps || null,
-            current_epoch: status.current_epoch || null,
-            total_epochs: status.total_epochs || null,
-            loss: status.loss || null,
-            learning_rate: status.learning_rate || null,
-            message: status.message || null
+            current_step: status.current_step ?? undefined,
+            total_steps: status.total_steps ?? undefined,
+            current_epoch: status.current_epoch ?? undefined,
+            total_epochs: status.total_epochs ?? undefined,
+            loss: status.loss ?? undefined,
+            learning_rate: status.learning_rate ?? undefined,
+            message: status.message ?? undefined
           };
           setTrainingStatus(validatedStatus);
         }
@@ -283,7 +278,12 @@ function App() {
       const response = await startFineTuning(request);
       if (response.status === 'started' && response.task_id) {
         setCurrentTaskId(response.task_id);
-        setTrainingStatus({ status: 'running', message: response.message });
+        setTrainingStatus({ 
+          task_id: response.task_id,
+          status: 'running', 
+          progress: 'Starting training...',
+          message: response.message 
+        });
         setLogs([]);
         setMetrics([]);
         
@@ -323,7 +323,6 @@ function App() {
     setCurrentTaskId(taskId);
     setLogs([]);
     setMetrics([]);
-    setShowActiveSessionsModal(false);
     
     // Load current status
     try {
@@ -393,71 +392,64 @@ function App() {
         }}
       />
       
-      {/* Header */}
-      <header className="bg-card shadow-sm border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center space-x-6">
+      {/* Header - Following shadcn/ui navigation patterns */}
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container mx-auto max-w-7xl">
+          <div className="flex h-16 items-center justify-between px-4">
+            <div className="flex items-center space-x-8">
               <div className="flex items-center space-x-3">
-                <Brain className="w-8 h-8 text-blue-400" />
-                <h1 className="text-2xl font-bold text-gradient">LLMForge</h1>
+                <Brain className="h-8 w-8 text-primary" />
+                <h1 className="text-2xl font-bold tracking-tight">LLMForge</h1>
               </div>
               
               {/* Navigation Tabs */}
-              <nav className="flex space-x-8">
+              <nav className="flex items-center space-x-1">
                 <button
                   onClick={() => setActiveTab('training')}
-                  className={`flex items-center space-x-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                     activeTab === 'training'
-                      ? 'text-purple-400 border-b-2 border-purple-400'
-                      : 'text-muted-foreground hover:text-foreground'
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground'
                   }`}
                 >
-                  <Settings className="w-4 h-4" />
-                  <span>Fine-tuning</span>
+                  <Settings className="mr-2 h-4 w-4" />
+                  Fine-tuning
                 </button>
                 
                 <button
                   onClick={() => setActiveTab('chat')}
-                  className={`flex items-center space-x-2 px-3 py-2 text-sm font-medium transition-colors ${
+                  className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                     activeTab === 'chat'
-                      ? 'text-purple-400 border-b-2 border-purple-400'
-                      : 'text-muted-foreground hover:text-foreground'
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground'
                   }`}
                 >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Model Comparison</span>
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  Model Comparison
                 </button>
               </nav>
             </div>
+            
             <div className="flex items-center space-x-4">
               {activeTab === 'training' && (
                 <button
                   onClick={() => setShowActiveSessions(!showActiveSessions)}
-                  className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                    showActiveSessions 
-                      ? 'bg-primary/20 text-primary border border-primary/30' 
-                      : 'bg-accent text-accent-foreground border border-border hover:bg-accent/80'
-                  }`}
+                  className={`btn-outline ${showActiveSessions ? 'bg-accent' : ''}`}
                   title="Toggle Active Sessions Panel"
                 >
-                  <Activity className="w-4 h-4 inline mr-1" />
+                  <Activity className="mr-2 h-4 w-4" />
                   Active Training
                 </button>
               )}
               
-              <div className="flex items-center space-x-2">
-                <Activity className={`w-5 h-5 ${
-                  apiStatus === 'online' ? 'status-online' : 
-                  apiStatus === 'offline' ? 'status-error' : 
-                  'status-warning'
+              <div className="flex items-center space-x-2 rounded-md border px-3 py-1.5">
+                <div className={`h-2 w-2 rounded-full ${
+                  apiStatus === 'online' ? 'bg-green-500' : 
+                  apiStatus === 'offline' ? 'bg-red-500' : 
+                  'bg-yellow-500'
                 }`} />
-                <span className={`text-sm font-medium ${
-                  apiStatus === 'online' ? 'text-green-300' : 
-                  apiStatus === 'offline' ? 'text-red-300' : 
-                  'text-yellow-300'
-                }`}>
-                  API {apiStatus === 'checking' ? 'Checking...' : apiStatus}
+                <span className="text-sm font-medium">
+                  {apiStatus === 'checking' ? 'Checking...' : 'API ' + apiStatus}
                 </span>
               </div>
             </div>
@@ -469,72 +461,85 @@ function App() {
       {activeTab === 'chat' ? (
         <ComparisonChatInterface />
       ) : (
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8 space-y-8">
         {/* Training Progress Overview */}
         {trainingStatus && (
-          <div className="mb-8">
-            <div className="card p-6 animate-fade-in">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center space-x-2">
-                  <Zap className="w-5 h-5 text-orange-400" />
-                  <h2 className="text-lg font-semibold text-card-foreground">Training Progress</h2>
+          <div className="space-y-6">
+            <div className="card">
+              <div className="card-header">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-3">
+                    <div className="rounded-md bg-primary/10 p-2">
+                      <Zap className="h-5 w-5 text-primary" />
+                    </div>
+                    <div>
+                      <h2 className="text-lg font-semibold tracking-tight">Training Progress</h2>
+                      <p className="text-sm text-muted-foreground">
+                        Monitor your model fine-tuning in real-time
+                      </p>
+                    </div>
+                  </div>
+                  
+                  {/* Cancel Button for current training */}
+                  {currentTaskId && (trainingStatus.status === 'running' || trainingStatus.status === 'started') && (
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to cancel the current training session?\n\nThe training will stop at the next safe checkpoint to preserve data integrity.`)) {
+                          handleCancelTraining(currentTaskId);
+                        }
+                      }}
+                      className="btn-destructive"
+                      title="Cancel current training session"
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Cancel Training
+                    </button>
+                  )}
                 </div>
-                
-                {/* Cancel Button for current training */}
-                {currentTaskId && (trainingStatus.status === 'running' || trainingStatus.status === 'started') && (
-                  <button
-                    onClick={() => {
-                      if (window.confirm(`Are you sure you want to cancel the current training session?\n\nThe training will stop at the next safe checkpoint to preserve data integrity.`)) {
-                        handleCancelTraining(currentTaskId);
-                      }
-                    }}
-                    className="flex items-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors text-sm font-medium"
-                    title="Cancel current training session"
-                  >
-                    <XCircle className="w-4 h-4" />
-                    <span>Cancel Training</span>
-                  </button>
-                )}
               </div>
               
-              <div className="space-y-4">
+              <div className="card-content space-y-6">
                 <ProgressBar 
                   progress={calculateProgress()} 
                   label="Overall Progress" 
                 />
                 
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Status:</span>
-                    <span className={`ml-2 font-medium capitalize ${
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
+                  <div className="space-y-2">
+                    <p className="text-sm text-muted-foreground">Status</p>
+                    <p className={`text-sm font-medium ${
                       trainingStatus.status === 'running' ? 'text-blue-400' :
                       trainingStatus.status === 'completed' ? 'text-green-400' :
-                      trainingStatus.status === 'error' ? 'text-red-400' :
+                      trainingStatus.status === 'error' ? 'text-destructive' :
                       'text-foreground'
-                    }`}>{trainingStatus.status}</span>
+                    }`}>{trainingStatus.status}</p>
                   </div>
+                  
                   {trainingStatus.current_epoch && trainingStatus.total_epochs && (
-                    <div>
-                      <span className="text-muted-foreground">Epoch:</span>
-                      <span className="ml-2 font-medium text-foreground">{trainingStatus.current_epoch}/{trainingStatus.total_epochs}</span>
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">Epoch</p>
+                      <p className="text-sm font-mono font-medium">{trainingStatus.current_epoch}/{trainingStatus.total_epochs}</p>
                     </div>
                   )}
+                  
                   {trainingStatus.current_step && trainingStatus.total_steps && (
-                    <div>
-                      <span className="text-muted-foreground">Step:</span>
-                      <span className="ml-2 font-medium text-foreground">{trainingStatus.current_step}/{trainingStatus.total_steps}</span>
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">Step</p>
+                      <p className="text-sm font-mono font-medium">{trainingStatus.current_step}/{trainingStatus.total_steps}</p>
                     </div>
                   )}
+                  
                   {trainingStatus.loss !== undefined && trainingStatus.loss !== null && (
-                    <div>
-                      <span className="text-muted-foreground">Loss:</span>
-                      <span className="ml-2 font-medium font-mono text-green-400">{trainingStatus.loss.toFixed(4)}</span>
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">Loss</p>
+                      <p className="text-sm font-mono font-medium text-green-400">{trainingStatus.loss.toFixed(4)}</p>
                     </div>
                   )}
+                  
                   {trainingStatus.learning_rate !== undefined && trainingStatus.learning_rate !== null && (
-                    <div>
-                      <span className="text-muted-foreground">Learning Rate:</span>
-                      <span className="ml-2 font-medium font-mono text-blue-400 bg-transparent">{trainingStatus.learning_rate.toExponential(2)}</span>
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">Learning Rate</p>
+                      <p className="text-sm font-mono font-medium text-blue-400">{trainingStatus.learning_rate.toExponential(2)}</p>
                     </div>
                   )}
                 </div>
@@ -543,8 +548,8 @@ function App() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column - Controls */}
+        <div className="grid gap-8 lg:grid-cols-2">
+          {/* Left Column - Setup & Configuration */}
           <div className="space-y-6">
             <ModelSelector 
               onSelectModel={handleSelectModel}
@@ -566,10 +571,10 @@ function App() {
             />
           </div>
 
-          {/* Right Column - Monitoring */}
+          {/* Right Column - Monitoring & Status */}
           <div className="space-y-6">
             {/* Status Overview */}
-            <div className="grid grid-cols-1 gap-4">
+            <div className="space-y-4">
               <StatusCard 
                 title="Model Status" 
                 status="completed" 
@@ -639,7 +644,7 @@ function App() {
             />
           </div>
         </div>
-        </div>
+        </main>
       )}
     </div>
   );
