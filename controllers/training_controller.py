@@ -14,80 +14,72 @@ from fastapi import HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from models.schemas import FineTuneRequest, TrainingStatus
-from services.training_service import TrainingService, task_log_queues, task_completion_flags
+from services.training_worker import process_manager
 from utils.logging import get_logger
 
 
 class TrainingController:
-    """Controller for training and fine-tuning endpoints"""
+    """Controller for training and fine-tuning endpoints using multiprocessing"""
     
-    def __init__(self, training_service: TrainingService = None):
+    def __init__(self):
         self.logger = get_logger(__name__)
-        self.training_service = training_service or TrainingService()
+        self.process_manager = process_manager
         
-        # Global variable to track background tasks (maintain compatibility)
+        # Track training status for compatibility
         self.training_status = {}
+        
+        self.logger.info("TrainingController initialized with multiprocessing support")
     
     async def run_fine_tuning(self, request: FineTuneRequest, task_id: str):
-        """Run fine-tuning in the background using thread executor"""
-        import asyncio
-        import concurrent.futures
-        
-        self.training_status[task_id] = {
-            "status": "running", 
-            "message": "Fine-tuning in progress..."
-        }
-        
-        # Initialize the task in the log queue system
-        import queue
-        if task_id not in task_log_queues:
-            task_log_queues[task_id] = queue.Queue()
-        
-        task_completion_flags[task_id] = False
-        
-        # Create a thread executor to run training without blocking the event loop
-        def run_training():
-            """Run training in a separate thread"""
-            try:
-                self.logger.info(f"Starting training in thread for task {task_id}")
-                result = self.training_service.fine_tune(request, task_id)
-                
+        """Run fine-tuning in a separate process (non-blocking)"""
+        try:
+            self.logger.info(f"Starting multiprocess training for task {task_id}")
+            
+            # Update initial status
+            self.training_status[task_id] = {
+                "status": "starting", 
+                "message": "Starting fine-tuning process..."
+            }
+            
+            # Convert request to dict for process serialization
+            request_data = {
+                "base_model_dir": request.base_model_dir,
+                "dataset_dir": request.dataset_dir,
+                "output_dir": request.output_dir,
+                "epochs": request.epochs,
+                "batch_size": request.batch_size,
+                "learning_rate": request.learning_rate,
+                "max_seq_length": request.max_seq_length,
+                "gradient_accumulation_steps": request.gradient_accumulation_steps,
+                "peft_method": request.peft_method,
+                "ft_type": request.ft_type
+            }
+            
+            # Start training in separate process
+            success = self.process_manager.start_training_process(task_id, request_data)
+            
+            if success:
                 self.training_status[task_id] = {
-                    "status": "completed",
-                    "message": "Fine-tuning completed successfully",
-                    "task_id": result.get("task_id", task_id)
-                }
-                self.logger.info(f"Training completed successfully for task {task_id}")
-                
-                return result
-                
-            except Exception as e:
-                self.logger.error(f"Training failed for task {task_id}: {e}")
-                self.training_status[task_id] = {
-                    "status": "error",
-                    "message": f"Fine-tuning failed: {str(e)}",
+                    "status": "running",
+                    "message": "Fine-tuning started in separate process",
                     "task_id": task_id
                 }
-                # Mark as complete even on error so SSE can close
-                task_completion_flags[task_id] = True
-                raise e
-        
-        try:
-            # Run the training in a thread executor to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                self.logger.info(f"Submitting training task {task_id} to thread executor")
-                future = loop.run_in_executor(executor, run_training)
-                # Don't await here - let it run in background
+                self.logger.info(f"Training process started successfully for task {task_id}")
+            else:
+                self.training_status[task_id] = {
+                    "status": "error",
+                    "message": "Failed to start training process",
+                    "task_id": task_id
+                }
+                self.logger.error(f"Failed to start training process for task {task_id}")
                 
         except Exception as e:
-            self.logger.error(f"Failed to start training thread: {e}")
+            self.logger.error(f"Failed to start multiprocess training: {e}")
             self.training_status[task_id] = {
                 "status": "error",
                 "message": f"Failed to start fine-tuning: {str(e)}",
                 "task_id": task_id
             }
-            task_completion_flags[task_id] = True
     
     async def fine_tune_endpoint(self, request: FineTuneRequest, background_tasks: BackgroundTasks) -> JSONResponse:
         """Fine-tune a model with the prepared data"""
@@ -112,12 +104,13 @@ class TrainingController:
     async def get_active_training_sessions(self) -> JSONResponse:
         """Get all currently active training sessions"""
         try:
-            active_sessions = self.training_service.get_active_sessions()
+            # Get active processes from process manager
+            active_processes = self.process_manager.get_active_processes()
             
-            # Enhance session data with current status from status files
+            # Enhance with status file data
             enhanced_sessions = {}
-            for task_id, session in active_sessions.items():
-                enhanced_sessions[task_id] = session.copy()
+            for task_id, process_info in active_processes.items():
+                enhanced_sessions[task_id] = process_info.copy()
                 
                 # Try to get current status from status file
                 try:
@@ -194,22 +187,37 @@ class TrainingController:
     async def cancel_training(self, task_id: str) -> JSONResponse:
         """Cancel an active training session safely"""
         try:
-            # Try to cancel using training service
-            success = self.training_service.cancel_training(task_id)
+            self.logger.info(f"Cancellation requested for task {task_id}")
             
-            if not success:
-                # Fallback to legacy cancellation logic
-                success = await self._legacy_cancel_training(task_id)
+            # Try to cancel using process manager
+            success = self.process_manager.cancel_training(task_id)
             
             if success:
+                # Update local status
+                self.training_status[task_id] = {
+                    "status": "cancelling",
+                    "message": "Training cancellation requested",
+                    "task_id": task_id
+                }
+                
                 return JSONResponse(content={
                     "status": "cancellation_requested",
                     "task_id": task_id,
-                    "message": "Training cancellation requested. Training will stop at the next safe checkpoint.",
-                    "details": "The training process will complete the current step/epoch before stopping to ensure data integrity."
+                    "message": "Training cancellation requested. Process will be terminated gracefully.",
+                    "details": "The training process will stop at the next checkpoint to ensure data integrity."
                 })
             else:
-                raise HTTPException(status_code=404, detail=f"Training task {task_id} not found")
+                # Check if task exists in status files
+                status_file = Path("logs") / f"{task_id}_status.json"
+                if not status_file.exists():
+                    raise HTTPException(status_code=404, detail=f"Training task {task_id} not found")
+                else:
+                    # Process already finished
+                    return JSONResponse(content={
+                        "status": "not_running",
+                        "task_id": task_id,
+                        "message": "Training task is not currently running"
+                    })
                 
         except HTTPException:
             raise
@@ -217,62 +225,6 @@ class TrainingController:
             self.logger.error(f"Failed to cancel training: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to cancel training: {str(e)}")
     
-    async def _legacy_cancel_training(self, task_id: str) -> bool:
-        """Legacy training cancellation logic for backward compatibility"""
-        try:
-            # Load active sessions directly from file
-            sessions_file = Path("logs") / "active_sessions.json"
-            active_sessions = {}
-            if sessions_file.exists():
-                try:
-                    with open(sessions_file, "r") as f:
-                        active_sessions = json.load(f)
-                except:
-                    pass
-            
-            if task_id not in active_sessions:
-                return False
-            
-            # Check if task is in a cancellable state
-            session = active_sessions[task_id]
-            if session.get("status") not in ["running", "started"]:
-                return False
-            
-            # Force stop the training process
-            try:
-                # Update status to cancelled immediately
-                status_file = Path("logs") / f"{task_id}_status.json"
-                if status_file.exists():
-                    with open(status_file, "r") as f:
-                        status_data = json.load(f)
-                    
-                    status_data.update({
-                        "status": "cancelled",
-                        "progress": "Training cancelled by user",
-                        "message": "Training was cancelled by user request",
-                        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    
-                    with open(status_file, "w") as f:
-                        json.dump(status_data, f, indent=2)
-            except Exception as e:
-                self.logger.warning(f"Error updating status file: {e}")
-            
-            # Update global training status
-            self.training_status[task_id] = {
-                "status": "cancelled",
-                "message": "Training cancelled by user",
-                "task_id": task_id
-            }
-            
-            # Set completion flag to stop SSE streaming
-            task_completion_flags[task_id] = True
-            
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error in legacy cancel training: {e}")
-            return False
     
     async def stream_training_logs(self, task_id: str) -> StreamingResponse:
         """Stream training logs in real-time using Server-Sent Events"""
@@ -305,28 +257,40 @@ class TrainingController:
             
             while True:
                 try:
-                    has_update = False
-                    
-                    # Read status from file instead of queue
+                    # Read status from file (primary communication method)
                     if status_file.exists():
                         try:
                             with open(status_file, "r") as f:
                                 status_data = json.load(f)
-                            has_update = True
                             
                             # Check if status was updated since last read
                             current_updated_at = status_data.get("updated_at")
                             if current_updated_at != last_status_update:
                                 last_status_update = current_updated_at
                                 
-                                # Create a log entry from status data
-                                if status_data.get("status") == "running":
+                                # Stream different content based on status
+                                current_status = status_data.get("status")
+                                
+                                if current_status in ["initializing", "loading", "configuring", "loading_data", "preparing"]:
+                                    # Initialization phases
+                                    log_entry = {
+                                        "timestamp": current_updated_at or time.strftime("%Y-%m-%d %H:%M:%S"),
+                                        "type": "initialization",
+                                        "message": status_data.get("message", "Initializing...")
+                                    }
+                                    yield f"event: log\n"
+                                    yield f"data: {json.dumps(log_entry)}\n\n"
+                                
+                                elif current_status == "running" or current_status == "training":
+                                    # Active training
                                     log_entry = {
                                         "timestamp": current_updated_at or time.strftime("%Y-%m-%d %H:%M:%S"),
                                         "type": "training",
-                                        "message": status_data.get("progress", "Training in progress"),
+                                        "message": status_data.get("message", "Training in progress"),
                                         "step": status_data.get("current_step"),
+                                        "total_steps": status_data.get("total_steps"),
                                         "epoch": status_data.get("current_epoch"),
+                                        "total_epochs": status_data.get("total_epochs"),
                                         "loss": status_data.get("loss"),
                                         "learning_rate": status_data.get("learning_rate"),
                                         "progress_percentage": status_data.get("progress_percentage")
@@ -334,14 +298,20 @@ class TrainingController:
                                     
                                     yield f"event: log\n"
                                     yield f"data: {json.dumps(log_entry)}\n\n"
-                                    
-                                    # Also send status update
-                                    yield f"event: status\n"
-                                    yield f"data: {json.dumps(status_data)}\n\n"
                                 
-                                elif status_data.get("status") in ["completed", "cancelled", "error"]:
-                                    # Training completed/cancelled, send final message and exit
-                                    final_status = status_data.get("status")
+                                elif current_status == "saving":
+                                    # Model saving phase
+                                    log_entry = {
+                                        "timestamp": current_updated_at or time.strftime("%Y-%m-%d %H:%M:%S"),
+                                        "type": "saving",
+                                        "message": status_data.get("message", "Saving model...")
+                                    }
+                                    yield f"event: log\n"
+                                    yield f"data: {json.dumps(log_entry)}\n\n"
+                                
+                                elif current_status in ["completed", "cancelled", "error"]:
+                                    # Final states - send final message and exit
+                                    final_status = current_status
                                     final_message = status_data.get("message", f"Training {final_status}")
                                     
                                     final_log = {
@@ -359,26 +329,21 @@ class TrainingController:
                                     yield f"event: complete\n"
                                     yield f"data: {json.dumps({'message': f'Training {final_status}', 'final_status': final_status})}\n\n"
                                     return  # Exit the stream
+                                
+                                # Always send status update
+                                yield f"event: status\n"
+                                yield f"data: {json.dumps(status_data)}\n\n"
                             
                         except (json.JSONDecodeError, IOError) as e:
                             self.logger.warning(f"Error reading status file: {e}")
-                    
-                    # Try to get logs from queue if available (fallback)
-                    elif task_id in task_log_queues:
-                        try:
-                            log_entry = task_log_queues[task_id].get_nowait()
-                            
-                            # Determine event type based on log content
-                            event_type = "log"
-                            if log_entry.get("type") == "training" and log_entry.get("metrics"):
-                                event_type = "metrics"
-                            elif log_entry.get("type") in ["error", "warning"]:
-                                event_type = "error" if log_entry.get("type") == "error" else "warning"
-                            
-                            yield f"event: {event_type}\n"
-                            yield f"data: {json.dumps(log_entry)}\n\n"
-                        except:
-                            pass
+                    else:
+                        # Status file doesn't exist - check if process is still running
+                        process_status = self.process_manager.get_process_status(task_id)
+                        if process_status is None or process_status == "finished":
+                            # Process finished but no status file - likely error
+                            yield f"event: error\n"
+                            yield f"data: {json.dumps({'error': 'Training process ended unexpectedly', 'task_id': task_id})}\n\n"
+                            return
                     
                     # Send heartbeat every 30 seconds
                     current_time = time.time()
@@ -387,13 +352,7 @@ class TrainingController:
                         yield f"data: {json.dumps({'timestamp': current_time})}\n\n"
                         last_heartbeat = current_time
                     
-                    # Check if training is complete or cancelled
-                    if task_completion_flags.get(task_id, False):
-                        yield f"event: complete\n"
-                        yield f"data: {json.dumps({'message': 'Training stream ended', 'task_id': task_id})}\n\n"
-                        return  # Exit the generator instead of break
-                    
-                    await asyncio.sleep(3.0)  # Check every 3 seconds to prevent connection spam
+                    await asyncio.sleep(2.0)  # Check every 2 seconds for responsive updates
                     
                 except Exception as e:
                     self.logger.error(f"Error in SSE stream: {e}")

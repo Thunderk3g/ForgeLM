@@ -32,16 +32,14 @@ from services.comparison_service import ComparisonService
 from model_selection import select_model, SelectModelRequest, scan_available_models
 from data_preparation import prepare_data, PrepareDataRequest
 
-# Import fine_tuning components with error handling for TensorFlow issues
+# Import fine_tuning components with error handling
 try:
-    from services.training_service import task_log_queues, task_completion_flags
     from models.schemas import FineTuneRequest, TrainingStatus
+    from services.training_worker import process_manager
     FINE_TUNING_AVAILABLE = True
+    print("✅ Fine-tuning with multiprocessing support loaded")
 except ImportError as e:
     print(f"Warning: Fine-tuning module import failed: {e}")
-    # Create fallback objects for compatibility
-    task_log_queues = {}
-    task_completion_flags = {}
     FINE_TUNING_AVAILABLE = False
 
 # Import comparison chat service components
@@ -56,20 +54,51 @@ except ImportError as e:
 
 # Initialize services
 model_service = ModelService()
-training_service = TrainingService()
 chat_service = ChatService()
 comparison_service_instance = ComparisonService(model_service, chat_service)
 
 # Initialize controllers with services
 model_controller.model_service = model_service
-training_controller.training_service = training_service
 chat_controller.comparison_service = comparison_service_instance
 
-# Create FastAPI app
+# Note: TrainingController now uses multiprocessing and doesn't need TrainingService injection
+
+# Create FastAPI app with lifespan for process management
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    print("🚀 Starting LLMForge API (Multiprocessing Architecture)")
+    
+    if COMPARISON_CHAT_AVAILABLE:
+        await comparison_service_instance.start_background_tasks()
+        print("✅ Comparison service background tasks started")
+    
+    print("✅ LLMForge API startup complete")
+    
+    yield
+    
+    # Shutdown
+    print("🛑 Shutting down LLMForge API")
+    
+    # Clean up all training processes
+    if FINE_TUNING_AVAILABLE:
+        process_manager.cleanup_all_processes()
+        print("✅ Training processes cleaned up")
+    
+    # Clean up comparison service
+    if COMPARISON_CHAT_AVAILABLE:
+        # Add comparison service cleanup here if needed
+        pass
+    
+    print("✅ LLMForge API shutdown complete")
+
 app = FastAPI(
     title="LLMForge Fine-tuning API",
-    description="Modular fine-tuning platform for LLM models with advanced optimizations",
-    version="1.0.0"
+    description="Multiprocessing fine-tuning platform for LLM models with advanced optimizations",
+    version="1.1.0",
+    lifespan=lifespan
 )
 
 # Enable CORS middleware for SSE support
@@ -118,14 +147,16 @@ async def root():
     
     return {
         "service": "LLMForge Fine-tuning API",
-        "version": "1.0.0 (Modular)",
-        "architecture": "microservices",
+        "version": "1.1.0 (Multiprocessing)",
+        "architecture": "multiprocessing",
         "features": {
             "fine_tuning": FINE_TUNING_AVAILABLE,
             "comparison_chat": COMPARISON_CHAT_AVAILABLE,
             "unsloth_optimization": True,
             "fastlibra_cache": True,
-            "modular_services": True
+            "multiprocessing_training": True,
+            "non_blocking_api": True,
+            "process_isolation": True
         },
         "endpoints": endpoints
     }
@@ -247,40 +278,33 @@ async def get_chat_service_metrics():
     return await chat_controller.get_chat_service_metrics()
 
 # =====================================
-# STARTUP AND SHUTDOWN EVENTS
+# ERROR HANDLERS
 # =====================================
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize services on startup"""
-    print("🚀 Starting LLMForge API (Modular Architecture)")
-    
-    # Start background tasks for comparison service
-    if COMPARISON_CHAT_AVAILABLE:
-        await comparison_service_instance.start_background_tasks()
-        print("✅ Comparison service background tasks started")
-    
-    print("✅ LLMForge API startup complete")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Clean up resources on shutdown"""
-    print("🛑 Shutting down LLMForge API")
-    
-    # Clean up training service
-    training_service.cleanup_all_trainings()
-    
-    print("✅ LLMForge API shutdown complete")
+@app.exception_handler(Exception)
+async def global_exception_handler(request, exc):
+    """Global exception handler for better error reporting"""
+    print(f"Unhandled exception in {request.url}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal server error",
+            "message": str(exc),
+            "type": type(exc).__name__
+        }
+    )
 
 # =====================================
 # MAIN ENTRY POINT
 # =====================================
 
 if __name__ == "__main__":
-    print("🦥 LLMForge Fine-tuning API - Modular Architecture")
-    print("📦 Services: ModelService, TrainingService, ChatService, ComparisonService")
+    print("🦥 LLMForge Fine-tuning API - Multiprocessing Architecture")
+    print("📦 Services: ModelService, ChatService, ComparisonService")
+    print("🏗️ Training: Isolated worker processes for non-blocking ML training")
     print("🔧 Optimizations: Unsloth 2x speedup, FastLibra KV caching")
-    print("🏗️  Architecture: Clean separation of concerns with backward compatibility")
+    print("⚡ Performance: FastAPI stays responsive during training")
+    print("🛡️ Isolation: Complete process separation for GPU/CUDA operations")
     
     uvicorn.run(
         app, 
