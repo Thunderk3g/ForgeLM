@@ -1033,10 +1033,10 @@ def setup_standard_model(model_dir: str, peft_method: str, hardware_info: dict =
     # Optimize dtype
     if hardware_info["has_bf16"]:
         compute_dtype = torch.bfloat16
-        torch_dtype = torch.bfloat16
+        dtype = torch.bfloat16
     else:
         compute_dtype = torch.float16
-        torch_dtype = torch.float16
+        dtype = torch.float16
     
     # Setup optimized quantization
     if peft_method == "qlora":
@@ -1045,7 +1045,7 @@ def setup_standard_model(model_dir: str, peft_method: str, hardware_info: dict =
             bnb_4bit_quant_type="nf4",
             bnb_4bit_compute_dtype=compute_dtype,
             bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_storage=torch_dtype,
+            bnb_4bit_quant_storage=dtype,
             llm_int8_enable_fp32_cpu_offload=True,  # Enable CPU offload for limited GPU memory
         )
         optimal_device_map = get_optimal_device_map(hardware_info)
@@ -1053,7 +1053,7 @@ def setup_standard_model(model_dir: str, peft_method: str, hardware_info: dict =
             model_dir,
             quantization_config=bnb_config,
             device_map=optimal_device_map,
-            dtype=torch_dtype,
+            dtype=dtype,
             attn_implementation="flash_attention_2" if (hardware_info["gpu_count"] > 0 and xformers_available) else None,
         )
     else:
@@ -1061,7 +1061,7 @@ def setup_standard_model(model_dir: str, peft_method: str, hardware_info: dict =
         model = AutoModelForCausalLM.from_pretrained(
             model_dir,
             device_map=optimal_device_map, 
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             attn_implementation="flash_attention_2" if (hardware_info["gpu_count"] > 0 and xformers_available) else None,
         )
     

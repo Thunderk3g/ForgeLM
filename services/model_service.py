@@ -319,7 +319,7 @@ class ModelService:
                 model_path,
                 trust_remote_code=True,
                 device_map="auto" if torch.cuda.is_available() else "cpu",
-                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
             )
             
         else:
@@ -564,7 +564,7 @@ class ModelService:
                         base_model_path,
                         trust_remote_code=True,
                         device_map="auto",  # Let transformers decide CPU/GPU
-                        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                         low_cpu_mem_usage=True
                     )
                     

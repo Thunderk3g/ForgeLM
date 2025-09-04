@@ -215,7 +215,7 @@ def select_model(request: SelectModelRequest) -> Dict[str, str]:
                 
             if torch.cuda.is_available():
                 load_kwargs["device_map"] = "auto"
-                load_kwargs["torch_dtype"] = torch.float16
+                load_kwargs["dtype"] = torch.float16
             
             # Load tokenizer
             tokenizer = AutoTokenizer.from_pretrained(request.model_id)
