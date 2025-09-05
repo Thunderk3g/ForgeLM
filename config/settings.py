@@ -21,7 +21,7 @@ class AppConfig:
     
     # Paths
     models_base_dir: str = "models/base"
-    models_finetuned_dir: str = "models/finetuned"
+    models_finetuned_dir: str = "models/fine_tuned"
     data_dir: str = "data"
     logs_dir: str = "logs"
     

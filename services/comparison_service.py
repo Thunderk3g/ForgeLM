@@ -28,7 +28,7 @@ class ComparisonService:
         
         # Inject dependencies
         self.model_service = model_service or ModelService()
-        self.chat_service = chat_service or ChatService()
+        self.chat_service = chat_service or ChatService(self.model_service)
         
         # Performance metrics
         self.metrics = {
@@ -385,5 +385,5 @@ class ComparisonService:
             self.logger.warning(f"Error during model warmup: {e}")
 
 
-# Create global service instance
-comparison_service = ComparisonService()
+# Note: Global service instance should be created with proper dependencies
+# comparison_service = ComparisonService()  # Commented out - should be initialized in app.py with dependencies

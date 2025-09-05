@@ -211,23 +211,29 @@ class ModelService:
         
         # Scan for base models
         base_models_dir = Path(settings.models_base_dir)
+        self.logger.info(f"Scanning base models in: {base_models_dir}")
+        
         if base_models_dir.exists():
             for base_dir in base_models_dir.iterdir():
                 if base_dir.is_dir():
                     base_model_name = base_dir.name
                     base_model_path = str(base_dir)
+                    self.logger.info(f"Found base model: {base_model_name}")
                     
                     # Calculate base model size
                     base_size_mb = estimate_model_memory(str(base_dir))
                     
                     # Look for corresponding LoRA adapters
                     finetuned_dir = Path(settings.models_finetuned_dir)
+                    self.logger.info(f"Scanning for adapters in: {finetuned_dir}")
+                    
                     if finetuned_dir.exists():
                         # Main adapter
-                        if (finetuned_dir / "adapter_model.safetensors").exists():
-                            adapter_size_mb = (finetuned_dir / "adapter_model.safetensors").stat().st_size / (1024 * 1024)
+                        main_adapter = finetuned_dir / "adapter_model.safetensors"
+                        if main_adapter.exists():
+                            adapter_size_mb = main_adapter.stat().st_size / (1024 * 1024)
                             
-                            pairs.append(ModelPair(
+                            pair = ModelPair(
                                 pair_id=f"{base_model_name}_main",
                                 base_model_name=base_model_name,
                                 base_model_path=base_model_path,
@@ -235,25 +241,33 @@ class ModelService:
                                 adapter_path=str(finetuned_dir),
                                 base_model_size_mb=base_size_mb,
                                 adapter_size_mb=adapter_size_mb
-                            ))
+                            )
+                            pairs.append(pair)
+                            self.logger.info(f"Created pair: {pair.pair_id}")
                         
                         # Checkpoint adapters
-                        for checkpoint_dir in finetuned_dir.glob("checkpoint-*"):
-                            if checkpoint_dir.is_dir() and (checkpoint_dir / "adapter_model.safetensors").exists():
-                                checkpoint_name = checkpoint_dir.name
-                                adapter_size_mb = (checkpoint_dir / "adapter_model.safetensors").stat().st_size / (1024 * 1024)
-                                
-                                pairs.append(ModelPair(
-                                    pair_id=f"{base_model_name}_{checkpoint_name}",
-                                    base_model_name=base_model_name,
-                                    base_model_path=base_model_path,
-                                    adapter_name=checkpoint_name,
-                                    adapter_path=str(checkpoint_dir),
-                                    base_model_size_mb=base_size_mb,
-                                    adapter_size_mb=adapter_size_mb
-                                ))
+                        checkpoints_dir = finetuned_dir / "checkpoints"
+                        if checkpoints_dir.exists():
+                            for checkpoint_dir in checkpoints_dir.iterdir():
+                                if checkpoint_dir.is_dir() and (checkpoint_dir / "adapter_model.safetensors").exists():
+                                    checkpoint_name = checkpoint_dir.name
+                                    adapter_size_mb = (checkpoint_dir / "adapter_model.safetensors").stat().st_size / (1024 * 1024)
+                                    
+                                    pair = ModelPair(
+                                        pair_id=f"{base_model_name}_{checkpoint_name}",
+                                        base_model_name=base_model_name,
+                                        base_model_path=base_model_path,
+                                        adapter_name=checkpoint_name,
+                                        adapter_path=str(checkpoint_dir),
+                                        base_model_size_mb=base_size_mb,
+                                        adapter_size_mb=adapter_size_mb
+                                    )
+                                    pairs.append(pair)
+                                    self.logger.info(f"Created checkpoint pair: {pair.pair_id}")
+        else:
+            self.logger.warning(f"Base models directory does not exist: {base_models_dir}")
         
-        self.logger.info(f"Discovered {len(pairs)} model pairs")
+        self.logger.info(f"Discovered {len(pairs)} model pairs total")
         return pairs
     
     @timed("load_model_pair")

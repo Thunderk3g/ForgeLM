@@ -23,8 +23,9 @@ from config.settings import settings
 class ChatService:
     """Individual chat session management service"""
     
-    def __init__(self):
+    def __init__(self, model_service=None):
         self.logger = get_logger(__name__)
+        self.model_service = model_service
         
         # Session management
         self.active_sessions: Dict[str, ChatSession] = {}
@@ -60,16 +61,36 @@ class ChatService:
             session_id = str(uuid.uuid4())
             session_name = session_name or f"Chat_{session_id[:8]}"
             
-            # Create mock model pair (would be provided by ModelService in real implementation)
-            model_pair = ModelPair(
-                pair_id=pair_id,
-                base_model_name="mock_base",
-                base_model_path="mock_path",
-                adapter_name="mock_adapter",
-                adapter_path="mock_adapter_path",
-                base_model_size_mb=1000.0,
-                adapter_size_mb=100.0
-            )
+            # Get real model pair from ModelService
+            if self.model_service is None:
+                raise ValueError("ModelService not available - ChatService not properly initialized")
+            
+            available_pairs = await self.model_service.discover_model_pairs()
+            
+            # Find the requested model pair or use the first available one
+            model_pair = None
+            for pair in available_pairs:
+                if pair.pair_id == pair_id:
+                    model_pair = pair
+                    break
+            
+            # If specific pair not found, use first available pair
+            if model_pair is None and available_pairs:
+                model_pair = available_pairs[0]
+                self.logger.warning(f"Model pair {pair_id} not found, using {model_pair.pair_id}")
+            
+            # If no pairs available, create a fallback
+            if model_pair is None:
+                self.logger.error("No model pairs available, creating fallback")
+                model_pair = ModelPair(
+                    pair_id=pair_id,
+                    base_model_name="fallback_base",
+                    base_model_path="models/base/Qwen_Qwen2.5-3B",
+                    adapter_name="fallback_adapter", 
+                    adapter_path="models/finetuned",
+                    base_model_size_mb=1000.0,
+                    adapter_size_mb=100.0
+                )
             
             session = ChatSession(
                 session_id=session_id,
@@ -285,5 +306,5 @@ class ChatService:
             self.logger.warning(f"Failed to save sessions: {e}")
 
 
-# Create global service instance
-chat_service = ChatService()
+# Note: Global service instance should be created with model_service dependency
+# chat_service = ChatService()  # Commented out - should be initialized in app.py with dependencies

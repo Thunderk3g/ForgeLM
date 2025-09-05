@@ -27,12 +27,26 @@ def setup_worker_environment():
     """Setup optimal environment for worker process"""
     # Configure CUDA for this specific process
     if "CUDA_VISIBLE_DEVICES" not in os.environ:
-        # Allow worker to use all available GPUs
-        pass  # Let CUDA auto-detect
+        # For multiple training sessions, distribute GPU usage
+        # Use current process ID to determine GPU assignment if multiple GPUs available
+        try:
+            import torch
+            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                # Assign GPU based on process ID for better distribution
+                gpu_id = os.getpid() % torch.cuda.device_count()
+                os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+                print(f"Worker {os.getpid()}: Assigned to GPU {gpu_id}")
+            else:
+                # Single GPU or no GPU - let CUDA auto-detect
+                pass
+        except ImportError:
+            # PyTorch not available, skip GPU assignment
+            pass
     
-    # Optimize memory settings
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512"
+    # Optimize memory settings for multiple concurrent processes
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256,expandable_segments:True"
     os.environ["OMP_NUM_THREADS"] = "1"  # Reduce CPU thread contention
+    os.environ["MKL_NUM_THREADS"] = "1"  # Reduce Intel MKL thread contention
 
 
 class TrainingWorker:
@@ -120,7 +134,11 @@ class TrainingWorker:
             result = training_core.execute_training(request)
             
             if not self.should_stop:
-                self._update_status("completed", "Training completed successfully", **result)
+                # Extract status and message from result to avoid duplicate arguments
+                result_copy = result.copy()
+                final_status = result_copy.pop("status", "completed")
+                final_message = result_copy.pop("message", "Training completed successfully")
+                self._update_status(final_status, final_message, **result_copy)
             
             return result
             

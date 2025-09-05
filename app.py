@@ -15,6 +15,7 @@ from controllers.health_controller import health_controller
 from controllers.model_controller import model_controller
 from controllers.training_controller import training_controller
 from controllers.chat_controller import chat_controller
+from controllers.config_controller import config_controller
 
 # Import schemas for type annotations
 from models.schemas import (
@@ -54,7 +55,7 @@ except ImportError as e:
 
 # Initialize services
 model_service = ModelService()
-chat_service = ChatService()
+chat_service = ChatService(model_service)
 comparison_service_instance = ComparisonService(model_service, chat_service)
 
 # Initialize controllers with services
@@ -131,6 +132,12 @@ async def root():
         "/fine-tune/status/{task_id}": "GET - Check training status",
         "/fine-tune/logs/{task_id}": "SSE - Stream training logs",
         "/fine-tune/cancel/{task_id}": "DELETE - Cancel active training",
+        "/config/list": "GET - List available configuration files",
+        "/config/{config_name}": "GET - Get specific configuration",
+        "/config/create/{config_name}": "POST - Create config from request",
+        "/config/validate/{config_name}": "GET - Validate configuration",
+        "/config/templates": "GET - List available dataset templates",
+        "/config/peft-methods": "GET - List available PEFT methods",
         "/health": "GET - Health check"
     }
     
@@ -208,6 +215,40 @@ async def cancel_training(task_id: str):
 async def stream_training_logs(task_id: str):
     """Stream training logs in real-time using Server-Sent Events."""
     return await training_controller.stream_training_logs(task_id)
+
+# =====================================
+# CONFIGURATION MANAGEMENT ENDPOINTS  
+# =====================================
+
+@app.get("/config/list")
+async def list_configs():
+    """List all available configuration files."""
+    return await config_controller.list_configs()
+
+@app.get("/config/{config_name}")
+async def get_config(config_name: str):
+    """Get specific configuration by name."""
+    return await config_controller.get_config(config_name)
+
+@app.post("/config/create/{config_name}")
+async def create_config_from_request(config_name: str, request: FineTuneRequest):
+    """Create configuration from training request."""
+    return await config_controller.create_config_from_request(request, config_name)
+
+@app.get("/config/validate/{config_name}")
+async def validate_config(config_name: str):
+    """Validate configuration."""
+    return await config_controller.validate_config(config_name)
+
+@app.get("/config/templates")
+async def get_available_templates():
+    """Get available dataset templates."""
+    return await config_controller.get_available_templates()
+
+@app.get("/config/peft-methods")
+async def get_available_peft_methods():
+    """Get available PEFT methods."""
+    return await config_controller.get_available_peft_methods()
 
 # =====================================
 # COMPARISON CHAT ENDPOINTS
