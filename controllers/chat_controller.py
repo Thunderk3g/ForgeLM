@@ -133,5 +133,5 @@ class ChatController:
             raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
 
 
-# Create global controller instance
-chat_controller = ChatController()
+# Global controller instance - will be initialized with dependencies in app.py
+chat_controller = None

@@ -30,8 +30,8 @@ from services.chat_service import ChatService
 from services.comparison_service import ComparisonService
 
 # Backward compatibility imports - maintain original import behavior
-from model_selection import select_model, SelectModelRequest, scan_available_models
-from data_preparation import prepare_data, PrepareDataRequest
+from utils.legacy.model_selection import select_model, SelectModelRequest, scan_available_models
+from utils.legacy.data_preparation import prepare_data, PrepareDataRequest
 
 # Import fine_tuning components with error handling
 try:
@@ -45,22 +45,61 @@ except ImportError as e:
 
 # Import comparison chat service components
 try:
-    from services.comparison_service import comparison_service
+    print("🔄 Attempting to import comparison service components...")
+    from services.comparison_service import ComparisonService
+    print("✅ ComparisonService imported successfully")
     from models.schemas import ChatMessage, ComparisonRequest, ComparisonResponse, SessionCreateRequest, SessionInfo
+    print("✅ Schema imports successful")
     COMPARISON_CHAT_AVAILABLE = True
-    print("Comparison chat service loaded (modular)")
+    print("✅ Comparison chat service loaded (modular)")
 except ImportError as e:
-    print(f"Warning: Comparison chat service import failed: {e}")
+    print(f"❌ Warning: Comparison chat service import failed: {e}")
+    import traceback
+    traceback.print_exc()
+    COMPARISON_CHAT_AVAILABLE = False
+except Exception as e:
+    print(f"❌ Error: Unexpected error during comparison service import: {e}")
+    import traceback
+    traceback.print_exc()
     COMPARISON_CHAT_AVAILABLE = False
 
 # Initialize services
+print("🔄 Initializing core services...")
 model_service = ModelService()
+print("✅ ModelService initialized")
+
 chat_service = ChatService(model_service)
-comparison_service_instance = ComparisonService(model_service, chat_service)
+print("✅ ChatService initialized")
+
+if COMPARISON_CHAT_AVAILABLE:
+    try:
+        comparison_service_instance = ComparisonService(model_service, chat_service)
+        print("✅ ComparisonService initialized")
+    except Exception as e:
+        print(f"❌ Error initializing ComparisonService: {e}")
+        import traceback
+        traceback.print_exc()
+        COMPARISON_CHAT_AVAILABLE = False
+        comparison_service_instance = None
+else:
+    comparison_service_instance = None
+    print("⚠️ ComparisonService not available - skipping initialization")
 
 # Initialize controllers with services
 model_controller.model_service = model_service
-chat_controller.comparison_service = comparison_service_instance
+
+# Initialize chat controller properly
+if COMPARISON_CHAT_AVAILABLE and comparison_service_instance:
+    from controllers.chat_controller import ChatController
+    chat_controller_instance = ChatController(comparison_service_instance)
+    
+    # Replace the imported chat_controller with our properly initialized instance
+    import controllers.chat_controller
+    controllers.chat_controller.chat_controller = chat_controller_instance
+    print("✅ ChatController initialized with ComparisonService")
+else:
+    chat_controller_instance = None
+    print("⚠️ ChatController not available - ComparisonService unavailable")
 
 # Note: TrainingController now uses multiprocessing and doesn't need TrainingService injection
 
@@ -72,7 +111,7 @@ async def lifespan(app: FastAPI):
     # Startup
     print("🚀 Starting LLMForge API (Multiprocessing Architecture)")
     
-    if COMPARISON_CHAT_AVAILABLE:
+    if COMPARISON_CHAT_AVAILABLE and comparison_service_instance:
         await comparison_service_instance.start_background_tasks()
         print("✅ Comparison service background tasks started")
     
@@ -89,7 +128,7 @@ async def lifespan(app: FastAPI):
         print("✅ Training processes cleaned up")
     
     # Clean up comparison service
-    if COMPARISON_CHAT_AVAILABLE:
+    if COMPARISON_CHAT_AVAILABLE and comparison_service_instance:
         # Add comparison service cleanup here if needed
         pass
     
@@ -257,66 +296,66 @@ async def get_available_peft_methods():
 @app.get("/chat/model-pairs")
 async def get_model_pairs():
     """Get all available base model + LoRA adapter pairs for comparison."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.get_model_pairs()
+    return await chat_controller_instance.get_model_pairs()
 
 @app.post("/chat/sessions")
 async def create_chat_session(request: SessionCreateRequest):
     """Create a new comparison chat session."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.create_chat_session(request)
+    return await chat_controller_instance.create_chat_session(request)
 
 @app.get("/chat/sessions")
 async def list_chat_sessions():
     """List all active comparison chat sessions."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.list_chat_sessions()
+    return await chat_controller_instance.list_chat_sessions()
 
 @app.get("/chat/sessions/{session_id}")
 async def get_chat_session_history(session_id: str):
     """Get conversation history for a specific chat session."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.get_chat_session_history(session_id)
+    return await chat_controller_instance.get_chat_session_history(session_id)
 
 @app.post("/chat/generate")
 async def generate_comparison_response(request: ComparisonRequest):
     """Generate comparison responses from both base and fine-tuned models."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.generate_comparison_response(request)
+    return await chat_controller_instance.generate_comparison_response(request)
 
 @app.post("/chat/generate-stream")
 async def generate_comparison_stream(request: ComparisonRequest):
     """Stream comparison responses from both base and fine-tuned models."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.generate_comparison_stream(request)
+    return await chat_controller_instance.generate_comparison_stream(request)
 
 @app.delete("/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str):
     """Delete a comparison chat session and clean up resources."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.delete_chat_session(session_id)
+    return await chat_controller_instance.delete_chat_session(session_id)
 
 @app.get("/chat/metrics")
 async def get_chat_service_metrics():
     """Get comprehensive chat service performance metrics."""
-    if not COMPARISON_CHAT_AVAILABLE:
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
-    return await chat_controller.get_chat_service_metrics()
+    return await chat_controller_instance.get_chat_service_metrics()
 
 # =====================================
 # ERROR HANDLERS

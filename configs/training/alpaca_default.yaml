@@ -1,0 +1,67 @@
+author: ''
+config_name: alpaca_default
+created_at: '2025-09-05T15:55:26.120169'
+dataset:
+  format: alpaca
+  max_samples: null
+  path: data/prepared
+  system_message: null
+  template: alpaca
+  test_size: 0.1
+description: Default configuration for Alpaca-style instruction tuning
+environment: {}
+model:
+  model_name: Qwen2.5-3B
+  model_path: models/base/Qwen_Qwen2.5-3B
+  model_revision: main
+  quantization: null
+  trust_remote_code: false
+  use_fast_tokenizer: true
+peft:
+  adalora_beta1: 0.85
+  adalora_beta2: 0.85
+  adalora_deltaT: 10
+  adalora_init_r: 12
+  adalora_orth_reg_weight: 0.5
+  adalora_target_r: 8
+  adalora_tfinal: 1000
+  adalora_tinit: 0
+  alpha: 32
+  bias: none
+  dropout: 0.1
+  method: !!python/object/apply:models.peft_methods.PEFTMethod
+  - qlora
+  oft_block_size: 4
+  oft_dropout: 0.0
+  pissa_init_method: svd
+  pissa_iter: 16
+  rank: 16
+  target_modules: null
+  use_dora: false
+training:
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-08
+  bf16: false
+  dataloader_num_workers: 4
+  eval_steps: 500
+  evaluation_strategy: steps
+  fp16: false
+  gradient_accumulation_steps: 4
+  learning_rate: 5.0e-05
+  logging_steps: 10
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  max_seq_length: 512
+  num_train_epochs: 3
+  output_dir: models/fine_tuned
+  per_device_eval_batch_size: 4
+  per_device_train_batch_size: 4
+  remove_unused_columns: false
+  report_to: []
+  save_steps: 500
+  save_total_limit: 2
+  warmup_ratio: 0.1
+  warmup_steps: 0
+  weight_decay: 0.01
+version: '1.0'

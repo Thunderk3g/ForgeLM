@@ -85,18 +85,18 @@ class TrainingConfig:
 @dataclass
 class YAMLConfig:
     """Complete YAML configuration"""
-    # Metadata
+    # Required components (no defaults)
     config_name: str
-    description: str = ""
-    version: str = "1.0"
-    created_at: str = ""
-    author: str = ""
-    
-    # Core components
     model: ModelConfig
     dataset: DatasetConfig
     training: TrainingConfig
     peft: PEFTConfig
+    
+    # Optional metadata (with defaults)
+    description: str = ""
+    version: str = "1.0"
+    created_at: str = ""
+    author: str = ""
     
     # Environment
     environment: Dict[str, Any] = None

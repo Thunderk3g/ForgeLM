@@ -14,8 +14,8 @@ from utils.logging import get_logger
 
 # Import the original functions to maintain compatibility
 try:
-    from model_selection import select_model, scan_available_models
-    from data_preparation import prepare_data
+    from utils.legacy.model_selection import select_model, scan_available_models
+    from utils.legacy.data_preparation import prepare_data
     MODEL_FUNCTIONS_AVAILABLE = True
 except ImportError as e:
     MODEL_FUNCTIONS_AVAILABLE = False

@@ -116,8 +116,10 @@ if KUBERNETES_MODE:
     print("Kubernetes graceful shutdown handlers registered")
 
 
-class UnslothProgressCallback(TrainerCallback):
-    """Custom callback for Unsloth training progress tracking"""
+# Define callback class only if transformers is available
+if TRANSFORMERS_AVAILABLE:
+    class UnslothProgressCallback(TrainerCallback):
+        """Custom callback for Unsloth training progress tracking"""
     
     def __init__(self, task_id: str, log_queue: queue.Queue):
         self.task_id = task_id
@@ -239,6 +241,13 @@ class UnslothProgressCallback(TrainerCallback):
                 
         except Exception as e:
             self.logger.error(f"Error updating status file: {e}")
+
+else:
+    # Dummy callback class when transformers is not available
+    class UnslothProgressCallback:
+        def __init__(self, task_id: str, log_queue: queue.Queue):
+            self.task_id = task_id
+            self.log_queue = log_queue
 
 
 class TrainingService:
