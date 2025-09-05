@@ -104,6 +104,15 @@ class ComparisonService:
                 session_name=request.session_name
             )
             
+            # Load the model pair for this session to make it available for inference
+            try:
+                await self.model_service.load_model_pair(model_pair, session_info.session_id)
+                self.logger.info(f"Model pair {request.pair_id} loaded for session {session_info.session_id}")
+            except Exception as model_load_error:
+                self.logger.error(f"Failed to load model pair for session {session_info.session_id}: {model_load_error}")
+                # Don't fail session creation, but log the error
+                # The generate_comparison method will handle the missing models gracefully
+            
             self.logger.info(f"Created comparison session {session_info.session_id} with pair {request.pair_id}")
             
             return session_info
@@ -373,7 +382,7 @@ class ComparisonService:
             await asyncio.sleep(10)
             
             self.logger.info("Starting model warmup process...")
-            results = await self.model_service.warmup_popular_models(max_models=2)
+            results = await self.model_service.warmup_popular_models(max_models=1)
             
             if results:
                 successful = sum(1 for _, success in results if success)

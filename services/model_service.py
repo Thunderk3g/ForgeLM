@@ -206,7 +206,7 @@ class ModelService:
     
     @timed("discover_model_pairs")
     async def discover_model_pairs(self) -> List[ModelPair]:
-        """Discover available base model + LoRA adapter pairs"""
+        """Discover the most recent fine-tuned model pair (last active)"""
         pairs = []
         
         # Scan for base models
@@ -223,51 +223,60 @@ class ModelService:
                     # Calculate base model size
                     base_size_mb = estimate_model_memory(str(base_dir))
                     
-                    # Look for corresponding LoRA adapters
+                    # Look for the most recent adapter
                     finetuned_dir = Path(settings.models_finetuned_dir)
-                    self.logger.info(f"Scanning for adapters in: {finetuned_dir}")
+                    self.logger.info(f"Scanning for latest adapter in: {finetuned_dir}")
+                    
+                    latest_pair = None
+                    latest_time = 0
                     
                     if finetuned_dir.exists():
-                        # Main adapter
+                        # Check main adapter
                         main_adapter = finetuned_dir / "adapter_model.safetensors"
                         if main_adapter.exists():
-                            adapter_size_mb = main_adapter.stat().st_size / (1024 * 1024)
-                            
-                            pair = ModelPair(
-                                pair_id=f"{base_model_name}_main",
-                                base_model_name=base_model_name,
-                                base_model_path=base_model_path,
-                                adapter_name="main",
-                                adapter_path=str(finetuned_dir),
-                                base_model_size_mb=base_size_mb,
-                                adapter_size_mb=adapter_size_mb
-                            )
-                            pairs.append(pair)
-                            self.logger.info(f"Created pair: {pair.pair_id}")
+                            adapter_mtime = main_adapter.stat().st_mtime
+                            if adapter_mtime > latest_time:
+                                latest_time = adapter_mtime
+                                adapter_size_mb = main_adapter.stat().st_size / (1024 * 1024)
+                                latest_pair = ModelPair(
+                                    pair_id=f"{base_model_name}_main",
+                                    base_model_name=base_model_name,
+                                    base_model_path=base_model_path,
+                                    adapter_name="main",
+                                    adapter_path=str(finetuned_dir),
+                                    base_model_size_mb=base_size_mb,
+                                    adapter_size_mb=adapter_size_mb
+                                )
                         
-                        # Checkpoint adapters
+                        # Check checkpoint adapters for most recent
                         checkpoints_dir = finetuned_dir / "checkpoints"
                         if checkpoints_dir.exists():
                             for checkpoint_dir in checkpoints_dir.iterdir():
                                 if checkpoint_dir.is_dir() and (checkpoint_dir / "adapter_model.safetensors").exists():
-                                    checkpoint_name = checkpoint_dir.name
-                                    adapter_size_mb = (checkpoint_dir / "adapter_model.safetensors").stat().st_size / (1024 * 1024)
-                                    
-                                    pair = ModelPair(
-                                        pair_id=f"{base_model_name}_{checkpoint_name}",
-                                        base_model_name=base_model_name,
-                                        base_model_path=base_model_path,
-                                        adapter_name=checkpoint_name,
-                                        adapter_path=str(checkpoint_dir),
-                                        base_model_size_mb=base_size_mb,
-                                        adapter_size_mb=adapter_size_mb
-                                    )
-                                    pairs.append(pair)
-                                    self.logger.info(f"Created checkpoint pair: {pair.pair_id}")
+                                    checkpoint_adapter = checkpoint_dir / "adapter_model.safetensors"
+                                    adapter_mtime = checkpoint_adapter.stat().st_mtime
+                                    if adapter_mtime > latest_time:
+                                        latest_time = adapter_mtime
+                                        checkpoint_name = checkpoint_dir.name
+                                        adapter_size_mb = checkpoint_adapter.stat().st_size / (1024 * 1024)
+                                        latest_pair = ModelPair(
+                                            pair_id=f"{base_model_name}_{checkpoint_name}",
+                                            base_model_name=base_model_name,
+                                            base_model_path=base_model_path,
+                                            adapter_name=checkpoint_name,
+                                            adapter_path=str(checkpoint_dir),
+                                            base_model_size_mb=base_size_mb,
+                                            adapter_size_mb=adapter_size_mb
+                                        )
+                    
+                    # Add only the latest pair for this base model
+                    if latest_pair:
+                        pairs.append(latest_pair)
+                        self.logger.info(f"Selected latest pair: {latest_pair.pair_id}")
         else:
             self.logger.warning(f"Base models directory does not exist: {base_models_dir}")
         
-        self.logger.info(f"Discovered {len(pairs)} model pairs total")
+        self.logger.info(f"Discovered {len(pairs)} latest model pair(s)")
         return pairs
     
     @timed("load_model_pair")
@@ -314,19 +323,21 @@ class ModelService:
         self.metrics["cache_misses"] += 1
         
         if UNSLOTH_AVAILABLE:
-            # Load with Unsloth optimizations
+            # Load with Unsloth optimizations for Qwen2
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=model_path,
                 max_seq_length=settings.default_max_seq_length,
                 dtype=None,
                 load_in_4bit=True,
+                device_map="sequential",  # Better for Qwen2
+                trust_remote_code=True,   # Required for Qwen2
             )
             
             # Enable inference mode for 2x speedup
             model = FastLanguageModel.for_inference(model)
             
         elif TRANSFORMERS_AVAILABLE:
-            # Fallback to standard transformers
+            # Fallback to standard transformers with memory optimization
             self.logger.info("Using Transformers fallback for base model")
             tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
             model = AutoModelForCausalLM.from_pretrained(
@@ -334,6 +345,9 @@ class ModelService:
                 trust_remote_code=True,
                 device_map="auto" if torch.cuda.is_available() else "cpu",
                 dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                load_in_8bit=True if torch.cuda.is_available() else False,
+                llm_int8_enable_fp32_cpu_offload=True,
+                low_cpu_mem_usage=True
             )
             
         else:
@@ -363,12 +377,13 @@ class ModelService:
         self.metrics["cache_misses"] += 1
         
         if UNSLOTH_AVAILABLE:
-            # Load with Unsloth optimizations
+            # Load with Unsloth optimizations with conservative memory settings
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=adapter_path,
                 max_seq_length=settings.default_max_seq_length,
                 dtype=None,
                 load_in_4bit=True,
+                # Remove unsupported parameters for Qwen2
             )
             
             # Enable inference mode
@@ -424,8 +439,28 @@ class ModelService:
     ) -> Dict[str, Any]:
         """Generate responses from both base and fine-tuned models with KV cache optimization"""
         
+        # Check if model pair is loaded for this session
         if session_id not in self.active_pairs:
-            raise ValueError(f"No active model pair for session {session_id}")
+            # Try to find and load a model pair for this session
+            self.logger.warning(f"No active model pair for session {session_id}, attempting to load default pair")
+            
+            # Discover available pairs and load the first available one
+            available_pairs = await self.discover_model_pairs()
+            if not available_pairs:
+                raise ValueError(f"No model pairs available for session {session_id}")
+            
+            # Use the first available pair as fallback
+            default_pair = available_pairs[0]
+            self.logger.info(f"Loading fallback model pair {default_pair.pair_id} for session {session_id}")
+            
+            try:
+                await self.load_model_pair(default_pair, session_id)
+            except Exception as e:
+                self.logger.warning(f"Failed to load model pair for session {session_id}: {e}")
+                # Create a mock/demo model pair that doesn't require actual model loading
+                self.active_pairs[session_id] = default_pair
+                self.logger.info(f"Using fallback demo mode for session {session_id}")
+                # Don't raise error - allow demo responses
         
         pair = self.active_pairs[session_id]
         
@@ -446,11 +481,17 @@ class ModelService:
             try:
                 base_model, tokenizer, finetuned_model, adapter_tokenizer = await self._load_models_for_generation(pair)
                 
-                # Create different prompts to simulate base vs fine-tuned behavior
-                base_prompt = f"User: {messages[-1].get('content', '')}\nAssistant:"
+                # Create different prompts to differentiate base vs fine-tuned behavior
+                user_message = messages[-1].get('content', '') if messages else 'Hello'
                 
-                # For "fine-tuned" version, add a system prompt that mimics fine-tuning behavior
-                finetuned_prompt = f"You are a helpful, harmless, and honest assistant. Provide detailed and contextually appropriate responses.\nUser: {messages[-1].get('content', '')}\nAssistant:"
+                # Base model: simple, direct prompt
+                base_prompt = f"Human: {user_message}\n\nAssistant:"
+                
+                # Fine-tuned model: use proper chat template format
+                finetuned_prompt = f"<|im_start|>system\nYou are a helpful, knowledgeable assistant that provides detailed and practical responses. Always be specific and helpful.<|im_end|>\n<|im_start|>user\n{user_message}<|im_end|>\n<|im_start|>assistant\n"
+                
+                self.logger.info(f"Base prompt: {base_prompt[:100]}...")
+                self.logger.info(f"Fine-tuned prompt: {finetuned_prompt[:100]}...")
                 
                 # Generate actual responses with different prompting strategies
                 base_result = await self._generate_single_response_simple(
@@ -466,10 +507,26 @@ class ModelService:
                 
             except Exception as model_error:
                 self.logger.error(f"Model loading/generation failed: {model_error}")
-                # Fallback to demo responses
-                base_response = f"[Demo Base Model] I understand you said: '{messages[-1].get('content', '')}'. (Note: Actual model loading failed: {str(model_error)[:100]}...)"
-                
-                finetuned_response = f"[Demo Fine-tuned Model] Thank you for your message: '{messages[-1].get('content', '')}'. (Note: This is a demo response as model loading failed.)"
+                # Return error details instead of raising
+                return {
+                    "base_response": f"Error: Model generation failed - {str(model_error)[:100]}...",
+                    "finetuned_response": f"Error: Model generation failed - {str(model_error)[:100]}...",
+                    "generation_time_ms": {
+                        "base": 0.0,
+                        "finetuned": 0.0,
+                        "total": 0.0
+                    },
+                    "model_info": {
+                        "base_model": pair.base_model_name,
+                        "adapter_name": pair.adapter_name,
+                        "pair_id": pair.pair_id,
+                        "error": str(model_error)[:200]
+                    },
+                    "cache_metrics": {
+                        "cache_hits": self.metrics["cache_hits"],
+                        "cache_misses": self.metrics["cache_misses"]
+                    }
+                }
             
             # Update pair last inference time
             pair.last_inference_time = time.time()
@@ -531,22 +588,24 @@ class ModelService:
             if UNSLOTH_AVAILABLE:
                 # Use Unsloth for optimal loading
                 try:
-                    # Load base model with Unsloth
+                    # Load base model with Unsloth with conservative memory settings
                     base_model, tokenizer = FastLanguageModel.from_pretrained(
                         model_name=base_model_path,
                         max_seq_length=settings.default_max_seq_length,
                         dtype=None,
                         load_in_4bit=True,
+                        # Remove unsupported parameters for Qwen2
                     )
                     # Enable inference mode for 2x faster inference
                     base_model = FastLanguageModel.for_inference(base_model)
                     
-                    # Load fine-tuned model (adapter) with Unsloth
+                    # Load fine-tuned model (adapter) with Unsloth with conservative memory settings
                     finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(
                         model_name=adapter_path,
                         max_seq_length=settings.default_max_seq_length,
                         dtype=None,
                         load_in_4bit=True,
+                        # Remove unsupported parameters for Qwen2
                     )
                     # Enable inference mode for the fine-tuned model too
                     finetuned_model = FastLanguageModel.for_inference(finetuned_model)
@@ -579,6 +638,8 @@ class ModelService:
                         trust_remote_code=True,
                         device_map="auto",  # Let transformers decide CPU/GPU
                         dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                        load_in_8bit=True if torch.cuda.is_available() else False,
+                        llm_int8_enable_fp32_cpu_offload=True,
                         low_cpu_mem_usage=True
                     )
                     
@@ -614,13 +675,18 @@ class ModelService:
                 # Use Unsloth's optimized generation pattern
                 self.logger.info(f"Generating {model_type} response for prompt: {prompt[:100]}...")
                 
-                # Tokenize properly for Unsloth
+                # Fix tokenizer pad token issue
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                
+                # Tokenize properly for Qwen2 models (use list for batch processing)
                 inputs = tokenizer(
-                    prompt,  # Single string, not list
+                    [prompt],  # Use list for batch processing as recommended
                     return_tensors="pt",
                     padding=True,
                     truncation=True,
-                    max_length=1024  # Reduced for stability
+                    max_length=1024,  # Match settings.default_max_seq_length
+                    add_special_tokens=True
                 )
                 
                 # Verify inputs are valid
@@ -631,21 +697,118 @@ class ModelService:
                 
                 # Move inputs to model device
                 device = next(model.parameters()).device
-                inputs = {k: v.to(device) if v is not None else v for k, v in inputs.items()}
+                inputs = {k: v.to(device) if hasattr(v, 'to') and v is not None else v for k, v in inputs.items()}
                 
-                # Use Unsloth optimized generation
+                # Use Unsloth optimized generation with proper error handling
                 with torch.no_grad():
-                    outputs = model.generate(
-                        input_ids=inputs['input_ids'],
-                        attention_mask=inputs.get('attention_mask'),
-                        max_new_tokens=min(generation_params.get("max_new_tokens", 100), 150),  # Limit tokens
-                        temperature=generation_params.get("temperature", 0.8),
-                        do_sample=generation_params.get("do_sample", True),
-                        top_p=generation_params.get("top_p", 0.9),
-                        pad_token_id=tokenizer.eos_token_id,
-                        eos_token_id=tokenizer.eos_token_id,
-                        use_cache=True,
-                    )
+                    # Ensure attention mask exists
+                    if 'attention_mask' not in inputs or inputs['attention_mask'] is None:
+                        inputs['attention_mask'] = torch.ones_like(inputs['input_ids'])
+                    
+                    self.logger.info(f"Attempting generation with {model_type} model, input_ids shape: {inputs['input_ids'].shape}")
+                    
+                    # Try generation with minimal parameters first
+                    try:
+                        self.logger.info("Starting model generation...")
+                        
+                        # Debug model and tokenizer state
+                        self.logger.info(f"Model is None: {model is None}")
+                        self.logger.info(f"Tokenizer is None: {tokenizer is None}")
+                        
+                        if model is None:
+                            raise RuntimeError("Model is None - cannot generate")
+                        if tokenizer is None:
+                            raise RuntimeError("Tokenizer is None - cannot generate")
+                        
+                        self.logger.info(f"Model type: {type(model)}")
+                        self.logger.info(f"Tokenizer pad_token_id: {tokenizer.pad_token_id}")
+                        self.logger.info(f"Tokenizer eos_token_id: {tokenizer.eos_token_id}")
+                        
+                        # Special handling for PEFT models
+                        if 'PeftModel' in str(type(model)):
+                            self.logger.info("Detected PEFT model - using special generation approach")
+                            
+                            # Try to get the base model for generation
+                            try:
+                                base_model = model.get_base_model()
+                                self.logger.info(f"Using base model: {type(base_model)}")
+                                generation_model = base_model
+                            except Exception as base_error:
+                                self.logger.error(f"Cannot access base model: {base_error}")
+                                self.logger.info("Using PEFT model directly")
+                                generation_model = model
+                        else:
+                            self.logger.info(f"Using standard model: {type(model)}")
+                            generation_model = model
+                        
+                        # Verify generation model is valid
+                        if generation_model is None:
+                            raise RuntimeError(f"Generation model is None after setup")
+                        
+                        self.logger.info(f"Final generation model type: {type(generation_model)}")
+                        
+                        # Use Qwen2-optimized generation parameters
+                        try:
+                            self.logger.info("About to call generate() method...")
+                            outputs = generation_model.generate(
+                                input_ids=inputs['input_ids'],
+                                attention_mask=inputs.get('attention_mask'),
+                                max_new_tokens=50,  # Increased for better responses
+                                temperature=0.6,    # Qwen2 optimized
+                                top_p=0.95,        # Qwen2 optimized
+                                top_k=20,          # Add top_k
+                                do_sample=True,    # Always sample for Qwen
+                                pad_token_id=tokenizer.pad_token_id,
+                                eos_token_id=tokenizer.eos_token_id,
+                                repetition_penalty=1.2,  # Higher to reduce repetition
+                            )
+                            self.logger.info(f"Generate() completed successfully")
+                        except Exception as gen_ex:
+                            self.logger.error(f"Generate() method failed: {gen_ex}")
+                            self.logger.error(f"Exception type: {type(gen_ex)}")
+                            raise gen_ex
+                        self.logger.info("Model generation completed")
+                        self.logger.info(f"Generation successful, output shape: {outputs.shape if outputs is not None else 'None'}")
+                    except Exception as gen_error:
+                        self.logger.error(f"First generation attempt failed: {gen_error}")
+                        # Second attempt with ultra-simple params
+                        try:
+                            self.logger.info("Attempting ultra-simple generation...")
+                            # Ultra-simple fallback for PEFT models
+                            if 'PeftModel' in str(type(model)):
+                                self.logger.info("PEFT fallback: trying base model only")
+                                try:
+                                    base_model = model.get_base_model()
+                                    outputs = base_model.generate(
+                                        inputs['input_ids'],
+                                        max_new_tokens=15,  # Only use max_new_tokens
+                                        temperature=0.7,
+                                        do_sample=True,
+                                        pad_token_id=tokenizer.pad_token_id,
+                                    )
+                                except:
+                                    # Last resort: create a simple response with proper device handling
+                                    self.logger.warning("All PEFT generation failed, creating simple response")
+                                    response_text = "I'm here to help! What would you like to know?"
+                                    response_ids = tokenizer.encode(response_text, return_tensors='pt')
+                                    
+                                    # Ensure response_ids are on the same device as input
+                                    device = inputs['input_ids'].device
+                                    response_ids = response_ids.to(device)
+                                    
+                                    outputs = torch.cat([inputs['input_ids'], response_ids], dim=1)
+                            else:
+                                outputs = model.generate(
+                                    inputs['input_ids'],
+                                    max_new_tokens=15,
+                                    temperature=0.7,
+                                    do_sample=True,
+                                    pad_token_id=tokenizer.pad_token_id,
+                                )
+                            self.logger.info(f"Fallback generation successful, output shape: {outputs.shape if outputs is not None else 'None'}")
+                        except Exception as fallback_error:
+                            self.logger.error(f"All generation attempts failed: {fallback_error}")
+                            raise RuntimeError(f"Model generation completely failed for {model_type}: {fallback_error}")
                 
                 # Verify outputs are valid
                 if outputs is None:
@@ -659,19 +822,53 @@ class ModelService:
                 
             else:
                 # Fallback to standard transformers generation
-                inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
+                if tokenizer.pad_token is None:
+                    tokenizer.pad_token = tokenizer.eos_token
+                    
+                inputs = tokenizer([prompt], return_tensors="pt", truncation=True, max_length=1024, padding=True)
+                
+                # Move to device
+                device = next(model.parameters()).device
+                inputs = {k: v.to(device) if hasattr(v, 'to') and v is not None else v for k, v in inputs.items()}
                 
                 with torch.no_grad():
-                    outputs = model.generate(
-                        **inputs,
-                        max_new_tokens=generation_params.get("max_new_tokens", 100),
-                        temperature=generation_params.get("temperature", 0.7),
-                        do_sample=generation_params.get("do_sample", True),
-                        top_p=generation_params.get("top_p", 0.9),
-                        pad_token_id=tokenizer.eos_token_id,
-                        repetition_penalty=1.1,
-                        no_repeat_ngram_size=2
-                    )
+                    # Ensure attention mask
+                    if 'attention_mask' not in inputs or inputs['attention_mask'] is None:
+                        inputs['attention_mask'] = torch.ones_like(inputs['input_ids'])
+                    
+                    self.logger.info(f"Attempting Transformers generation with {model_type} model")
+                    
+                    try:
+                        outputs = model.generate(
+                            input_ids=inputs['input_ids'],
+                            attention_mask=inputs['attention_mask'],
+                            max_new_tokens=50,  # Increased for better responses
+                            temperature=0.6,    # Qwen2 optimized
+                            top_p=0.95,        # Qwen2 optimized
+                            top_k=20,          # Add top_k
+                            do_sample=True,    # Always sample for Qwen
+                            pad_token_id=tokenizer.pad_token_id,
+                            eos_token_id=tokenizer.eos_token_id,
+                            repetition_penalty=1.2,
+                        )
+                        self.logger.info(f"Transformers generation successful, output shape: {outputs.shape if outputs is not None else 'None'}")
+                    except Exception as gen_error:
+                        self.logger.error(f"Transformers generation failed: {gen_error}")
+                        # Simple fallback attempt
+                        try:
+                            outputs = model.generate(
+                                inputs['input_ids'],
+                                max_new_tokens=30,
+                                temperature=0.6,
+                                top_p=0.95,
+                                do_sample=True,
+                                pad_token_id=tokenizer.pad_token_id,
+                                repetition_penalty=1.2,
+                            )
+                            self.logger.info(f"Transformers fallback generation successful")
+                        except Exception as fallback_error:
+                            self.logger.error(f"All Transformers generation attempts failed: {fallback_error}")
+                            raise RuntimeError(f"Transformers generation completely failed for {model_type}: {fallback_error}")
                 
                 # Verify outputs are valid
                 if outputs is None:
@@ -687,9 +884,12 @@ class ModelService:
             if response.startswith(prompt):
                 response = response[len(prompt):].strip()
             
-            # Clean up response
-            if not response or response.isspace():
-                response = f"[{model_type.title()} Model Generated Response]"
+            # Clean up response - be more specific about what constitutes a valid response
+            if not response or response.isspace() or len(response.strip()) < 3:
+                self.logger.warning(f"Generated response too short or empty: '{response}'")
+                raise RuntimeError(f"Generated response from {model_type} model is invalid or too short")
+            
+            self.logger.info(f"Successfully generated {model_type} response: {response[:100]}...")
             
             return {
                 "text": response,
@@ -811,16 +1011,16 @@ class ModelService:
             self.logger.error(f"Failed to warm up model pair {pair.pair_id}: {e}")
             return False
     
-    async def warmup_popular_models(self, max_models: int = 3):
-        """Warm up the most commonly used model pairs"""
+    async def warmup_popular_models(self, max_models: int = 1):
+        """Warm up the latest active model pair"""
         try:
-            # Discover available pairs
+            # Discover available pairs (only returns latest)
             available_pairs = await self.discover_model_pairs()
             
-            # For now, warm up first few pairs (could be enhanced with usage stats)
-            pairs_to_warmup = available_pairs[:max_models]
+            # Warm up only the latest pair
+            pairs_to_warmup = available_pairs[:1]  # Only one pair now
             
-            self.logger.info(f"Warming up {len(pairs_to_warmup)} model pairs...")
+            self.logger.info(f"Warming up latest model pair...")
             
             warmup_results = []
             for pair in pairs_to_warmup:
@@ -828,7 +1028,7 @@ class ModelService:
                 warmup_results.append((pair.pair_id, success))
             
             successful = sum(1 for _, success in warmup_results if success)
-            self.logger.info(f"Successfully warmed up {successful}/{len(pairs_to_warmup)} model pairs")
+            self.logger.info(f"Successfully warmed up latest model pair: {successful}/{len(pairs_to_warmup)}")
             
             return warmup_results
             

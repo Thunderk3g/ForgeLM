@@ -31,7 +31,7 @@ class AppConfig:
     background_optimization: bool = True
     
     # Training
-    default_max_seq_length: int = 2048
+    default_max_seq_length: int = 1024  # Reduced for better memory usage
     default_batch_size: int = 20
     default_learning_rate: float = 0.0001
     
