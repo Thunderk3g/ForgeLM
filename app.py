@@ -357,6 +357,22 @@ async def get_chat_service_metrics():
     
     return await chat_controller_instance.get_chat_service_metrics()
 
+@app.get("/chat/research/analytics")
+async def get_research_analytics(session_id: str = None):
+    """Get research analytics data for model comparison analysis."""
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
+        raise HTTPException(status_code=503, detail="Comparison chat service not available")
+    
+    return await chat_controller_instance.get_research_analytics(session_id)
+
+@app.get("/chat/research/export")
+async def export_research_data(start_date: str = None, end_date: str = None, format: str = "json"):
+    """Export research data for external analysis."""
+    if not COMPARISON_CHAT_AVAILABLE or not chat_controller_instance:
+        raise HTTPException(status_code=503, detail="Comparison chat service not available")
+    
+    return await chat_controller_instance.export_research_data(start_date, end_date, format)
+
 # =====================================
 # ERROR HANDLERS
 # =====================================

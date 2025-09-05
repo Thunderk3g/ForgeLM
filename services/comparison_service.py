@@ -17,6 +17,7 @@ from services.model_service import ModelService
 from services.chat_service import ChatService
 from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
+from utils.research_logger import research_logger
 from config.settings import settings
 
 
@@ -181,7 +182,8 @@ class ComparisonService:
             
             self.logger.info(f"Generated comparison for session {request.session_id} in {total_time_ms:.1f}ms")
             
-            return ComparisonResponse(
+            # Create comparison response
+            comparison_response = ComparisonResponse(
                 base_response=result["base_response"],
                 finetuned_response=result["finetuned_response"],
                 generation_time_ms=result["generation_time_ms"],
@@ -190,6 +192,22 @@ class ComparisonService:
                 session_id=request.session_id,
                 timestamp=datetime.now().isoformat()
             )
+            
+            # Log for research analysis
+            try:
+                user_message = request.messages[-1].content if request.messages else ""
+                log_id = research_logger.log_comparison(
+                    session_id=request.session_id,
+                    user_message=user_message,
+                    comparison_response=comparison_response,
+                    model_pair_info=result["model_info"],
+                    generation_params=request.generation_params.dict() if request.generation_params else {}
+                )
+                self.logger.info(f"Logged comparison for research: {log_id}")
+            except Exception as log_error:
+                self.logger.warning(f"Failed to log comparison for research: {log_error}")
+            
+            return comparison_response
             
         except Exception as e:
             self.metrics["failed_comparisons"] += 1
