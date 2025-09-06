@@ -8,9 +8,7 @@
 models/
 models/base/
 models/finetuned/
-models/*/
-models/*/*/
-models/*/*/*/
+
 # Dataset files
 data/input/
 data/prepared/
