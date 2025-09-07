@@ -49,6 +49,14 @@ else:
     except ImportError:
         TRANSFORMERS_AVAILABLE = False
 
+# Import fallback service
+try:
+    from services.fallback_generation_service import FallbackGenerationService
+    FALLBACK_AVAILABLE = True
+except ImportError:
+    FALLBACK_AVAILABLE = False
+    print("Fallback generation service not available")
+
 
 class DependencyGraph:
     """Tree-based dependency tracking for LoRAs and KV caches (FastLibra approach)"""
@@ -218,7 +226,7 @@ class ModelService:
                 if base_dir.is_dir():
                     base_model_name = base_dir.name
                     base_model_path = str(base_dir)
-                    self.logger.info(f"Found base model: {base_model_name}")
+                    self.logger.info(f"Found base model: {base_model_name} at {base_model_path}")
                     
                     # Calculate base model size
                     base_size_mb = estimate_model_memory(str(base_dir))
@@ -554,6 +562,44 @@ class ModelService:
             self.logger.error(f"Error generating comparison responses: {e}")
             raise
     
+    async def generate_comparison_responses_with_fallback(
+        self, 
+        session_id: str,
+        messages: List[Dict[str, str]], 
+        generation_params: Dict = None
+    ) -> Dict[str, Any]:
+        """Generate responses with fallback support for TensorFlow/GPU issues"""
+        
+        try:
+            # Try the normal generation process first
+            return await self.generate_comparison_responses(session_id, messages, generation_params)
+        
+        except Exception as e:
+            self.logger.error(f"Normal generation failed: {e}")
+            
+            if any(keyword in str(e).lower() for keyword in ["tensorflow", "dll", "cuda", "gpu", "_pywrap_tensorflow"]):
+                self.logger.info("TensorFlow/DLL/GPU issue detected, using fallback service")
+                
+                if FALLBACK_AVAILABLE:
+                    fallback_service = FallbackGenerationService()
+                    return fallback_service.generate_fallback_response(messages)
+                else:
+                    return {
+                        "base_response": "Model generation temporarily unavailable due to system configuration issues. Please check TensorFlow installation and CUDA drivers.",
+                        "finetuned_response": "System is running in fallback mode. For full functionality, please resolve dependency issues and restart the service.",
+                        "generation_time_ms": {"base": 0, "finetuned": 0, "total": 0},
+                        "model_info": {
+                            "base_model": "fallback", 
+                            "adapter_name": "error_mode", 
+                            "pair_id": "system_error",
+                            "error": str(e)[:200]
+                        },
+                        "cache_metrics": {"cache_hits": 0, "cache_misses": 1}
+                    }
+            else:
+                # Re-raise non-system configuration errors
+                raise
+    
     def _format_conversation_simple(self, messages: List[Dict[str, str]]) -> str:
         """Simple conversation formatting for demo purposes"""
         formatted_parts = []
@@ -570,14 +616,25 @@ class ModelService:
         # Check if models are already loaded for this pair
         if pair.pair_id in self.loaded_models_cache:
             self.logger.info(f"Using cached models for pair: {pair.pair_id}")
-            return self.loaded_models_cache[pair.pair_id]
+            cached_models = self.loaded_models_cache[pair.pair_id]
+            
+            # Validate cached models are not None
+            if all(model is not None for model in cached_models):
+                return cached_models
+            else:
+                self.logger.warning(f"Cached models contain None values, removing from cache: {pair.pair_id}")
+                del self.loaded_models_cache[pair.pair_id]
         
         # Use lock to prevent concurrent loading
         async with self.model_load_lock:
             # Double-check cache after acquiring lock
             if pair.pair_id in self.loaded_models_cache:
                 self.logger.info(f"Using cached models for pair: {pair.pair_id} (double-check)")
-                return self.loaded_models_cache[pair.pair_id]
+                cached_models = self.loaded_models_cache[pair.pair_id]
+                if all(model is not None for model in cached_models):
+                    return cached_models
+                else:
+                    del self.loaded_models_cache[pair.pair_id]
             
             base_model_path = pair.base_model_path
             adapter_path = pair.adapter_path
@@ -585,92 +642,158 @@ class ModelService:
             self.logger.info(f"Loading base model from: {base_model_path}")
             self.logger.info(f"Loading adapter from: {adapter_path}")
             
-            if UNSLOTH_AVAILABLE:
-                # Use Unsloth for optimal loading
-                try:
-                    # Load base model with Unsloth with conservative memory settings
-                    base_model, tokenizer = FastLanguageModel.from_pretrained(
-                        model_name=base_model_path,
-                        max_seq_length=settings.default_max_seq_length,
-                        dtype=None,
-                        load_in_4bit=True,
-                        # Remove unsupported parameters for Qwen2
-                    )
-                    # Enable inference mode for 2x faster inference
-                    base_model = FastLanguageModel.for_inference(base_model)
+            # Validate paths exist
+            if not Path(base_model_path).exists():
+                raise FileNotFoundError(f"Base model path does not exist: {base_model_path}")
+            if not Path(adapter_path).exists():
+                raise FileNotFoundError(f"Adapter path does not exist: {adapter_path}")
+            
+            base_model = None
+            tokenizer = None
+            finetuned_model = None
+            adapter_tokenizer = None
+            
+            try:
+                if UNSLOTH_AVAILABLE:
+                    # Use Unsloth for optimal loading
+                    self.logger.info("Loading models with Unsloth optimization...")
                     
-                    # Load fine-tuned model (adapter) with Unsloth with conservative memory settings
-                    finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(
-                        model_name=adapter_path,
-                        max_seq_length=settings.default_max_seq_length,
-                        dtype=None,
-                        load_in_4bit=True,
-                        # Remove unsupported parameters for Qwen2
-                    )
-                    # Enable inference mode for the fine-tuned model too
-                    finetuned_model = FastLanguageModel.for_inference(finetuned_model)
+                    # Load base model with Unsloth with proper Qwen2.5 parameters
+                    try:
+                        base_model, tokenizer = FastLanguageModel.from_pretrained(
+                            model_name=base_model_path,
+                            max_seq_length=settings.default_max_seq_length,
+                            dtype=None,
+                            load_in_4bit=True,
+                            trust_remote_code=True,  # Required for Qwen2.5
+                        )
+                        
+                        # Validate models were loaded successfully
+                        if base_model is None:
+                            raise RuntimeError("Base model loading returned None")
+                        if tokenizer is None:
+                            raise RuntimeError("Tokenizer loading returned None")
+                        
+                        # Enable inference mode for 2x faster inference
+                        base_model = FastLanguageModel.for_inference(base_model)
+                        
+                        # Fix tokenizer pad token
+                        if tokenizer.pad_token is None:
+                            tokenizer.pad_token = tokenizer.eos_token
+                        
+                        self.logger.info(f"Base model loaded successfully: {type(base_model)}")
+                        
+                    except Exception as base_error:
+                        self.logger.error(f"Failed to load base model with Unsloth: {base_error}")
+                        raise RuntimeError(f"Base model loading failed: {base_error}")
                     
-                    self.logger.info("Successfully loaded models with Unsloth optimization")
+                    # Load fine-tuned model (adapter) with Unsloth
+                    try:
+                        finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(
+                            model_name=adapter_path,
+                            max_seq_length=settings.default_max_seq_length,
+                            dtype=None,
+                            load_in_4bit=True,
+                            trust_remote_code=True,  # Required for Qwen2.5
+                        )
+                        
+                        # Validate models were loaded successfully
+                        if finetuned_model is None:
+                            raise RuntimeError("Fine-tuned model loading returned None")
+                        if adapter_tokenizer is None:
+                            raise RuntimeError("Adapter tokenizer loading returned None")
+                        
+                        # Enable inference mode for the fine-tuned model too
+                        finetuned_model = FastLanguageModel.for_inference(finetuned_model)
+                        
+                        # Fix tokenizer pad token
+                        if adapter_tokenizer.pad_token is None:
+                            adapter_tokenizer.pad_token = adapter_tokenizer.eos_token
+                        
+                        self.logger.info(f"Fine-tuned model loaded successfully: {type(finetuned_model)}")
+                        
+                    except Exception as adapter_error:
+                        self.logger.error(f"Failed to load adapter with Unsloth: {adapter_error}")
+                        raise RuntimeError(f"Adapter loading failed: {adapter_error}")
                     
-                    # Cache the loaded models
-                    models_tuple = (base_model, tokenizer, finetuned_model, adapter_tokenizer)
-                    self.loaded_models_cache[pair.pair_id] = models_tuple
-                    self.logger.info(f"Models cached for pair: {pair.pair_id}")
-                    
-                    return models_tuple
-                    
-                except Exception as e:
-                    self.logger.error(f"Unsloth loading failed: {e}")
-                    raise
+                    self.logger.info("Successfully loaded both models with Unsloth optimization")
                 
-            elif TRANSFORMERS_AVAILABLE:
-                # Fallback to standard transformers
-                try:
-                    # Load base model with error handling
-                    self.logger.info("Loading tokenizer...")
-                    tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
-                    if tokenizer.pad_token is None:
-                        tokenizer.pad_token = tokenizer.eos_token
+                elif TRANSFORMERS_AVAILABLE:
+                    # Fallback to standard transformers
+                    self.logger.info("Loading models with Transformers fallback...")
                     
-                    self.logger.info("Loading base model (this may take a while)...")
-                    base_model = AutoModelForCausalLM.from_pretrained(
-                        base_model_path,
-                        trust_remote_code=True,
-                        device_map="auto",  # Let transformers decide CPU/GPU
-                        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                        load_in_8bit=True if torch.cuda.is_available() else False,
-                        llm_int8_enable_fp32_cpu_offload=True,
-                        low_cpu_mem_usage=True
-                    )
-                    
-                    self.logger.info(f"Base model loaded successfully!")
-                    self.logger.info(f"Model device: {next(base_model.parameters()).device}")
-                    
-                    # For now, use the same base model for "fine-tuned" comparison
-                    # This will show the difference in responses based on different prompting
-                    finetuned_model = base_model  
-                    adapter_tokenizer = tokenizer
-                    
-                    self.logger.info("Note: Using base model for both comparisons (LoRA adapter loading not available)")
-                    
-                    # Cache the loaded models
-                    models_tuple = (base_model, tokenizer, finetuned_model, adapter_tokenizer)
-                    self.loaded_models_cache[pair.pair_id] = models_tuple
-                    self.logger.info(f"Models cached for pair: {pair.pair_id}")
-                    
-                    return models_tuple
-                    
-                except Exception as e:
-                    self.logger.error(f"Error loading with Transformers: {e}")
-                    raise RuntimeError(f"Failed to load model with Transformers: {e}")
+                    try:
+                        # Load base model with error handling
+                        self.logger.info("Loading tokenizer...")
+                        tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
+                        
+                        # Validate tokenizer
+                        if tokenizer is None:
+                            raise RuntimeError("Tokenizer loading returned None")
+                        
+                        if tokenizer.pad_token is None:
+                            tokenizer.pad_token = tokenizer.eos_token
+                        
+                        self.logger.info("Loading base model (this may take a while)...")
+                        base_model = AutoModelForCausalLM.from_pretrained(
+                            base_model_path,
+                            trust_remote_code=True,
+                            device_map="cpu",  # Force CPU since no CUDA
+                            torch_dtype=torch.float32,  # Use float32 for CPU
+                            low_cpu_mem_usage=True
+                        )
+                        
+                        # Validate base model
+                        if base_model is None:
+                            raise RuntimeError("Base model loading returned None")
+                        
+                        self.logger.info(f"Base model loaded successfully!")
+                        self.logger.info(f"Model device: {next(base_model.parameters()).device}")
+                        
+                        # For now, use the same base model for "fine-tuned" comparison
+                        # This will show the difference in responses based on different prompting
+                        finetuned_model = base_model  
+                        adapter_tokenizer = tokenizer
+                        
+                        self.logger.info("Note: Using base model for both comparisons (LoRA adapter loading not available)")
+                        
+                    except Exception as transformers_error:
+                        self.logger.error(f"Error loading with Transformers: {transformers_error}")
+                        raise RuntimeError(f"Failed to load model with Transformers: {transformers_error}")
                 
-            else:
-                raise RuntimeError("Neither Unsloth nor Transformers available for model loading")
+                else:
+                    raise RuntimeError("Neither Unsloth nor Transformers available for model loading")
+                
+                # Final validation of all models before caching
+                if any(model is None for model in [base_model, tokenizer, finetuned_model, adapter_tokenizer]):
+                    error_msg = f"One or more models are None: base_model={base_model is not None}, tokenizer={tokenizer is not None}, finetuned_model={finetuned_model is not None}, adapter_tokenizer={adapter_tokenizer is not None}"
+                    self.logger.error(error_msg)
+                    raise RuntimeError(error_msg)
+                
+                # Cache the loaded models
+                models_tuple = (base_model, tokenizer, finetuned_model, adapter_tokenizer)
+                self.loaded_models_cache[pair.pair_id] = models_tuple
+                self.logger.info(f"Models successfully loaded and cached for pair: {pair.pair_id}")
+                
+                return models_tuple
+                    
+            except Exception as e:
+                self.logger.error(f"Critical error in model loading: {e}")
+                # Clean up any partially loaded models
+                if pair.pair_id in self.loaded_models_cache:
+                    del self.loaded_models_cache[pair.pair_id]
+                raise
     
     async def _generate_single_response_simple(self, model, tokenizer, prompt: str, generation_params: Dict, model_type: str):
         """Generate response from a single model using Unsloth optimized generation"""
         
         try:
+            # Validate model and tokenizer first (CRITICAL FIX)
+            if model is None:
+                raise RuntimeError(f"Model is None - cannot generate {model_type} response")
+            if tokenizer is None:
+                raise RuntimeError(f"Tokenizer is None - cannot generate {model_type} response")
+            
             if UNSLOTH_AVAILABLE:
                 # Use Unsloth's optimized generation pattern
                 self.logger.info(f"Generating {model_type} response for prompt: {prompt[:100]}...")
@@ -695,9 +818,14 @@ class ModelService:
                 
                 self.logger.info(f"Input shape: {inputs['input_ids'].shape}")
                 
-                # Move inputs to model device
-                device = next(model.parameters()).device
-                inputs = {k: v.to(device) if hasattr(v, 'to') and v is not None else v for k, v in inputs.items()}
+                # Move inputs to model device (ONLY after validating model is not None)
+                try:
+                    device = next(model.parameters()).device
+                    self.logger.info(f"Model device: {device}")
+                    inputs = {k: v.to(device) if hasattr(v, 'to') and v is not None else v for k, v in inputs.items()}
+                except Exception as device_error:
+                    self.logger.error(f"Failed to get model device: {device_error}")
+                    raise RuntimeError(f"Cannot determine model device: {device_error}")
                 
                 # Use Unsloth optimized generation with proper error handling
                 with torch.no_grad():
@@ -750,9 +878,14 @@ class ModelService:
                         # Use Qwen2-optimized generation parameters
                         try:
                             self.logger.info("About to call generate() method...")
+                            # Ensure attention_mask is never None
+                            attention_mask = inputs.get('attention_mask')
+                            if attention_mask is None:
+                                attention_mask = torch.ones_like(inputs['input_ids'])
+                            
                             outputs = generation_model.generate(
                                 input_ids=inputs['input_ids'],
-                                attention_mask=inputs.get('attention_mask'),
+                                attention_mask=attention_mask,
                                 max_new_tokens=50,  # Increased for better responses
                                 temperature=0.6,    # Qwen2 optimized
                                 top_p=0.95,        # Qwen2 optimized
@@ -822,14 +955,27 @@ class ModelService:
                 
             else:
                 # Fallback to standard transformers generation
+                self.logger.info(f"Using Transformers fallback for {model_type} generation...")
+                
                 if tokenizer.pad_token is None:
                     tokenizer.pad_token = tokenizer.eos_token
                     
                 inputs = tokenizer([prompt], return_tensors="pt", truncation=True, max_length=1024, padding=True)
                 
-                # Move to device
-                device = next(model.parameters()).device
-                inputs = {k: v.to(device) if hasattr(v, 'to') and v is not None else v for k, v in inputs.items()}
+                # Verify inputs are valid
+                if inputs is None or inputs.get('input_ids') is None:
+                    raise ValueError("Tokenizer returned None or invalid inputs")
+                
+                self.logger.info(f"Transformers input shape: {inputs['input_ids'].shape}")
+                
+                # Move to device (with proper error handling)
+                try:
+                    device = next(model.parameters()).device
+                    self.logger.info(f"Transformers model device: {device}")
+                    inputs = {k: v.to(device) if hasattr(v, 'to') and v is not None else v for k, v in inputs.items()}
+                except Exception as device_error:
+                    self.logger.error(f"Failed to get Transformers model device: {device_error}")
+                    raise RuntimeError(f"Cannot determine Transformers model device: {device_error}")
                 
                 with torch.no_grad():
                     # Ensure attention mask
@@ -898,12 +1044,13 @@ class ModelService:
             }
             
         except Exception as e:
-            self.logger.error(f"Error generating {model_type} response: {e}")
-            return {
-                "text": f"Error generating {model_type} response: {str(e)}",
-                "time_ms": 0.0,
-                "model_type": model_type
-            }
+            self.logger.error(f"Critical error generating {model_type} response: {e}")
+            self.logger.error(f"Exception type: {type(e)}")
+            self.logger.error(f"Exception args: {e.args}")
+            
+            # Instead of returning a fallback response, raise the error
+            # This ensures the issue is properly diagnosed rather than hidden
+            raise RuntimeError(f"Generation failed for {model_type} model: {str(e)}")
     
     def get_memory_stats(self) -> Dict[str, Any]:
         """Get detailed memory usage statistics"""

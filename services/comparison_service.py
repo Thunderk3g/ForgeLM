@@ -147,8 +147,8 @@ class ComparisonService:
             for msg in request.messages:
                 await self.chat_service.add_message(request.session_id, msg)
             
-            # Generate comparison responses using model service
-            result = await self.model_service.generate_comparison_responses(
+            # Generate comparison responses using model service with fallback support
+            result = await self.model_service.generate_comparison_responses_with_fallback(
                 session_id=request.session_id,
                 messages=messages,
                 generation_params=request.generation_params
@@ -233,8 +233,8 @@ class ComparisonService:
                 "data": {"phase": "generating", "models": ["base", "finetuned"]}
             }
             
-            # Generate comparison responses
-            result = await self.model_service.generate_comparison_responses(
+            # Generate comparison responses with fallback support
+            result = await self.model_service.generate_comparison_responses_with_fallback(
                 session_id=request.session_id,
                 messages=messages,
                 generation_params=request.generation_params
