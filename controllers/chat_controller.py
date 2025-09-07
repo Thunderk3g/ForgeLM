@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from models.schemas import ComparisonRequest, SessionCreateRequest, ChatMessage
 from services.comparison_service import ComparisonService
 from utils.logging import get_logger
+from utils.research_logger import research_logger
 
 
 class ChatController:
@@ -131,6 +132,48 @@ class ChatController:
         except Exception as e:
             self.logger.error(f"Failed to get metrics: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to get metrics: {str(e)}")
+    
+    async def get_research_analytics(self, session_id: str = None) -> JSONResponse:
+        """Get research analytics data for model comparison analysis"""
+        try:
+            if session_id:
+                # Get session-specific analytics
+                analytics = research_logger.get_session_summary(session_id)
+            else:
+                # Get overall comparison statistics
+                analytics = research_logger.get_model_comparison_stats()
+            
+            return JSONResponse(content={
+                "status": "success",
+                "analytics": analytics
+            })
+        except Exception as e:
+            self.logger.error(f"Failed to get research analytics: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to get research analytics: {str(e)}")
+    
+    async def export_research_data(self, start_date: str = None, end_date: str = None, format: str = "json") -> JSONResponse:
+        """Export research data for external analysis"""
+        try:
+            export_file = research_logger.export_research_data(
+                start_date=start_date,
+                end_date=end_date,
+                format=format
+            )
+            
+            if export_file:
+                return JSONResponse(content={
+                    "status": "success",
+                    "export_file": export_file,
+                    "message": f"Research data exported to {export_file}"
+                })
+            else:
+                return JSONResponse(content={
+                    "status": "error",
+                    "message": "Failed to export research data"
+                })
+        except Exception as e:
+            self.logger.error(f"Failed to export research data: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to export research data: {str(e)}")
 
 
 # Global controller instance - will be initialized with dependencies in app.py

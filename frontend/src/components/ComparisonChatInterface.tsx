@@ -1,5 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, MessageSquare, Settings, Trash2, Download, RotateCcw } from 'lucide-react';
+import {
+  BarChart3,
+  FileText,
+  MessageSquare,
+  RotateCcw,
+  Send,
+  Settings,
+  Trash2,
+} from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
 
 interface ModelPair {
   pair_id: string;
@@ -7,9 +15,10 @@ interface ModelPair {
   adapter_name: string;
   base_model_size_mb: number;
   adapter_size_mb: number;
-  estimated_memory_mb: number;
   status: string;
   load_time_ms?: number;
+  // Calculate estimated memory on the fly
+  estimated_memory_mb?: number;
 }
 
 interface ChatMessage {
@@ -59,11 +68,13 @@ export const ComparisonChatInterface: React.FC = () => {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [currentMessage, setCurrentMessage] = useState('');
+  const [currentMessage, setCurrentMessage] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [showNewSessionDialog, setShowNewSessionDialog] = useState(false);
-  const [selectedPairId, setSelectedPairId] = useState<string>('');
-  const [sessionName, setSessionName] = useState('');
+  const [selectedPairId, setSelectedPairId] = useState<string>("");
+  const [sessionName, setSessionName] = useState("");
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
 
   // Refs for auto-scrolling
   const baseMessagesRef = useRef<HTMLDivElement>(null);
@@ -81,31 +92,40 @@ export const ComparisonChatInterface: React.FC = () => {
       baseMessagesRef.current.scrollTop = baseMessagesRef.current.scrollHeight;
     }
     if (finetunedMessagesRef.current) {
-      finetunedMessagesRef.current.scrollTop = finetunedMessagesRef.current.scrollHeight;
+      finetunedMessagesRef.current.scrollTop =
+        finetunedMessagesRef.current.scrollHeight;
     }
   }, [messages]);
 
   const loadModelPairs = async () => {
     try {
-      const response = await fetch('http://localhost:8000/chat/model-pairs');
+      const response = await fetch("http://localhost:8000/chat/model-pairs");
       const data = await response.json();
-      if (data.status === 'success') {
-        setModelPairs(data.model_pairs);
+      if (data.status === "success") {
+        // Add estimated memory calculation if not present
+        const processedPairs = data.model_pairs.map((pair: ModelPair) => ({
+          ...pair,
+          estimated_memory_mb:
+            pair.estimated_memory_mb ||
+            pair.base_model_size_mb + pair.adapter_size_mb,
+        }));
+        setModelPairs(processedPairs);
+        console.log("Loaded model pairs:", processedPairs);
       }
     } catch (error) {
-      console.error('Failed to load model pairs:', error);
+      console.error("Failed to load model pairs:", error);
     }
   };
 
   const loadSessions = async () => {
     try {
-      const response = await fetch('http://localhost:8000/chat/sessions');
+      const response = await fetch("http://localhost:8000/chat/sessions");
       const data = await response.json();
-      if (data.status === 'success') {
+      if (data.status === "success") {
         setSessions(data.sessions);
       }
     } catch (error) {
-      console.error('Failed to load sessions:', error);
+      console.error("Failed to load sessions:", error);
     }
   };
 
@@ -113,10 +133,10 @@ export const ComparisonChatInterface: React.FC = () => {
     if (!selectedPairId) return;
 
     try {
-      const response = await fetch('http://localhost:8000/chat/sessions', {
-        method: 'POST',
+      const response = await fetch("http://localhost:8000/chat/sessions", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           pair_id: selectedPairId,
@@ -125,47 +145,52 @@ export const ComparisonChatInterface: React.FC = () => {
       });
 
       const data = await response.json();
-      if (data.status === 'success') {
+      if (data.status === "success") {
         const newSession = data.session;
         setSessions([...sessions, newSession]);
         setActiveSessionId(newSession.session_id);
         setMessages([]);
         setShowNewSessionDialog(false);
-        setSessionName('');
-        setSelectedPairId('');
+        setSessionName("");
+        setSelectedPairId("");
       }
     } catch (error) {
-      console.error('Failed to create session:', error);
+      console.error("Failed to create session:", error);
     }
   };
 
   const loadSessionHistory = async (sessionId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/chat/sessions/${sessionId}`);
+      const response = await fetch(
+        `http://localhost:8000/chat/sessions/${sessionId}`
+      );
       const data = await response.json();
-      if (data.status === 'success') {
+      if (data.status === "success") {
         setMessages(data.messages || []);
       }
     } catch (error) {
-      console.error('Failed to load session history:', error);
+      console.error("Failed to load session history:", error);
     }
   };
 
   const deleteSession = async (sessionId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/chat/sessions/${sessionId}`, {
-        method: 'DELETE',
-      });
+      const response = await fetch(
+        `http://localhost:8000/chat/sessions/${sessionId}`,
+        {
+          method: "DELETE",
+        }
+      );
 
       if (response.ok) {
-        setSessions(sessions.filter(s => s.session_id !== sessionId));
+        setSessions(sessions.filter((s) => s.session_id !== sessionId));
         if (activeSessionId === sessionId) {
           setActiveSessionId(null);
           setMessages([]);
         }
       }
     } catch (error) {
-      console.error('Failed to delete session:', error);
+      console.error("Failed to delete session:", error);
     }
   };
 
@@ -173,21 +198,21 @@ export const ComparisonChatInterface: React.FC = () => {
     if (!currentMessage.trim() || !activeSessionId || isGenerating) return;
 
     const userMessage: ChatMessage = {
-      role: 'user',
+      role: "user",
       content: currentMessage,
       timestamp: new Date().toISOString(),
     };
 
     // Add user message to display
-    setMessages(prev => [...prev, userMessage]);
-    setCurrentMessage('');
+    setMessages((prev) => [...prev, userMessage]);
+    setCurrentMessage("");
     setIsGenerating(true);
 
     try {
-      const response = await fetch('http://localhost:8000/chat/generate', {
-        method: 'POST',
+      const response = await fetch("http://localhost:8000/chat/generate", {
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify({
           session_id: activeSessionId,
@@ -202,37 +227,65 @@ export const ComparisonChatInterface: React.FC = () => {
       });
 
       const data = await response.json();
-      if (data.status === 'success') {
+      if (data.status === "success") {
         const comparisonResponse: ComparisonResponse = data.response;
 
         // Add both responses
         const baseResponse: ChatMessage = {
-          role: 'assistant',
+          role: "assistant",
           content: comparisonResponse.base_response,
           timestamp: comparisonResponse.timestamp,
-          model_type: 'base',
+          model_type: "base",
         };
 
         const finetunedResponse: ChatMessage = {
-          role: 'assistant',
+          role: "assistant",
           content: comparisonResponse.finetuned_response,
           timestamp: comparisonResponse.timestamp,
-          model_type: 'finetuned',
+          model_type: "finetuned",
         };
 
-        setMessages(prev => [...prev, baseResponse, finetunedResponse]);
+        setMessages((prev) => [...prev, baseResponse, finetunedResponse]);
       }
     } catch (error) {
-      console.error('Failed to generate response:', error);
+      console.error("Failed to generate response:", error);
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+  };
+
+  const loadAnalytics = async () => {
+    try {
+      const response = await fetch(
+        "http://localhost:8000/chat/research/analytics"
+      );
+      const data = await response.json();
+      if (data.status === "success") {
+        setAnalyticsData(data.analytics);
+      }
+    } catch (error) {
+      console.error("Failed to load analytics:", error);
+    }
+  };
+
+  const exportResearchData = async () => {
+    try {
+      const response = await fetch(
+        "http://localhost:8000/chat/research/export?format=csv"
+      );
+      const data = await response.json();
+      if (data.status === "success") {
+        alert(`Research data exported to: ${data.export_file}`);
+      }
+    } catch (error) {
+      console.error("Failed to export research data:", error);
     }
   };
 
@@ -241,9 +294,13 @@ export const ComparisonChatInterface: React.FC = () => {
     loadSessionHistory(sessionId);
   };
 
-  const activeSession = sessions.find(s => s.session_id === activeSessionId);
-  const baseMessages = messages.filter(m => m.role === 'user' || m.model_type === 'base');
-  const finetunedMessages = messages.filter(m => m.role === 'user' || m.model_type === 'finetuned');
+  const activeSession = sessions.find((s) => s.session_id === activeSessionId);
+  const baseMessages = messages.filter(
+    (m) => m.role === "user" || m.model_type === "base"
+  );
+  const finetunedMessages = messages.filter(
+    (m) => m.role === "user" || m.model_type === "finetuned"
+  );
 
   return (
     <div className="flex h-screen bg-background">
@@ -279,8 +336,8 @@ export const ComparisonChatInterface: React.FC = () => {
                   key={session.session_id}
                   className={`p-3 rounded-lg cursor-pointer transition-colors ${
                     activeSessionId === session.session_id
-                      ? 'bg-purple-500/10 border border-purple-500/20'
-                      : 'bg-muted hover:bg-muted/80'
+                      ? "bg-purple-500/10 border border-purple-500/20"
+                      : "bg-muted hover:bg-muted/80"
                   }`}
                   onClick={() => selectSession(session.session_id)}
                 >
@@ -290,7 +347,8 @@ export const ComparisonChatInterface: React.FC = () => {
                         {session.session_name}
                       </h3>
                       <p className="text-sm text-muted-foreground truncate">
-                        {session.model_info.base_model} + {session.model_info.adapter_name}
+                        {session.model_info.base_model} +{" "}
+                        {session.model_info.adapter_name}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {session.message_count} messages
@@ -325,7 +383,8 @@ export const ComparisonChatInterface: React.FC = () => {
                     {activeSession.session_name}
                   </h1>
                   <p className="text-sm text-muted-foreground">
-                    Comparing: {activeSession.model_info.base_model} vs {activeSession.model_info.adapter_name}
+                    Comparing: {activeSession.model_info.base_model} vs{" "}
+                    {activeSession.model_info.adapter_name}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -337,6 +396,23 @@ export const ComparisonChatInterface: React.FC = () => {
                     <RotateCcw className="w-4 h-4" />
                   </button>
                   <button
+                    onClick={() => {
+                      setShowAnalytics(!showAnalytics);
+                      if (!showAnalytics) loadAnalytics();
+                    }}
+                    className="p-2 hover:bg-muted rounded-md"
+                    title="Research Analytics"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={exportResearchData}
+                    className="p-2 hover:bg-muted rounded-md"
+                    title="Export Research Data"
+                  >
+                    <FileText className="w-4 h-4" />
+                  </button>
+                  <button
                     className="p-2 hover:bg-muted rounded-md"
                     title="Settings"
                   >
@@ -345,6 +421,54 @@ export const ComparisonChatInterface: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Analytics Panel */}
+            {showAnalytics && analyticsData && (
+              <div className="p-4 bg-muted/50 border-b border-border">
+                <div className="flex justify-between items-center mb-3">
+                  <h3 className="font-medium text-foreground">
+                    Research Analytics
+                  </h3>
+                  <button
+                    onClick={() => setShowAnalytics(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                  <div className="bg-background rounded p-2">
+                    <div className="text-muted-foreground">
+                      Total Comparisons
+                    </div>
+                    <div className="font-medium">
+                      {analyticsData.total_comparisons || 0}
+                    </div>
+                  </div>
+                  <div className="bg-background rounded p-2">
+                    <div className="text-muted-foreground">Avg Similarity</div>
+                    <div className="font-medium">
+                      {((analyticsData.average_similarity || 0) * 100).toFixed(
+                        1
+                      )}
+                      %
+                    </div>
+                  </div>
+                  <div className="bg-background rounded p-2">
+                    <div className="text-muted-foreground">Length Ratio</div>
+                    <div className="font-medium">
+                      {(analyticsData.average_length_ratio || 0).toFixed(2)}x
+                    </div>
+                  </div>
+                  <div className="bg-background rounded p-2">
+                    <div className="text-muted-foreground">Model Pairs</div>
+                    <div className="font-medium">
+                      {analyticsData.unique_model_pairs || 0}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Split Screen Chat */}
             <div className="flex-1 flex">
@@ -362,16 +486,22 @@ export const ComparisonChatInterface: React.FC = () => {
                   {baseMessages.map((message, index) => (
                     <div
                       key={`base-${index}`}
-                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      className={`flex ${
+                        message.role === "user"
+                          ? "justify-end"
+                          : "justify-start"
+                      }`}
                     >
                       <div
                         className={`max-w-[80%] rounded-lg p-3 ${
-                          message.role === 'user'
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-blue-500/10 text-foreground border border-blue-500/20'
+                          message.role === "user"
+                            ? "bg-purple-600 text-white"
+                            : "bg-blue-500/10 text-foreground border border-blue-500/20"
                         }`}
                       >
-                        <div className="whitespace-pre-wrap">{message.content}</div>
+                        <div className="whitespace-pre-wrap">
+                          {message.content}
+                        </div>
                         <div className="text-xs opacity-70 mt-1">
                           {new Date(message.timestamp).toLocaleTimeString()}
                         </div>
@@ -395,16 +525,22 @@ export const ComparisonChatInterface: React.FC = () => {
                   {finetunedMessages.map((message, index) => (
                     <div
                       key={`finetuned-${index}`}
-                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                      className={`flex ${
+                        message.role === "user"
+                          ? "justify-end"
+                          : "justify-start"
+                      }`}
                     >
                       <div
                         className={`max-w-[80%] rounded-lg p-3 ${
-                          message.role === 'user'
-                            ? 'bg-purple-600 text-white'
-                            : 'bg-green-500/10 text-foreground border border-green-500/20'
+                          message.role === "user"
+                            ? "bg-purple-600 text-white"
+                            : "bg-green-500/10 text-foreground border border-green-500/20"
                         }`}
                       >
-                        <div className="whitespace-pre-wrap">{message.content}</div>
+                        <div className="whitespace-pre-wrap">
+                          {message.content}
+                        </div>
                         <div className="text-xs opacity-70 mt-1">
                           {new Date(message.timestamp).toLocaleTimeString()}
                         </div>
@@ -433,7 +569,7 @@ export const ComparisonChatInterface: React.FC = () => {
                   className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   <Send className="w-4 h-4" />
-                  {isGenerating ? 'Generating...' : 'Send'}
+                  {isGenerating ? "Generating..." : "Send"}
                 </button>
               </div>
             </div>
@@ -446,7 +582,8 @@ export const ComparisonChatInterface: React.FC = () => {
                 Select a Chat Session
               </h2>
               <p className="text-muted-foreground mb-4">
-                Choose a session from the sidebar or create a new one to start comparing models
+                Choose a session from the sidebar or create a new one to start
+                comparing models
               </p>
               <button
                 onClick={() => setShowNewSessionDialog(true)}
@@ -466,7 +603,7 @@ export const ComparisonChatInterface: React.FC = () => {
             <h3 className="text-lg font-semibold text-foreground mb-4">
               Create New Chat Session
             </h3>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-2">
@@ -491,13 +628,69 @@ export const ComparisonChatInterface: React.FC = () => {
                   className="w-full p-2 bg-background border border-input rounded-md text-foreground"
                 >
                   <option value="">Select a model pair...</option>
-                  {modelPairs.map((pair) => (
-                    <option key={pair.pair_id} value={pair.pair_id}>
-                      {pair.base_model_name} + {pair.adapter_name} 
-                      ({(pair.estimated_memory_mb / 1024).toFixed(1)}GB)
-                    </option>
-                  ))}
+                  {modelPairs.map((pair) => {
+                    const memoryGB = pair.estimated_memory_mb
+                      ? (pair.estimated_memory_mb / 1024).toFixed(1)
+                      : "?.?";
+                    const statusText = pair.status === "mock" ? " (Demo)" : "";
+
+                    return (
+                      <option key={pair.pair_id} value={pair.pair_id}>
+                        📊 {pair.base_model_name} ↔️ {pair.adapter_name} (
+                        {memoryGB}GB){statusText}
+                      </option>
+                    );
+                  })}
                 </select>
+
+                {selectedPairId && (
+                  <div className="mt-2 p-3 bg-muted rounded-md">
+                    {(() => {
+                      const selectedPair = modelPairs.find(
+                        (p) => p.pair_id === selectedPairId
+                      );
+                      return selectedPair ? (
+                        <div className="text-sm">
+                          <div className="font-medium mb-2">
+                            Selected Model Pair:
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <div className="text-blue-600 font-medium">
+                                Base Model
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {selectedPair.base_model_name}
+                              </div>
+                              <div className="text-xs">
+                                Size:{" "}
+                                {selectedPair.base_model_size_mb.toFixed(0)}MB
+                              </div>
+                            </div>
+                            <div>
+                              <div className="text-green-600 font-medium">
+                                Fine-tuned Model
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {selectedPair.adapter_name}
+                              </div>
+                              <div className="text-xs">
+                                Size: {selectedPair.adapter_size_mb.toFixed(0)}
+                                MB
+                              </div>
+                            </div>
+                          </div>
+                          {selectedPair.status === "mock" && (
+                            <div className="mt-2 text-xs text-orange-600 bg-orange-50 p-2 rounded">
+                              🎭 Demo Mode: This will use mock responses to
+                              demonstrate the comparison interface
+                            </div>
+                          )}
+                        </div>
+                      ) : null;
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -505,8 +698,8 @@ export const ComparisonChatInterface: React.FC = () => {
               <button
                 onClick={() => {
                   setShowNewSessionDialog(false);
-                  setSessionName('');
-                  setSelectedPairId('');
+                  setSessionName("");
+                  setSelectedPairId("");
                 }}
                 className="px-4 py-2 text-muted-foreground hover:text-foreground"
               >
