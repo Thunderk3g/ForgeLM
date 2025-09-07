@@ -2,8 +2,10 @@
 Pydantic schemas for API request/response models
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Dict, List, Optional, Any
+from datetime import datetime
+import uuid
 
 
 class ChatMessage(BaseModel):
@@ -95,3 +97,29 @@ class PrepareDataRequest(BaseModel):
     input_file: str
     output_dir: str
     format: Optional[str] = None
+
+
+class ResearchLogEntry(BaseModel):
+    """Research log entry for detailed analysis of model comparisons"""
+    log_id: str = None
+    timestamp: str = None
+    session_id: str
+    model_pair: Dict[str, str]
+    user_message: str
+    base_response: str
+    finetuned_response: str
+    base_generation_time_ms: float
+    finetuned_generation_time_ms: float
+    base_token_count: int
+    finetuned_token_count: int
+    generation_params: Dict[str, Any]
+    model_versions: Dict[str, str]
+    response_similarity: Optional[float] = None
+    length_ratio: Optional[float] = None
+    
+    def __init__(self, **data):
+        if 'log_id' not in data or data['log_id'] is None:
+            data['log_id'] = str(uuid.uuid4())
+        if 'timestamp' not in data or data['timestamp'] is None:
+            data['timestamp'] = datetime.now().isoformat()
+        super().__init__(**data)

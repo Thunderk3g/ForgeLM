@@ -18,10 +18,12 @@ __all__ = [
     'TrainingStatus',
     'SelectModelRequest',
     'PrepareDataRequest',
+    'ResearchLogEntry',
     
     # Entity exports
     'ModelPair',
     'ChatSession',
     'LoRAMetadata',
-    'KVCacheEntry'
+    'KVCacheEntry',
+    'CacheState'
 ]
