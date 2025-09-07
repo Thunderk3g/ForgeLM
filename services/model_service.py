@@ -219,7 +219,7 @@ class ModelService:
         pairs = []
         
         base_models_dir = Path("models/base")
-        finetuned_models_dir = Path("models/finetuned")
+        finetuned_models_dir = Path(settings.models_finetuned_dir)
         
         if base_models_dir.exists():
             for base_dir in base_models_dir.iterdir():
@@ -291,7 +291,21 @@ class ModelService:
         
         # Get all available models
         base_models = [d for d in base_models_dir.iterdir() if d.is_dir()]
-        finetuned_models = [d for d in finetuned_models_dir.iterdir() if d.is_dir()]
+        
+        # Check if fine-tuned directory contains subdirectories OR is itself a fine-tuned model
+        finetuned_models = []
+        if finetuned_models_dir.exists():
+            # Check for subdirectories first (traditional structure)
+            subdirs = [d for d in finetuned_models_dir.iterdir() if d.is_dir()]
+            if subdirs:
+                finetuned_models = subdirs
+            else:
+                # Check if the directory itself contains model files
+                adapter_config = finetuned_models_dir / "adapter_config.json"
+                adapter_model = finetuned_models_dir / "adapter_model.safetensors"
+                if adapter_config.exists() or adapter_model.exists():
+                    finetuned_models = [finetuned_models_dir]
+                    self.logger.info(f"Found fine-tuned model directly in: {finetuned_models_dir}")
         
         self.logger.info(f"Found {len(base_models)} base models and {len(finetuned_models)} fine-tuned models")
         
@@ -326,8 +340,12 @@ class ModelService:
             for ft_dir in finetuned_models:
                 ft_model_name = ft_dir.name
                 
+                # Special case: if there's only one base model and one fine-tuned model, pair them
+                if len(base_models) == 1 and len(finetuned_models) == 1:
+                    matching_finetuned.append(ft_dir)
+                    self.logger.info(f"  ✓ Auto-paired (single models): {ft_model_name}")
                 # Check if fine-tuned model name includes the base model name (or core name)
-                if self._models_should_pair(base_model_name, ft_model_name):
+                elif self._models_should_pair(base_model_name, ft_model_name):
                     matching_finetuned.append(ft_dir)
                     self.logger.info(f"  ✓ Matched: {ft_model_name}")
             
@@ -623,7 +641,7 @@ class ModelService:
                 base_model_name="Qwen2.5-1.5B-Base (Mock)",
                 adapter_name="Qwen2.5-1.5B-Instruct (Mock)",
                 base_model_path="models/base/mock_qwen_base",
-                adapter_path="models/finetuned/mock_qwen_instruct",
+                adapter_path=f"{settings.models_finetuned_dir}/mock_qwen_instruct",
                 base_model_size_mb=1500.0,
                 adapter_size_mb=1520.0,
                 status="mock"
@@ -633,7 +651,7 @@ class ModelService:
                 base_model_name="Generic Base Model (Mock)",
                 adapter_name="Generic Instruct Model (Mock)",
                 base_model_path="models/base/mock_generic",
-                adapter_path="models/finetuned/mock_generic",
+                adapter_path=f"{settings.models_finetuned_dir}/mock_generic",
                 base_model_size_mb=2000.0,
                 adapter_size_mb=2050.0,
                 status="mock"

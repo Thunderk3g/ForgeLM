@@ -1,8 +1,8 @@
 """
-2025.8.9
-2025.8.10
-4.56.0
-0.22.1
+2025.9.2
+2025.9.1
+4.56.1
+0.22.2
 __UNSLOTH_VERSIONING__
 """
 from torch import Tensor
@@ -349,7 +349,7 @@ class UnslothRLOOConfig(RLOOConfig):
         push_to_hub_organization = None,
         push_to_hub_token = None,
         mp_parameters = '',
-        auto_find_batch_size = True,
+        auto_find_batch_size = False,
         full_determinism = False,
         torchdynamo = None,
         ray_scope = 'last',
@@ -429,8 +429,8 @@ class UnslothRLOOConfig(RLOOConfig):
         
         **kwargs,
     ):
-        if learning_rate < 1e-7: raise FloatingPointError(f'Unsloth: Your learning rate of `{learning_rate}` is too small and less than 1e-7! Consider increasing it, otherwise gradient updates will be close to 0!')
-        if learning_rate > 1: raise OverflowError(f'Unsloth: Your learning rate of `{learning_rate}` is way too larger > 1! Consider decreasing it to 1e-1, otherwise gradient updates will explode!')
+        if learning_rate < 1e-7: print(f'Unsloth: Your learning rate of `{learning_rate}` is too small and less than 1e-7! Consider increasing it, otherwise gradient updates will be close to 0!')
+        if learning_rate > 1: print(f'Unsloth: Your learning rate of `{learning_rate}` is way too larger > 1! Consider decreasing it to 1e-1, otherwise gradient updates will explode!')
         if output_dir is None and save_strategy == 'steps' and save_steps == 500:
             output_dir = 'unsloth_training_checkpoints'
             save_strategy = 'no'

@@ -1,8 +1,8 @@
 """
-2025.8.9
-2025.8.10
-4.56.0
-0.22.1
+2025.9.2
+2025.9.1
+4.56.1
+0.22.2
 __UNSLOTH_VERSIONING__
 """
 from torch import Tensor
@@ -849,7 +849,7 @@ class UnslothGRPOConfig(GRPOConfig):
         push_to_hub_organization = None,
         push_to_hub_token = None,
         mp_parameters = '',
-        auto_find_batch_size = True,
+        auto_find_batch_size = False,
         full_determinism = False,
         torchdynamo = None,
         ray_scope = 'last',
@@ -902,7 +902,7 @@ class UnslothGRPOConfig(GRPOConfig):
         importance_sampling_level = 'token',
         reward_weights = None,
         scale_rewards = 'group',
-        loss_type = 'dapo',
+        loss_type = 'bnpo',
         mask_truncated_completions = False,
         sync_ref_model = False,
         ref_model_mixup_alpha = 0.6,
@@ -917,8 +917,8 @@ class UnslothGRPOConfig(GRPOConfig):
         
         **kwargs,
     ):
-        if learning_rate < 1e-7: raise FloatingPointError(f'Unsloth: Your learning rate of `{learning_rate}` is too small and less than 1e-7! Consider increasing it, otherwise gradient updates will be close to 0!')
-        if learning_rate > 1: raise OverflowError(f'Unsloth: Your learning rate of `{learning_rate}` is way too larger > 1! Consider decreasing it to 1e-1, otherwise gradient updates will explode!')
+        if learning_rate < 1e-7: print(f'Unsloth: Your learning rate of `{learning_rate}` is too small and less than 1e-7! Consider increasing it, otherwise gradient updates will be close to 0!')
+        if learning_rate > 1: print(f'Unsloth: Your learning rate of `{learning_rate}` is way too larger > 1! Consider decreasing it to 1e-1, otherwise gradient updates will explode!')
         if output_dir is None and save_strategy == 'steps' and save_steps == 500:
             output_dir = 'unsloth_training_checkpoints'
             save_strategy = 'no'
@@ -933,9 +933,12 @@ class UnslothGRPOConfig(GRPOConfig):
                 print('Unsloth: The Dr GRPO paper recommends setting `scale_rewards` to False! Will override. Set it to `None` to force False.')
                 scale_rewards = False
         elif loss_type.lower() == 'dapo':
-            print('Unsloth: The DAPO paper recommends `mask_truncated_completions = True`')
-            print('Unsloth: The DAPO paper recommends `epsilon_high = 0.28`')
-            print('Unsloth: The DAPO paper recommends setting `beta = 0.0` to remove the KL term')
+            if mask_truncated_completions != True:
+                print('Unsloth: The DAPO paper recommends `mask_truncated_completions = True`')
+            if epsilon_high != 0.28:
+                print('Unsloth: The DAPO paper recommends `epsilon_high = 0.28`')
+            if beta != 0.0:
+                print('Unsloth: The DAPO paper recommends setting `beta = 0.0` to remove the KL term')
             mask_truncated_completions = True
             epsilon_high = 0.28
             beta = 0.0
@@ -1288,7 +1291,7 @@ class _UnslothGRPOTrainer(Trainer):
         self.vllm_tensor_parallel_size = args.vllm_tensor_parallel_size  # only applies to colocation mode
         self.use_liger_loss = args.use_liger_loss
         self.loss_type = args.loss_type
-        self.scale_rewards = {True: "group", False: "none"}.get(args.scale_rewards, args.scale_rewards)
+        self.scale_rewards = args.scale_rewards
         self.importance_sampling_level = args.importance_sampling_level
         self.mask_truncated_completions = args.mask_truncated_completions
         self.top_entropy_quantile = args.top_entropy_quantile
@@ -2197,11 +2200,11 @@ class _UnslothGRPOTrainer(Trainer):
         mean_grouped_rewards = mean_grouped_rewards.repeat_interleave(self.num_generations, dim=0)
         advantages = rewards - mean_grouped_rewards
 
-        if self.scale_rewards in ["batch", "none"]:
+        if self.scale_rewards in ["group", "none"]:
             # If self.scale_rewards = "none", we'll still log group level std
             std_rewards = rewards.view(-1, self.num_generations).std(dim=1)
             std_rewards = std_rewards.repeat_interleave(self.num_generations, dim=0)
-        elif self.scale_rewards == "group":
+        elif self.scale_rewards == "batch":
             # Compute global std
             std_rewards = rewards.std().expand_as(rewards)
         else:
@@ -2210,7 +2213,7 @@ class _UnslothGRPOTrainer(Trainer):
             )
 
         is_std_zero = torch.isclose(std_rewards, torch.zeros_like(std_rewards))
-        if self.scale_rewards in ["batch", "none"]:
+        if self.scale_rewards != "none":
             advantages = advantages / (std_rewards + 1e-4)
 
         # Slice to keep only the local part of the data
