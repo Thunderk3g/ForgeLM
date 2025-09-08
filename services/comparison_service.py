@@ -58,9 +58,9 @@ class ComparisonService:
                 asyncio.create_task(self._periodic_optimization())
                 self.logger.info("Background optimization task started")
             
-            # Warm up popular models for faster initial responses  
-            asyncio.create_task(self._warmup_models())
-            self.logger.info("Model warmup task started")
+            # Model warmup disabled to save GPU memory - models will be loaded on-demand
+            # asyncio.create_task(self._warmup_models())
+            self.logger.info("Model warmup disabled - models will be loaded when selected")
             
         except Exception as e:
             self.logger.error(f"Failed to start background tasks: {e}")
@@ -152,7 +152,9 @@ class ComparisonService:
             result = await self.model_service.generate_comparison_responses_with_fallback(
                 session_id=request.session_id,
                 messages=messages,
-                generation_params=request.generation_params
+                generation_params=request.generation_params,
+                custom_system_prompt=request.custom_system_prompt,
+                use_agent_orchestrator=request.use_agent_orchestrator
             )
             
             # Create assistant messages for session history
@@ -264,7 +266,9 @@ class ComparisonService:
             result = await self.model_service.generate_comparison_responses_with_fallback(
                 session_id=request.session_id,
                 messages=messages,
-                generation_params=request.generation_params
+                generation_params=request.generation_params,
+                custom_system_prompt=request.custom_system_prompt,
+                use_agent_orchestrator=request.use_agent_orchestrator
             )
             
             # Stream base response

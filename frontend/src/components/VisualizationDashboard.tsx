@@ -8,11 +8,13 @@ import type { TrainingMetric, ResourceMetric } from '../types/api';
 interface VisualizationDashboardProps {
   currentTaskId?: string | null;
   selectedDatasetPath?: string | null;
+  onNavigateToTraining?: () => void;
 }
 
 export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
   currentTaskId = null,
-  selectedDatasetPath = null
+  selectedDatasetPath = null,
+  onNavigateToTraining
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'training' | 'dataset'>('overview');
   const [timeRangeHours, setTimeRangeHours] = useState(24);
@@ -61,10 +63,63 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
         </button>
       </div>
 
+      {/* Error Display */}
+      {hasError && (
+        <div className="rounded-lg border border-destructive bg-destructive/10 text-destructive p-4">
+          <div className="flex items-center space-x-2">
+            <div className="h-4 w-4 rounded-full bg-destructive" />
+            <h4 className="font-medium">Error Loading Dashboard Data</h4>
+          </div>
+          <div className="mt-2 space-y-1 text-sm">
+            {Object.entries(errors).map(([key, error]) => (
+              error && <p key={key}>• {key}: {error}</p>
+            ))}
+          </div>
+          <button
+            onClick={refetchAll}
+            className="mt-3 inline-flex items-center text-sm font-medium hover:underline"
+          >
+            <RefreshCw className="mr-1 h-3 w-3" />
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading && !dashboardSummary && (
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
+          <div className="flex items-center justify-center space-x-2">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+            <span className="text-muted-foreground">Loading dashboard data...</span>
+          </div>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!isLoading && !dashboardSummary && !hasError && (
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8">
+          <div className="text-center">
+            <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-foreground mb-2">Dashboard Unavailable</h3>
+            <p className="text-muted-foreground mb-4">
+              Dashboard data is not available. This may be because the visualization service is not running 
+              or there is no training/comparison data yet.
+            </p>
+            <button
+              onClick={refetchAll}
+              className="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Try Again
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Dashboard Summary Cards (Overview) */}
       {dashboardSummary && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow duration-200">
             <div className="p-6 flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="tracking-tight text-sm font-medium">Active Trainings</div>
               <Activity className="h-4 w-4 text-muted-foreground" />
@@ -74,7 +129,7 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
             </div>
           </div>
 
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow duration-200">
             <div className="p-6 flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="tracking-tight text-sm font-medium">Completed Trainings</div>
               <TrendingUp className="h-4 w-4 text-muted-foreground" />
@@ -84,7 +139,7 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
             </div>
           </div>
 
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow duration-200">
             <div className="p-6 flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="tracking-tight text-sm font-medium">Recent Comparisons</div>
               <Eye className="h-4 w-4 text-muted-foreground" />
@@ -94,7 +149,7 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
             </div>
           </div>
 
-          <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+          <div className="rounded-lg border bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow duration-200">
             <div className="p-6 flex flex-row items-center justify-between space-y-0 pb-2">
               <div className="tracking-tight text-sm font-medium">System Status</div>
               <div className={`h-2 w-2 rounded-full ${
@@ -252,8 +307,20 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
         {activeTab === 'dataset' && !selectedDatasetPath && (
           <div className="text-center py-12">
             <Database className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-foreground mb-2">No Dataset Selected</h3>
-            <p className="text-muted-foreground">Select a dataset to view analytics and insights.</p>
+            <h3 className="text-lg font-medium text-foreground mb-2">No Dataset Available</h3>
+            <p className="text-muted-foreground mb-4">
+              Go to the "Fine-tuning" tab to prepare a dataset first. Once prepared, 
+              dataset analytics will be available here.
+            </p>
+            {onNavigateToTraining && (
+              <button
+                onClick={onNavigateToTraining}
+                className="inline-flex items-center px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+              >
+                <Database className="mr-2 h-4 w-4" />
+                Go to Data Preparation
+              </button>
+            )}
           </div>
         )}
       </div>

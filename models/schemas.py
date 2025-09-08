@@ -18,6 +18,8 @@ class ComparisonRequest(BaseModel):
     session_id: str
     messages: List[ChatMessage]
     generation_params: Optional[Dict[str, Any]] = None
+    custom_system_prompt: Optional[str] = None
+    use_agent_orchestrator: bool = False
 
 
 class ComparisonResponse(BaseModel):
@@ -33,6 +35,8 @@ class ComparisonResponse(BaseModel):
 class SessionCreateRequest(BaseModel):
     pair_id: str
     session_name: Optional[str] = None
+    custom_system_prompt: Optional[str] = None
+    use_agent_orchestrator: bool = False
 
 
 class SessionInfo(BaseModel):

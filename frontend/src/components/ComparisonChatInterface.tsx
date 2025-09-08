@@ -75,15 +75,21 @@ export const ComparisonChatInterface: React.FC = () => {
   const [sessionName, setSessionName] = useState("");
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [showSystemPromptDialog, setShowSystemPromptDialog] = useState(false);
+  const [customSystemPrompt, setCustomSystemPrompt] = useState("");
+  const [useAgentOrchestrator, setUseAgentOrchestrator] = useState(false);
+  const [availableAgents, setAvailableAgents] = useState<any[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState("");
 
   // Refs for auto-scrolling
   const baseMessagesRef = useRef<HTMLDivElement>(null);
   const finetunedMessagesRef = useRef<HTMLDivElement>(null);
 
-  // Load model pairs and sessions on component mount
+  // Load model pairs, sessions, and agents on component mount
   useEffect(() => {
     loadModelPairs();
     loadSessions();
+    loadAvailableAgents();
   }, []);
 
   // Auto-scroll to bottom when messages change
@@ -129,6 +135,20 @@ export const ComparisonChatInterface: React.FC = () => {
     }
   };
 
+  const loadAvailableAgents = async () => {
+    try {
+      const response = await fetch("http://localhost:8000/agents/list");
+      const data = await response.json();
+      if (data.status === "success") {
+        setAvailableAgents(data.agents);
+      }
+    } catch (error) {
+      console.error("Failed to load agents:", error);
+      // Set empty array as fallback
+      setAvailableAgents([]);
+    }
+  };
+
   const createSession = async () => {
     if (!selectedPairId) return;
 
@@ -141,6 +161,8 @@ export const ComparisonChatInterface: React.FC = () => {
         body: JSON.stringify({
           pair_id: selectedPairId,
           session_name: sessionName || undefined,
+          custom_system_prompt: customSystemPrompt || undefined,
+          use_agent_orchestrator: useAgentOrchestrator,
         }),
       });
 
@@ -223,6 +245,8 @@ export const ComparisonChatInterface: React.FC = () => {
             do_sample: true,
             top_p: 0.9,
           },
+          custom_system_prompt: customSystemPrompt || undefined,
+          use_agent_orchestrator: useAgentOrchestrator,
         }),
       });
 
@@ -413,8 +437,9 @@ export const ComparisonChatInterface: React.FC = () => {
                     <FileText className="w-4 h-4" />
                   </button>
                   <button
+                    onClick={() => setShowSystemPromptDialog(true)}
                     className="p-2 hover:bg-muted rounded-md"
-                    title="Settings"
+                    title="System Prompt Settings"
                   >
                     <Settings className="w-4 h-4" />
                   </button>
@@ -711,6 +736,133 @@ export const ComparisonChatInterface: React.FC = () => {
                 className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50"
               >
                 Create Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* System Prompt Settings Dialog */}
+      {showSystemPromptDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card rounded-lg p-6 w-full max-w-2xl border border-border max-h-[80vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-foreground mb-4">
+              System Prompt Settings
+            </h3>
+
+            <div className="space-y-6">
+              {/* Agent Orchestrator Toggle */}
+              <div>
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={useAgentOrchestrator}
+                    onChange={(e) => setUseAgentOrchestrator(e.target.checked)}
+                    className="rounded border-input"
+                  />
+                  <span className="text-sm font-medium text-foreground">
+                    Use Agent Orchestrator (Auto-select specialist agents)
+                  </span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Automatically selects the best AI agent based on your query type
+                </p>
+              </div>
+
+              {/* Available Agents Preview */}
+              {useAgentOrchestrator && availableAgents.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">
+                    Available Specialist Agents:
+                  </label>
+                  <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto">
+                    {availableAgents.map((agent) => (
+                      <div key={agent.agent_id} className="p-2 bg-muted rounded text-xs">
+                        <div className="font-medium">{agent.name}</div>
+                        <div className="text-muted-foreground">
+                          {agent.capabilities?.join(", ") || "General assistance"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom System Prompt */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Custom System Prompt {!useAgentOrchestrator && "(Optional)"}
+                </label>
+                <textarea
+                  value={customSystemPrompt}
+                  onChange={(e) => setCustomSystemPrompt(e.target.value)}
+                  placeholder={
+                    useAgentOrchestrator 
+                      ? "Leave empty to use agent-based prompts, or provide a custom prompt to override..."
+                      : "Enter a custom system prompt to guide the fine-tuned model's behavior..."
+                  }
+                  className="w-full p-3 bg-background border border-input rounded-md text-foreground resize-none"
+                  rows={8}
+                />
+                <div className="text-xs text-muted-foreground mt-1">
+                  {customSystemPrompt.length}/2000 characters
+                </div>
+              </div>
+
+              {/* Example Prompts */}
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Quick Examples:
+                </label>
+                <div className="space-y-2">
+                  {[
+                    {
+                      name: "Helpful Assistant",
+                      prompt: "You are a helpful, knowledgeable assistant that provides detailed and practical responses. Always be specific and helpful."
+                    },
+                    {
+                      name: "Code Reviewer",
+                      prompt: "You are an expert code reviewer with deep knowledge of software development best practices. Review code for quality, security, performance, and maintainability. Provide specific, actionable feedback."
+                    },
+                    {
+                      name: "Creative Writer",
+                      prompt: "You are a creative companion that helps with brainstorming, creative writing, and artistic projects. Think outside the box and inspire innovative ideas."
+                    },
+                    {
+                      name: "Business Analyst", 
+                      prompt: "You are a business analyst with expertise in data-driven decision making. Analyze business problems and provide strategic insights backed by data and market knowledge."
+                    }
+                  ].map((example) => (
+                    <button
+                      key={example.name}
+                      onClick={() => setCustomSystemPrompt(example.prompt)}
+                      className="text-left p-2 bg-muted hover:bg-muted/80 rounded text-xs w-full"
+                    >
+                      <div className="font-medium text-purple-400">{example.name}</div>
+                      <div className="text-muted-foreground truncate">{example.prompt}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 mt-6">
+              <button
+                onClick={() => {
+                  setShowSystemPromptDialog(false);
+                }}
+                className="px-4 py-2 text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowSystemPromptDialog(false);
+                  // Settings are automatically applied through state
+                }}
+                className="px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700"
+              >
+                Apply Settings
               </button>
             </div>
           </div>

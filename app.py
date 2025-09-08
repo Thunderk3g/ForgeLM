@@ -30,6 +30,7 @@ from services.training_service import TrainingService
 from services.chat_service import ChatService
 from services.comparison_service import ComparisonService
 from services.visualization_service import VisualizationService
+from services.agent_orchestrator import agent_orchestrator
 
 # Backward compatibility imports - maintain original import behavior
 from utils.legacy.model_selection import select_model, SelectModelRequest, scan_available_models
@@ -40,52 +41,52 @@ try:
     from models.schemas import FineTuneRequest, TrainingStatus
     from services.training_worker import process_manager
     FINE_TUNING_AVAILABLE = True
-    print("✅ Fine-tuning with multiprocessing support loaded")
+    print("[OK] Fine-tuning with multiprocessing support loaded")
 except ImportError as e:
     print(f"Warning: Fine-tuning module import failed: {e}")
     FINE_TUNING_AVAILABLE = False
 
 # Import comparison chat service components
 try:
-    print("🔄 Attempting to import comparison service components...")
+    print("[INFO] Attempting to import comparison service components...")
     from services.comparison_service import ComparisonService
-    print("✅ ComparisonService imported successfully")
+    print("[OK] ComparisonService imported successfully")
     from models.schemas import ChatMessage, ComparisonRequest, ComparisonResponse, SessionCreateRequest, SessionInfo
-    print("✅ Schema imports successful")
+    print("[OK] Schema imports successful")
     COMPARISON_CHAT_AVAILABLE = True
-    print("✅ Comparison chat service loaded (modular)")
+    print("[OK] Comparison chat service loaded (modular)")
 except ImportError as e:
-    print(f"❌ Warning: Comparison chat service import failed: {e}")
+    print(f"[WARNING] Comparison chat service import failed: {e}")
     import traceback
     traceback.print_exc()
     COMPARISON_CHAT_AVAILABLE = False
 except Exception as e:
-    print(f"❌ Error: Unexpected error during comparison service import: {e}")
+    print(f"[ERROR] Unexpected error during comparison service import: {e}")
     import traceback
     traceback.print_exc()
     COMPARISON_CHAT_AVAILABLE = False
 
 # Initialize services
-print("🔄 Initializing core services...")
+print("[INFO] Initializing core services...")
 model_service = ModelService()
-print("✅ ModelService initialized")
+print("[OK] ModelService initialized")
 
 chat_service = ChatService(model_service)
-print("✅ ChatService initialized")
+print("[OK] ChatService initialized")
 
 if COMPARISON_CHAT_AVAILABLE:
     try:
         comparison_service_instance = ComparisonService(model_service, chat_service)
-        print("✅ ComparisonService initialized")
+        print("[OK] ComparisonService initialized")
     except Exception as e:
-        print(f"❌ Error initializing ComparisonService: {e}")
+        print(f"[ERROR] Error initializing ComparisonService: {e}")
         import traceback
         traceback.print_exc()
         COMPARISON_CHAT_AVAILABLE = False
         comparison_service_instance = None
 else:
     comparison_service_instance = None
-    print("⚠️ ComparisonService not available - skipping initialization")
+    print("[WARNING] ComparisonService not available - skipping initialization")
 
 # Initialize visualization service
 try:
@@ -94,11 +95,11 @@ try:
         comparison_service=comparison_service_instance,
         template_service=None   # Will be integrated later
     )
-    visualization_controller = VisualizationController(visualization_service)
-    print("✅ VisualizationService and Controller initialized")
+    visualization_controller = VisualizationController(visualization_service, training_controller)
+    print("[OK] VisualizationService and Controller initialized")
     VISUALIZATION_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Error initializing VisualizationService: {e}")
+    print(f"[ERROR] Error initializing VisualizationService: {e}")
     import traceback
     traceback.print_exc()
     visualization_service = None
@@ -115,10 +116,10 @@ try:
         template_service=None  # Will be integrated later
     )
     data_generation_controller = DataGenerationController(data_generation_service)
-    print("✅ DataGenerationService and Controller initialized")
+    print("[OK] DataGenerationService and Controller initialized")
     DATA_GENERATION_AVAILABLE = True
 except Exception as e:
-    print(f"❌ Error initializing DataGenerationService: {e}")
+    print(f"[ERROR] Error initializing DataGenerationService: {e}")
     import traceback
     traceback.print_exc()
     data_generation_service = None
@@ -136,10 +137,10 @@ if COMPARISON_CHAT_AVAILABLE and comparison_service_instance:
     # Replace the imported chat_controller with our properly initialized instance
     import controllers.chat_controller
     controllers.chat_controller.chat_controller = chat_controller_instance
-    print("✅ ChatController initialized with ComparisonService")
+    print("[OK] ChatController initialized with ComparisonService")
 else:
     chat_controller_instance = None
-    print("⚠️ ChatController not available - ComparisonService unavailable")
+    print("[WARNING] ChatController not available - ComparisonService unavailable")
 
 # Note: TrainingController now uses multiprocessing and doesn't need TrainingService injection
 
@@ -149,30 +150,30 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print("🚀 Starting LLMForge API (Multiprocessing Architecture)")
+    print("[INFO] Starting LLMForge API (Multiprocessing Architecture)")
     
     if COMPARISON_CHAT_AVAILABLE and comparison_service_instance:
         await comparison_service_instance.start_background_tasks()
-        print("✅ Comparison service background tasks started")
+        print("[OK] Comparison service background tasks started")
     
-    print("✅ LLMForge API startup complete")
+    print("[OK] LLMForge API startup complete")
     
     yield
     
     # Shutdown
-    print("🛑 Shutting down LLMForge API")
+    print("[INFO] Shutting down LLMForge API")
     
     # Clean up all training processes
     if FINE_TUNING_AVAILABLE:
         process_manager.cleanup_all_processes()
-        print("✅ Training processes cleaned up")
+        print("[OK] Training processes cleaned up")
     
     # Clean up comparison service
     if COMPARISON_CHAT_AVAILABLE and comparison_service_instance:
         # Add comparison service cleanup here if needed
         pass
     
-    print("✅ LLMForge API shutdown complete")
+    print("[OK] LLMForge API shutdown complete")
 
 app = FastAPI(
     title="LLMForge Fine-tuning API",
@@ -414,6 +415,152 @@ async def export_research_data(start_date: str = None, end_date: str = None, for
     return await chat_controller_instance.export_research_data(start_date, end_date, format)
 
 # =====================================
+# AGENT ORCHESTRATOR ENDPOINTS
+# =====================================
+
+@app.get("/agents/list")
+async def list_available_agents():
+    """Get list of all available AI agents."""
+    try:
+        agents = agent_orchestrator.list_available_agents()
+        return {"status": "success", "agents": agents}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/agents/{agent_id}")
+async def get_agent_info(agent_id: str):
+    """Get detailed information about a specific agent."""
+    try:
+        agent_info = agent_orchestrator.get_agent_info(agent_id)
+        if agent_info:
+            return {"status": "success", "agent": agent_info}
+        else:
+            raise HTTPException(status_code=404, detail=f"Agent {agent_id} not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/agents/templates/list")
+async def list_prompt_templates():
+    """Get list of all available prompt templates."""
+    try:
+        templates = agent_orchestrator.list_available_templates()
+        return {"status": "success", "templates": templates}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/agents/templates/render")
+async def render_prompt_template(request: dict):
+    """Render a prompt template with provided variables."""
+    try:
+        template_id = request.get("template_id")
+        variables = request.get("variables", {})
+        
+        if not template_id:
+            raise HTTPException(status_code=400, detail="template_id is required")
+        
+        rendered_prompt = agent_orchestrator.render_template(template_id, **variables)
+        return {"status": "success", "rendered_prompt": rendered_prompt}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/agents/create")
+async def create_custom_agent(request: dict):
+    """Create a new custom agent."""
+    try:
+        agent_id = request.get("agent_id")
+        name = request.get("name")
+        system_prompt = request.get("system_prompt")
+        capabilities = request.get("capabilities", [])
+        use_cases = request.get("use_cases", [])
+        
+        if not all([agent_id, name, system_prompt]):
+            raise HTTPException(status_code=400, detail="agent_id, name, and system_prompt are required")
+        
+        success = agent_orchestrator.create_custom_agent(
+            agent_id, name, system_prompt, capabilities, use_cases
+        )
+        
+        if success:
+            return {"status": "success", "message": f"Agent {agent_id} created successfully"}
+        else:
+            return {"status": "error", "message": f"Failed to create agent {agent_id} (may already exist)"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/agents/session/{session_id}/set-agent")
+async def set_session_agent(session_id: str, request: dict):
+    """Set the active agent for a chat session."""
+    try:
+        agent_id = request.get("agent_id")
+        
+        if not agent_id:
+            raise HTTPException(status_code=400, detail="agent_id is required")
+        
+        success = agent_orchestrator.set_session_agent(session_id, agent_id)
+        
+        if success:
+            return {"status": "success", "message": f"Agent {agent_id} set for session {session_id}"}
+        else:
+            return {"status": "error", "message": f"Failed to set agent {agent_id} for session {session_id}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/agents/session/{session_id}/set-prompt")
+async def set_session_custom_prompt(session_id: str, request: dict):
+    """Set a custom system prompt for a chat session."""
+    try:
+        custom_prompt = request.get("custom_prompt")
+        
+        if not custom_prompt:
+            raise HTTPException(status_code=400, detail="custom_prompt is required")
+        
+        success = agent_orchestrator.set_session_custom_prompt(session_id, custom_prompt)
+        
+        if success:
+            return {"status": "success", "message": f"Custom prompt set for session {session_id}"}
+        else:
+            return {"status": "error", "message": "Failed to set custom prompt"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/agents/session/{session_id}/config")
+async def get_session_agent_config(session_id: str):
+    """Get current agent configuration for a session."""
+    try:
+        config = agent_orchestrator.get_session_config(session_id)
+        return {"status": "success", "config": config}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.delete("/agents/session/{session_id}/config")
+async def clear_session_agent_config(session_id: str):
+    """Clear agent configuration for a session."""
+    try:
+        agent_orchestrator.clear_session_config(session_id)
+        return {"status": "success", "message": f"Configuration cleared for session {session_id}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/agents/statistics")
+async def get_agent_usage_statistics():
+    """Get usage statistics for all agents."""
+    try:
+        stats = agent_orchestrator.get_usage_statistics()
+        return {"status": "success", "statistics": stats}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# =====================================
 # VISUALIZATION & ANALYTICS ENDPOINTS  
 # =====================================
 
@@ -558,12 +705,12 @@ async def global_exception_handler(request, exc):
 # =====================================
 
 if __name__ == "__main__":
-    print("🦥 LLMForge Fine-tuning API - Multiprocessing Architecture")
-    print("📦 Services: ModelService, ChatService, ComparisonService")
-    print("🏗️ Training: Isolated worker processes for non-blocking ML training")
-    print("🔧 Optimizations: Unsloth 2x speedup, FastLibra KV caching")
-    print("⚡ Performance: FastAPI stays responsive during training")
-    print("🛡️ Isolation: Complete process separation for GPU/CUDA operations")
+    print("[INFO] LLMForge Fine-tuning API - Multiprocessing Architecture")
+    print("[INFO] Services: ModelService, ChatService, ComparisonService")
+    print("[INFO] Training: Isolated worker processes for non-blocking ML training")
+    print("[INFO] Optimizations: Unsloth 2x speedup, FastLibra KV caching")
+    print("[INFO] Performance: FastAPI stays responsive during training")
+    print("[INFO] Isolation: Complete process separation for GPU/CUDA operations")
     
     uvicorn.run(
         app, 

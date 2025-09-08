@@ -24,6 +24,8 @@ from utils.logging import get_logger
 from utils.model_config import model_config
 from config.settings import settings
 
+# Import Agent Orchestrator (will be imported when needed to avoid circular imports)
+
 # Import Unsloth with proper error handling
 try:
     from unsloth import FastLanguageModel
@@ -832,7 +834,9 @@ class ModelService:
         self, 
         session_id: str,
         messages: List[Dict[str, str]], 
-        generation_params: Dict = None
+        generation_params: Dict = None,
+        custom_system_prompt: str = None,
+        use_agent_orchestrator: bool = False
     ) -> Dict[str, Any]:
         """Generate responses from both base and fine-tuned models with KV cache optimization"""
         
@@ -881,11 +885,16 @@ class ModelService:
                 # Create different prompts to differentiate base vs fine-tuned behavior
                 user_message = messages[-1].get('content', '') if messages else 'Hello'
                 
+                # Get system prompt based on configuration
+                system_prompt = self._get_system_prompt_for_session(
+                    session_id, custom_system_prompt, use_agent_orchestrator, user_message
+                )
+                
                 # Base model: simple, direct prompt
                 base_prompt = f"Human: {user_message}\n\nAssistant:"
                 
-                # Fine-tuned model: use proper chat template format
-                finetuned_prompt = f"<|im_start|>system\nYou are a helpful, knowledgeable assistant that provides detailed and practical responses. Always be specific and helpful.<|im_end|>\n<|im_start|>user\n{user_message}<|im_end|>\n<|im_start|>assistant\n"
+                # Fine-tuned model: use proper chat template format with custom system prompt
+                finetuned_prompt = f"<|im_start|>system\n{system_prompt}<|im_end|>\n<|im_start|>user\n{user_message}<|im_end|>\n<|im_start|>assistant\n"
                 
                 self.logger.info(f"Base prompt: {base_prompt[:100]}...")
                 self.logger.info(f"Fine-tuned prompt: {finetuned_prompt[:100]}...")
@@ -963,13 +972,17 @@ class ModelService:
         self, 
         session_id: str,
         messages: List[Dict[str, str]], 
-        generation_params: Dict = None
+        generation_params: Dict = None,
+        custom_system_prompt: str = None,
+        use_agent_orchestrator: bool = False
     ) -> Dict[str, Any]:
         """Generate responses with fallback support for TensorFlow/GPU issues"""
         
         try:
             # Try the normal generation process first
-            return await self.generate_comparison_responses(session_id, messages, generation_params)
+            return await self.generate_comparison_responses(
+                session_id, messages, generation_params, custom_system_prompt, use_agent_orchestrator
+            )
         
         except Exception as e:
             self.logger.error(f"Normal generation failed: {e}")
@@ -1055,15 +1068,34 @@ class ModelService:
                     # Use Unsloth for optimal loading
                     self.logger.info("Loading models with Unsloth optimization...")
                     
-                    # Load base model with Unsloth with proper Qwen2.5 parameters
+                    # Load base model with Unsloth with proper Qwen2.5 parameters and memory management
                     try:
-                        base_model, tokenizer = FastLanguageModel.from_pretrained(
-                            model_name=base_model_path,
-                            max_seq_length=settings.default_max_seq_length,
-                            dtype=None,
-                            load_in_4bit=True,
-                            trust_remote_code=True,  # Required for Qwen2.5
-                        )
+                        # Check available GPU memory first
+                        gpu_info = get_gpu_memory_info()
+                        gpu_free_gb = gpu_info.get('free_mb', 0) / 1024
+                        gpu_allocated_gb = gpu_info.get('allocated_mb', 0) / 1024
+                        self.logger.info(f"GPU Memory Status: {gpu_free_gb:.1f}GB free, {gpu_allocated_gb:.1f}GB allocated")
+                        
+                        # Configure device mapping and offloading based on available memory
+                        model_kwargs = {
+                            'model_name': base_model_path,
+                            'max_seq_length': settings.default_max_seq_length,
+                            'dtype': None,
+                            'load_in_4bit': True,
+                            'trust_remote_code': True,  # Required for Qwen2.5
+                        }
+                        
+                        # Add CPU offload support if GPU memory is limited
+                        if gpu_free_gb < 6.0 or gpu_allocated_gb > 6.0:  # Either low free memory or high usage
+                            self.logger.warning(f"Limited GPU memory ({gpu_free_gb:.1f}GB free, {gpu_allocated_gb:.1f}GB allocated), enabling CPU offload")
+                            # Note: Unsloth handles device mapping automatically, but we can add fallback
+                            model_kwargs['device_map'] = "auto"
+                            model_kwargs['llm_int8_enable_fp32_cpu_offload'] = True
+                            
+                            # Try to clear some GPU memory first
+                            await self._emergency_memory_cleanup()
+                        
+                        base_model, tokenizer = FastLanguageModel.from_pretrained(**model_kwargs)
                         
                         # Validate models were loaded successfully
                         if base_model is None:
@@ -1084,15 +1116,28 @@ class ModelService:
                         self.logger.error(f"Failed to load base model with Unsloth: {base_error}")
                         raise RuntimeError(f"Base model loading failed: {base_error}")
                     
-                    # Load fine-tuned model (adapter) with Unsloth
+                    # Load fine-tuned model (adapter) with Unsloth and memory management
                     try:
-                        finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(
-                            model_name=adapter_path,
-                            max_seq_length=settings.default_max_seq_length,
-                            dtype=None,
-                            load_in_4bit=True,
-                            trust_remote_code=True,  # Required for Qwen2.5
-                        )
+                        # Check available GPU memory again (may have changed after base model load)
+                        gpu_info = get_gpu_memory_info()
+                        gpu_free_gb = gpu_info.get('free_mb', 0) / 1024
+                        
+                        # Configure adapter loading with same memory management
+                        adapter_kwargs = {
+                            'model_name': adapter_path,
+                            'max_seq_length': settings.default_max_seq_length,
+                            'dtype': None,
+                            'load_in_4bit': True,
+                            'trust_remote_code': True,  # Required for Qwen2.5
+                        }
+                        
+                        # Add CPU offload support if GPU memory is limited
+                        if gpu_free_gb < 4.0:  # Lower threshold for adapter
+                            self.logger.warning(f"Limited GPU memory ({gpu_free_gb:.1f}GB free), enabling CPU offload for adapter")
+                            adapter_kwargs['device_map'] = "auto"
+                            adapter_kwargs['llm_int8_enable_fp32_cpu_offload'] = True
+                        
+                        finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(**adapter_kwargs)
                         
                         # Validate models were loaded successfully
                         if finetuned_model is None:
@@ -1579,6 +1624,76 @@ class ModelService:
         except Exception as e:
             self.logger.error(f"Error during model warmup: {e}")
             return []
+    
+    async def _emergency_memory_cleanup(self):
+        """Emergency cleanup to free GPU memory when loading fails"""
+        try:
+            self.logger.warning("Performing emergency GPU memory cleanup...")
+            
+            # Clear oldest cached models first
+            if len(self.loaded_models_cache) > 1:
+                # Remove half of the cached models (keep most recent)
+                items_to_remove = list(self.loaded_models_cache.keys())[:-1]  # Keep last one
+                for pair_id in items_to_remove:
+                    self.logger.info(f"Emergency cleanup: removing cached model pair {pair_id}")
+                    del self.loaded_models_cache[pair_id]
+            
+            # Force garbage collection
+            gc.collect()
+            
+            # Clear GPU cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            # Wait a moment for cleanup
+            await asyncio.sleep(2)
+            
+            # Log new memory status
+            gpu_info = get_gpu_memory_info()
+            gpu_free_gb = gpu_info.get('free_mb', 0) / 1024
+            self.logger.info(f"After cleanup: {gpu_free_gb:.1f}GB GPU memory free")
+            
+        except Exception as e:
+            self.logger.error(f"Error during emergency cleanup: {e}")
+    
+    def _get_system_prompt_for_session(self, session_id: str, custom_system_prompt: str = None, 
+                                     use_agent_orchestrator: bool = False, user_message: str = "") -> str:
+        """Get the appropriate system prompt for a session"""
+        try:
+            # Priority 1: Explicit custom prompt provided in request
+            if custom_system_prompt and custom_system_prompt.strip():
+                self.logger.info(f"Using explicit custom system prompt for session {session_id}")
+                return custom_system_prompt.strip()
+            
+            # Priority 2: Agent orchestrator (requires dynamic import to avoid circular dependency)
+            if use_agent_orchestrator:
+                try:
+                    from services.agent_orchestrator import agent_orchestrator
+                    
+                    # If no agent is set for the session, suggest one based on the query
+                    if session_id not in agent_orchestrator.session_agents and user_message:
+                        suggested_agent = agent_orchestrator.suggest_agent_for_query(user_message)
+                        if suggested_agent:
+                            agent_orchestrator.set_session_agent(session_id, suggested_agent)
+                            self.logger.info(f"Auto-assigned agent {suggested_agent} for session {session_id}")
+                    
+                    # Get system prompt from orchestrator
+                    prompt = agent_orchestrator.get_system_prompt_for_session(session_id, context=user_message)
+                    self.logger.info(f"Using agent orchestrator system prompt for session {session_id}")
+                    return prompt
+                    
+                except Exception as e:
+                    self.logger.warning(f"Failed to use agent orchestrator: {e}, falling back to default")
+            
+            # Fallback: Default helpful assistant prompt
+            default_prompt = "You are a helpful, knowledgeable assistant that provides detailed and practical responses. Always be specific and helpful."
+            self.logger.info(f"Using default system prompt for session {session_id}")
+            return default_prompt
+            
+        except Exception as e:
+            self.logger.error(f"Error getting system prompt for session {session_id}: {e}")
+            return "You are a helpful assistant."
 
 
 # Create global service instance
