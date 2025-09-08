@@ -372,27 +372,27 @@ class TrainingController:
                                 # Always send status update
                                 yield f"event: status\n"
                                 yield f"data: {json.dumps(status_data)}\n\n"
-                            
-                        except (json.JSONDecodeError, IOError) as e:
-                            self.logger.warning(f"Error reading status file: {e}")
-                    else:
-                        # Status file doesn't exist - check if process is still running
-                        process_status = self.process_manager.get_process_status(task_id)
-                        if process_status is None or process_status == "finished":
-                            # Process finished but no status file - likely error
-                            yield f"event: error\n"
-                            yield f"data: {json.dumps({'error': 'Training process ended unexpectedly', 'task_id': task_id})}\n\n"
-                            return
-                    
-                    # Send heartbeat every 30 seconds
-                    current_time = time.time()
-                    if current_time - last_heartbeat > 30:
-                        yield f"event: heartbeat\n"
-                        yield f"data: {json.dumps({'timestamp': current_time})}\n\n"
-                        last_heartbeat = current_time
-                    
-                    await asyncio.sleep(2.0)  # Check every 2 seconds for responsive updates
-                    
+                                
+                            except (json.JSONDecodeError, IOError) as e:
+                                self.logger.warning(f"Error reading status file: {e}")
+                        else:
+                            # Status file doesn't exist - check if process is still running
+                            process_status = self.process_manager.get_process_status(task_id)
+                            if process_status is None or process_status == "finished":
+                                # Process finished but no status file - likely error
+                                yield f"event: error\n"
+                                yield f"data: {json.dumps({'error': 'Training process ended unexpectedly', 'task_id': task_id})}\n\n"
+                                return
+                        
+                        # Send heartbeat every 30 seconds
+                        current_time = time.time()
+                        if current_time - last_heartbeat > 30:
+                            yield f"event: heartbeat\n"
+                            yield f"data: {json.dumps({'timestamp': current_time})}\n\n"
+                            last_heartbeat = current_time
+                        
+                        await asyncio.sleep(2.0)  # Check every 2 seconds for responsive updates
+                        
                     except asyncio.CancelledError:
                         self.logger.info(f"SSE connection {connection_id} cancelled by client")
                         yield f"event: disconnect\n"

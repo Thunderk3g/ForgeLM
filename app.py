@@ -256,6 +256,11 @@ async def get_available_models():
     """Get list of available models in the models directory."""
     return await model_controller.get_available_models()
 
+@app.get("/models/fine-tuned")
+async def get_fine_tuned_models():
+    """Get list of fine-tuned models with metadata and organization."""
+    return await model_controller.get_fine_tuned_models()
+
 @app.post("/select-model")
 async def select_model_endpoint(request: SelectModelRequest):
     """Download and prepare a base model for fine-tuning."""

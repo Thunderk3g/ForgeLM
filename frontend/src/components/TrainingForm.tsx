@@ -26,10 +26,20 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
       return;
     }
     
+    // Generate unique output directory with timestamp and model info
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0] + '_' + 
+                     new Date().toISOString().split('T')[1].slice(0, 8).replace(/:/g, '-');
+    const modelName = selectedModel.replace(/[^a-zA-Z0-9-_]/g, '_');
+    const trainingType = ftType === 'sft' ? 'sft' : ftType;
+    const peftSuffix = peftMethod === 'qlora' ? 'qlora' : 'lora';
+    const alignmentSuffix = alignment !== 'none' ? `_${alignment}` : '';
+    
+    const outputDir = `/app/models/fine_tuned/${modelName}_${trainingType}_${peftSuffix}${alignmentSuffix}_${timestamp}`;
+    
     onStartTraining({
       base_model_dir: selectedModelInfo?.path || '/app/models/base',
       dataset_dir: '/app/data/prepared',
-      output_dir: '/app/models/fine_tuned',
+      output_dir: outputDir,
       ft_type: ftType,
       peft_method: peftMethod,
       alignment: alignment,

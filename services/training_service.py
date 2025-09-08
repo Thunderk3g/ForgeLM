@@ -392,6 +392,9 @@ class TrainingService:
                     save_method="merged_16bit"
                 )
             
+            # Create metadata file with training information
+            self._create_model_metadata(output_dir, request, task_id)
+            
             # Mark as complete
             self._update_status_file_complete(task_id)
             task_completion_flags[task_id] = True
@@ -477,6 +480,9 @@ class TrainingService:
             
             trainer.save_model(str(output_dir))
             tokenizer.save_pretrained(str(output_dir))
+            
+            # Create metadata file with training information
+            self._create_model_metadata(output_dir, request, task_id)
             
             # Mark as complete
             self._update_status_file_complete(task_id)
@@ -603,6 +609,50 @@ class TrainingService:
         
         with open(status_file, "w") as f:
             json.dump(status_data, f, indent=2)
+    
+    def _create_model_metadata(self, output_dir: Path, request: FineTuneRequest, task_id: str):
+        """Create a metadata file with training information for the fine-tuned model"""
+        import time
+        
+        metadata = {
+            "model_info": {
+                "name": output_dir.name,
+                "base_model": request.base_model_dir,
+                "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "task_id": task_id,
+                "model_type": "fine_tuned",
+                "framework": "unsloth" if hasattr(request, '_unsloth_optimized') else "transformers"
+            },
+            "training_config": {
+                "ft_type": request.ft_type,
+                "peft_method": request.peft_method,
+                "alignment": getattr(request, 'alignment', 'none'),
+                "epochs": request.epochs,
+                "batch_size": request.batch_size,
+                "learning_rate": request.learning_rate,
+                "max_seq_length": request.max_seq_length,
+                "gradient_accumulation_steps": request.gradient_accumulation_steps
+            },
+            "dataset_info": {
+                "dataset_dir": request.dataset_dir
+            },
+            "paths": {
+                "output_dir": str(output_dir),
+                "adapter_files": [
+                    "adapter_config.json",
+                    "adapter_model.safetensors"
+                ],
+                "merged_model": "merged_16bit" if request.ft_type == "instruction" else None
+            }
+        }
+        
+        metadata_file = output_dir / "model_metadata.json"
+        try:
+            with open(metadata_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+            self.logger.info(f"Created metadata file: {metadata_file}")
+        except Exception as e:
+            self.logger.warning(f"Failed to create metadata file: {e}")
     
     def _cleanup_training_resources(self, task_id: str):
         """Clean up resources for a specific training"""

@@ -12,6 +12,7 @@ import { LogViewer } from './components/LogViewer';
 import { MetricsChart } from './components/MetricsChart';
 import { ActiveSessionsPanel } from './components/ActiveSessionsPanel';
 import { ComparisonChatInterface } from './components/ComparisonChatInterface';
+import { FineTunedModelsList } from './components/FineTunedModelsList';
 
 // API
 import { 
@@ -46,7 +47,7 @@ interface MetricData {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'training' | 'chat'>('training');
+  const [activeTab, setActiveTab] = useState<'training' | 'chat' | 'models'>('training');
   const [apiStatus, setApiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus | null>(null);
@@ -427,6 +428,18 @@ function App() {
                   <MessageSquare className="mr-2 h-4 w-4" />
                   Model Comparison
                 </button>
+                
+                <button
+                  onClick={() => setActiveTab('models')}
+                  className={`inline-flex items-center justify-center rounded-md px-4 py-2 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                    activeTab === 'models'
+                      ? 'bg-accent text-accent-foreground'
+                      : 'text-muted-foreground'
+                  }`}
+                >
+                  <Brain className="mr-2 h-4 w-4" />
+                  Saved Models
+                </button>
               </nav>
             </div>
             
@@ -460,6 +473,10 @@ function App() {
       {/* Main Content */}
       {activeTab === 'chat' ? (
         <ComparisonChatInterface />
+      ) : activeTab === 'models' ? (
+        <main className="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8 space-y-8">
+          <FineTunedModelsList />
+        </main>
       ) : (
         <main className="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8 space-y-8">
         {/* Training Progress Overview */}

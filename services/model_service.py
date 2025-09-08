@@ -676,6 +676,25 @@ class ModelService:
             
         return total_size / (1024 * 1024)  # Convert to MB
     
+    def _read_model_metadata(self, model_dir: Path) -> Dict[str, Any]:
+        """Read metadata file from a fine-tuned model directory"""
+        metadata_file = model_dir / "model_metadata.json"
+        if metadata_file.exists():
+            try:
+                with open(metadata_file, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                self.logger.warning(f"Failed to read metadata from {metadata_file}: {e}")
+        
+        # Return default metadata if file doesn't exist
+        return {
+            "model_info": {
+                "name": model_dir.name,
+                "created_at": "unknown",
+                "model_type": "fine_tuned"
+            }
+        }
+    
     @timed("load_model_pair")
     async def load_model_pair(self, pair: ModelPair, session_id: str) -> Tuple[Any, Any, Any, Any]:
         """Load base model + LoRA adapter pair with KV cache optimization"""

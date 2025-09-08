@@ -139,6 +139,60 @@ class ModelController:
         except Exception as e:
             self.logger.error(f"Failed to get model pairs: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to get model pairs: {str(e)}")
+    
+    async def get_fine_tuned_models(self) -> JSONResponse:
+        """Get list of fine-tuned models with their metadata and organization"""
+        try:
+            from pathlib import Path
+            from config.settings import settings
+            
+            fine_tuned_dir = Path(settings.models_finetuned_dir)
+            models_data = []
+            
+            if fine_tuned_dir.exists():
+                for model_dir in fine_tuned_dir.iterdir():
+                    if model_dir.is_dir() and model_dir.name != 'checkpoints':
+                        # Read metadata
+                        metadata = self.model_service._read_model_metadata(model_dir)
+                        
+                        # Calculate size
+                        size_mb = self.model_service._calculate_directory_size(model_dir)
+                        
+                        # Check if model files exist
+                        has_adapter = (model_dir / "adapter_model.safetensors").exists() or \
+                                     (model_dir / "adapter_model.bin").exists()
+                        has_merged = (model_dir / "merged_16bit").exists()
+                        
+                        model_info = {
+                            "name": model_dir.name,
+                            "path": str(model_dir),
+                            "size_mb": round(size_mb, 2),
+                            "created_at": metadata.get("model_info", {}).get("created_at", "unknown"),
+                            "base_model": metadata.get("model_info", {}).get("base_model", "unknown"),
+                            "task_id": metadata.get("model_info", {}).get("task_id"),
+                            "training_config": metadata.get("training_config", {}),
+                            "files": {
+                                "has_adapter": has_adapter,
+                                "has_merged": has_merged,
+                                "metadata_exists": (model_dir / "model_metadata.json").exists()
+                            },
+                            "framework": metadata.get("model_info", {}).get("framework", "unknown")
+                        }
+                        models_data.append(model_info)
+                
+                # Sort by creation date (newest first)
+                models_data.sort(key=lambda x: x["created_at"], reverse=True)
+            
+            return JSONResponse(content={
+                "status": "success",
+                "fine_tuned_models": models_data,
+                "total": len(models_data),
+                "base_directory": str(fine_tuned_dir)
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get fine-tuned models: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to get fine-tuned models: {str(e)}")
 
 
 # Create global controller instance
