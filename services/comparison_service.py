@@ -204,6 +204,15 @@ class ComparisonService:
                     generation_params=request.generation_params.dict() if request.generation_params else {}
                 )
                 self.logger.info(f"Logged comparison for research: {log_id}")
+                
+                # Enhanced logging for visualization analytics
+                self._log_enhanced_comparison_analytics(
+                    request.session_id, 
+                    user_message, 
+                    comparison_response, 
+                    result["model_info"]
+                )
+                
             except Exception as log_error:
                 self.logger.warning(f"Failed to log comparison for research: {log_error}")
             
@@ -410,6 +419,157 @@ class ComparisonService:
                 
         except Exception as e:
             self.logger.warning(f"Error during model warmup: {e}")
+    
+    def _log_enhanced_comparison_analytics(self, session_id: str, user_message: str, 
+                                           response: 'ComparisonResponse', model_info: Dict[str, Any]):
+        """Log enhanced analytics data for visualization"""
+        try:
+            analytics_data = {
+                "session_id": session_id,
+                "timestamp": datetime.now().isoformat(),
+                "user_message_stats": {
+                    "length": len(user_message),
+                    "word_count": len(user_message.split()),
+                    "has_question": "?" in user_message,
+                    "complexity_score": self._calculate_message_complexity(user_message)
+                },
+                "response_analytics": {
+                    "base_response_stats": {
+                        "length": len(response.base_response),
+                        "word_count": len(response.base_response.split()),
+                        "sentence_count": response.base_response.count('.') + response.base_response.count('!') + response.base_response.count('?'),
+                    },
+                    "finetuned_response_stats": {
+                        "length": len(response.finetuned_response),
+                        "word_count": len(response.finetuned_response.split()),
+                        "sentence_count": response.finetuned_response.count('.') + response.finetuned_response.count('!') + response.finetuned_response.count('?'),
+                    },
+                    "length_difference": len(response.finetuned_response) - len(response.base_response),
+                    "style_similarity": self._calculate_style_similarity(response.base_response, response.finetuned_response)
+                },
+                "performance_analytics": {
+                    "base_time_ms": getattr(response, 'generation_time_ms', {}).get('base', 0) if hasattr(response, 'generation_time_ms') else 0,
+                    "finetuned_time_ms": getattr(response, 'generation_time_ms', {}).get('finetuned', 0) if hasattr(response, 'generation_time_ms') else 0,
+                    "speedup_factor": self._calculate_speedup_factor(response),
+                    "cache_hit_rate": getattr(response, 'cache_metrics', {}).get('hit_rate', 0) if hasattr(response, 'cache_metrics') else 0
+                },
+                "model_info": model_info
+            }
+            
+            # Store for visualization access
+            research_logger.log_resource_metrics(f"comparison_{session_id}", analytics_data)
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to log enhanced comparison analytics: {e}")
+    
+    def _calculate_message_complexity(self, message: str) -> float:
+        """Calculate a simple complexity score for the user message"""
+        try:
+            # Simple heuristic: longer messages, questions, and technical terms = more complex
+            words = message.split()
+            word_count = len(words)
+            avg_word_length = sum(len(word) for word in words) / max(word_count, 1)
+            
+            complexity_factors = [
+                min(word_count / 20, 1.0),  # Length factor (normalized to 20 words = 1.0)
+                min(avg_word_length / 6, 1.0),  # Average word length factor
+                0.5 if "?" in message else 0.0,  # Question boost
+                0.3 if any(tech_word in message.lower() for tech_word in ["algorithm", "model", "training", "parameter"]) else 0.0
+            ]
+            
+            return sum(complexity_factors) / len(complexity_factors)
+            
+        except Exception:
+            return 0.5  # Default moderate complexity
+    
+    def _calculate_style_similarity(self, text1: str, text2: str) -> float:
+        """Calculate style similarity between two responses"""
+        try:
+            # Compare sentence structures, punctuation usage, etc.
+            text1_sentences = text1.count('.') + text1.count('!') + text1.count('?')
+            text2_sentences = text2.count('.') + text2.count('!') + text2.count('?')
+            
+            text1_words = len(text1.split())
+            text2_words = len(text2.split())
+            
+            # Compare average sentence length
+            avg_sent_len1 = text1_words / max(text1_sentences, 1)
+            avg_sent_len2 = text2_words / max(text2_sentences, 1)
+            
+            sentence_similarity = 1 - min(abs(avg_sent_len1 - avg_sent_len2) / max(avg_sent_len1, avg_sent_len2, 1), 1.0)
+            
+            # Compare punctuation density
+            punct_density1 = (text1.count(',') + text1.count(';') + text1.count(':')) / max(text1_words, 1)
+            punct_density2 = (text2.count(',') + text2.count(';') + text2.count(':')) / max(text2_words, 1)
+            
+            punct_similarity = 1 - min(abs(punct_density1 - punct_density2) * 10, 1.0)
+            
+            return (sentence_similarity + punct_similarity) / 2
+            
+        except Exception:
+            return 0.5  # Default moderate similarity
+    
+    def _calculate_speedup_factor(self, response: 'ComparisonResponse') -> float:
+        """Calculate performance speedup factor"""
+        try:
+            if not hasattr(response, 'generation_time_ms'):
+                return 1.0
+            
+            times = getattr(response, 'generation_time_ms', {})
+            base_time = times.get('base', 0)
+            finetuned_time = times.get('finetuned', 0)
+            
+            if finetuned_time > 0 and base_time > 0:
+                return base_time / finetuned_time
+            
+            return 1.0
+            
+        except Exception:
+            return 1.0
+    
+    async def get_visual_analytics_summary(self, session_id: str = None, hours_back: int = 24) -> Dict[str, Any]:
+        """Get analytics summary optimized for visualization dashboards"""
+        try:
+            # Get basic comparison stats
+            comparison_stats = research_logger.get_model_comparison_stats()
+            
+            # Get session-specific data if requested
+            session_summary = None
+            if session_id:
+                session_summary = research_logger.get_session_summary(session_id)
+            
+            # Calculate trending metrics
+            trending_metrics = await self._calculate_trending_metrics(hours_back)
+            
+            return {
+                "overall_stats": comparison_stats,
+                "session_summary": session_summary,
+                "trending_metrics": trending_metrics,
+                "service_metrics": await self.get_service_metrics(),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get visual analytics summary: {e}")
+            return {"error": str(e)}
+    
+    async def _calculate_trending_metrics(self, hours_back: int) -> Dict[str, Any]:
+        """Calculate trending metrics for the specified time period"""
+        try:
+            # This would analyze comparison data over time to identify trends
+            # For now, return placeholder data structure
+            return {
+                "response_time_trend": "improving",  # "improving", "stable", "degrading"
+                "similarity_trend": "stable",
+                "usage_trend": "increasing",
+                "error_rate": 0.0,
+                "avg_session_length": 0.0,
+                "popular_query_types": ["questions", "instructions", "conversations"]
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to calculate trending metrics: {e}")
+            return {}
 
 
 # Note: Global service instance should be created with proper dependencies

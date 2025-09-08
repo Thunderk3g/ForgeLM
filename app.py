@@ -16,6 +16,7 @@ from controllers.model_controller import model_controller
 from controllers.training_controller import training_controller
 from controllers.chat_controller import chat_controller
 from controllers.config_controller import config_controller
+from controllers.visualization_controller import VisualizationController
 
 # Import schemas for type annotations
 from models.schemas import (
@@ -28,6 +29,7 @@ from services.model_service import ModelService
 from services.training_service import TrainingService
 from services.chat_service import ChatService
 from services.comparison_service import ComparisonService
+from services.visualization_service import VisualizationService
 
 # Backward compatibility imports - maintain original import behavior
 from utils.legacy.model_selection import select_model, SelectModelRequest, scan_available_models
@@ -84,6 +86,44 @@ if COMPARISON_CHAT_AVAILABLE:
 else:
     comparison_service_instance = None
     print("⚠️ ComparisonService not available - skipping initialization")
+
+# Initialize visualization service
+try:
+    visualization_service = VisualizationService(
+        training_service=None,  # Will be set if needed
+        comparison_service=comparison_service_instance,
+        template_service=None   # Will be integrated later
+    )
+    visualization_controller = VisualizationController(visualization_service)
+    print("✅ VisualizationService and Controller initialized")
+    VISUALIZATION_AVAILABLE = True
+except Exception as e:
+    print(f"❌ Error initializing VisualizationService: {e}")
+    import traceback
+    traceback.print_exc()
+    visualization_service = None
+    visualization_controller = None
+    VISUALIZATION_AVAILABLE = False
+
+# Initialize data generation service
+try:
+    from services.data_generation_service import DataGenerationService
+    from controllers.data_generation_controller import DataGenerationController
+    
+    data_generation_service = DataGenerationService(
+        model_service=model_service,
+        template_service=None  # Will be integrated later
+    )
+    data_generation_controller = DataGenerationController(data_generation_service)
+    print("✅ DataGenerationService and Controller initialized")
+    DATA_GENERATION_AVAILABLE = True
+except Exception as e:
+    print(f"❌ Error initializing DataGenerationService: {e}")
+    import traceback
+    traceback.print_exc()
+    data_generation_service = None
+    data_generation_controller = None
+    DATA_GENERATION_AVAILABLE = False
 
 # Initialize controllers with services
 model_controller.model_service = model_service
@@ -372,6 +412,129 @@ async def export_research_data(start_date: str = None, end_date: str = None, for
         raise HTTPException(status_code=503, detail="Comparison chat service not available")
     
     return await chat_controller_instance.export_research_data(start_date, end_date, format)
+
+# =====================================
+# VISUALIZATION & ANALYTICS ENDPOINTS  
+# =====================================
+
+@app.get("/visualization/training/{task_id}")
+async def get_training_analytics(task_id: str, limit: int = 100):
+    """Get training analytics for visualization dashboard."""
+    if not VISUALIZATION_AVAILABLE or not visualization_controller:
+        raise HTTPException(status_code=503, detail="Visualization service not available")
+    
+    return await visualization_controller.get_training_analytics(task_id, limit)
+
+@app.get("/visualization/dataset")
+async def get_dataset_analytics(dataset_path: str):
+    """Get dataset analytics for data exploration dashboard."""
+    if not VISUALIZATION_AVAILABLE or not visualization_controller:
+        raise HTTPException(status_code=503, detail="Visualization service not available")
+    
+    return await visualization_controller.get_dataset_analytics(dataset_path)
+
+@app.get("/visualization/comparisons")
+async def get_comparison_analytics(time_range_hours: int = 24):
+    """Get model comparison analytics for comparison dashboard."""
+    if not VISUALIZATION_AVAILABLE or not visualization_controller:
+        raise HTTPException(status_code=503, detail="Visualization service not available")
+    
+    return await visualization_controller.get_comparison_analytics(time_range_hours)
+
+@app.get("/visualization/system/health")
+async def get_system_health():
+    """Get current system health metrics for monitoring."""
+    if not VISUALIZATION_AVAILABLE or not visualization_controller:
+        raise HTTPException(status_code=503, detail="Visualization service not available")
+    
+    return await visualization_controller.get_system_health()
+
+@app.get("/visualization/dashboard/summary")
+async def get_dashboard_summary(
+    include_training: bool = True,
+    include_comparisons: bool = True,
+    include_system: bool = True
+):
+    """Get comprehensive dashboard summary with all key metrics."""
+    if not VISUALIZATION_AVAILABLE or not visualization_controller:
+        raise HTTPException(status_code=503, detail="Visualization service not available")
+    
+    return await visualization_controller.get_dashboard_summary(
+        include_training, include_comparisons, include_system
+    )
+
+# Enhanced training endpoint with visualization data
+@app.get("/fine-tune/visualization/{task_id}")
+async def get_training_visualization_data(task_id: str, limit: int = 100):
+    """Get enhanced training visualization data including resource metrics."""
+    return await training_controller.get_training_visualization_data(task_id, limit)
+
+# =====================================
+# DATA GENERATION ENDPOINTS
+# =====================================
+
+@app.post("/data-generation/start")
+async def start_data_generation(request: dict):
+    """Start a new data generation task"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    
+    # Convert dict to DataGenerationRequest
+    from controllers.data_generation_controller import DataGenerationRequest
+    generation_request = DataGenerationRequest(**request)
+    return await data_generation_controller.start_generation(generation_request)
+
+@app.get("/data-generation/status/{task_id}")
+async def get_generation_status(task_id: str):
+    """Get status of a data generation task"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    return await data_generation_controller.get_generation_status(task_id)
+
+@app.post("/data-generation/cancel/{task_id}")
+async def cancel_generation(task_id: str):
+    """Cancel an active data generation task"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    return await data_generation_controller.cancel_generation(task_id)
+
+@app.get("/data-generation/datasets")
+async def list_generated_datasets():
+    """List all generated datasets"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    return await data_generation_controller.list_generated_datasets()
+
+@app.get("/data-generation/preview/{dataset_filename}")
+async def preview_dataset(dataset_filename: str, limit: int = 5):
+    """Preview samples from a generated dataset"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    return await data_generation_controller.preview_dataset(dataset_filename, limit)
+
+@app.get("/data-generation/templates")
+async def get_generation_templates():
+    """Get available generation templates and configurations"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    return await data_generation_controller.get_generation_templates()
+
+@app.post("/data-generation/validate")
+async def validate_generation_config(request: dict):
+    """Validate generation configuration without starting generation"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    
+    from controllers.data_generation_controller import DataGenerationRequest
+    generation_request = DataGenerationRequest(**request)
+    return await data_generation_controller.validate_generation_config(generation_request)
+
+@app.get("/data-generation/active")
+async def get_active_generations():
+    """Get list of currently active generation tasks"""
+    if not DATA_GENERATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Data generation service not available")
+    return await data_generation_controller.get_active_generations()
 
 # =====================================
 # ERROR HANDLERS

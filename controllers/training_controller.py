@@ -16,6 +16,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from models.schemas import FineTuneRequest, TrainingStatus
 from services.training_worker import process_manager
 from utils.logging import get_logger
+from utils.research_logger import research_logger
+from utils.memory import get_training_resource_snapshot
 
 
 class TrainingController:
@@ -27,6 +29,7 @@ class TrainingController:
         
         # Track training status for compatibility
         self.training_status = {}
+        self.active_connections = set()  # Track active SSE connections to prevent leaks
         
         self.logger.info("TrainingController initialized with multiprocessing support")
     
@@ -230,6 +233,8 @@ class TrainingController:
         """Stream training logs in real-time using Server-Sent Events"""
         
         async def generate_logs():
+            connection_id = str(uuid.uuid4())
+            self.active_connections.add(connection_id)
             last_heartbeat = time.time()
             last_status_update = None
             connection_start = time.time()
@@ -249,24 +254,18 @@ class TrainingController:
                 
                 self.logger.info(f"Starting SSE stream for task {task_id}")
                 
-            except Exception as e:
-                self.logger.error(f"Error in SSE initialization: {e}")
-                yield f"event: error\n"
-                yield f"data: {json.dumps({'error': str(e), 'task_id': task_id})}\n\n"
-                return
-            
-            while True:
-                try:
-                    # Read status from file (primary communication method)
-                    if status_file.exists():
-                        try:
-                            with open(status_file, "r") as f:
-                                status_data = json.load(f)
-                            
-                            # Check if status was updated since last read
-                            current_updated_at = status_data.get("updated_at")
-                            if current_updated_at != last_status_update:
-                                last_status_update = current_updated_at
+                while True:
+                    try:
+                        # Read status from file (primary communication method)
+                        if status_file.exists():
+                            try:
+                                with open(status_file, "r") as f:
+                                    status_data = json.load(f)
+                                
+                                # Check if status was updated since last read
+                                current_updated_at = status_data.get("updated_at")
+                                if current_updated_at != last_status_update:
+                                    last_status_update = current_updated_at
                                 
                                 # Stream different content based on status
                                 current_status = status_data.get("status")
@@ -298,6 +297,46 @@ class TrainingController:
                                     
                                     yield f"event: log\n"
                                     yield f"data: {json.dumps(log_entry)}\n\n"
+                                    
+                                    # Log training visualization data
+                                    try:
+                                        if status_data.get("current_step") and status_data.get("loss") is not None:
+                                            viz_metrics = {
+                                                "loss": status_data.get("loss"),
+                                                "learning_rate": status_data.get("learning_rate"),
+                                                "epoch": status_data.get("current_epoch", 1),
+                                                "gradient_norm": status_data.get("gradient_norm"),
+                                                "tokens_per_second": status_data.get("tokens_per_second"),
+                                                "memory_usage": status_data.get("memory_usage")
+                                            }
+                                            research_logger.log_training_visualization_data(
+                                                task_id, status_data.get("current_step"), viz_metrics
+                                            )
+                                            
+                                            # Send visualization event
+                                            yield f"event: visualization\n"
+                                            yield f"data: {json.dumps({'metrics': viz_metrics, 'step': status_data.get('current_step')})}\n\n"
+                                    except Exception as viz_error:
+                                        self.logger.warning(f"Error logging visualization data: {viz_error}")
+                                    
+                                    # Get and send resource metrics every 10 steps or every 30 seconds
+                                    try:
+                                        current_time = time.time()
+                                        should_send_resources = (
+                                            status_data.get("current_step", 0) % 10 == 0 or
+                                            current_time - getattr(self, '_last_resource_time', 0) > 30
+                                        )
+                                        
+                                        if should_send_resources:
+                                            resource_snapshot = get_training_resource_snapshot(task_id)
+                                            research_logger.log_resource_metrics(task_id, resource_snapshot)
+                                            
+                                            yield f"event: resources\n"
+                                            yield f"data: {json.dumps(resource_snapshot)}\n\n"
+                                            
+                                            self._last_resource_time = current_time
+                                    except Exception as resource_error:
+                                        self.logger.warning(f"Error getting resource metrics: {resource_error}")
                                 
                                 elif current_status == "saving":
                                     # Model saving phase
@@ -354,11 +393,20 @@ class TrainingController:
                     
                     await asyncio.sleep(2.0)  # Check every 2 seconds for responsive updates
                     
-                except Exception as e:
-                    self.logger.error(f"Error in SSE stream: {e}")
-                    yield f"event: error\n"
-                    yield f"data: {json.dumps({'error': str(e), 'task_id': task_id})}\n\n"
-                    break
+                    except asyncio.CancelledError:
+                        self.logger.info(f"SSE connection {connection_id} cancelled by client")
+                        yield f"event: disconnect\n"
+                        yield f"data: {json.dumps({'message': 'Connection closed', 'task_id': task_id})}\n\n"
+                        break
+                    except Exception as e:
+                        self.logger.error(f"Error in SSE stream: {e}")
+                        yield f"event: error\n"
+                        yield f"data: {json.dumps({'error': str(e), 'task_id': task_id})}\n\n"
+                        break
+            finally:
+                # Clean up connection tracking
+                self.active_connections.discard(connection_id)
+                self.logger.info(f"SSE connection {connection_id} cleaned up")
         
         return StreamingResponse(
             generate_logs(),
@@ -370,6 +418,27 @@ class TrainingController:
                 "Access-Control-Allow-Headers": "Cache-Control",
             }
         )
+    
+    async def get_training_visualization_data(self, task_id: str, limit: int = 100) -> JSONResponse:
+        """Get training visualization data for charts and analytics"""
+        try:
+            # Get training visualization data from research logger
+            viz_data = research_logger.get_training_visualization_data(task_id, limit)
+            
+            # Get recent resource metrics
+            resource_data = research_logger.get_recent_resource_metrics(task_id, minutes=30)
+            
+            return JSONResponse(content={
+                "status": "success",
+                "task_id": task_id,
+                "training_metrics": viz_data,
+                "resource_metrics": resource_data,
+                "total_entries": len(viz_data)
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get visualization data: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to get visualization data: {str(e)}")
 
 
 # Create global controller instance

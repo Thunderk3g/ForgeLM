@@ -5,6 +5,7 @@ Research-focused logging utilities for model comparison analysis
 import json
 import os
 import csv
+import uuid
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from pathlib import Path
@@ -28,6 +29,9 @@ class ResearchLogger:
         (self.base_log_dir / "sessions").mkdir(exist_ok=True)
         (self.base_log_dir / "metrics").mkdir(exist_ok=True)
         (self.base_log_dir / "exports").mkdir(exist_ok=True)
+        (self.base_log_dir / "visualizations").mkdir(exist_ok=True)
+        (self.base_log_dir / "training_analytics").mkdir(exist_ok=True)
+        (self.base_log_dir / "dataset_analytics").mkdir(exist_ok=True)
         
         self.logger.info(f"Research logger initialized with base directory: {self.base_log_dir}")
     
@@ -249,6 +253,35 @@ class ResearchLogger:
             self.logger.error(f"Failed to export research data: {e}")
             return ""
     
+    def log_dataset_generation(self, 
+                                 task_id: str, 
+                                 dataset_path: str, 
+                                 sample_count: int, 
+                                 config: Dict[str, Any]) -> None:
+        """Log dataset generation for research tracking"""
+        try:
+            generation_entry = {
+                "log_id": str(uuid.uuid4()),
+                "timestamp": datetime.now().isoformat(),
+                "task_id": task_id,
+                "dataset_path": dataset_path,
+                "sample_count": sample_count,
+                "config": config,
+                "generation_type": "automated_dataset"
+            }
+            
+            # Save to JSON file
+            log_file = self.base_log_dir / "generations" / f"{generation_entry['log_id']}.json"
+            log_file.parent.mkdir(exist_ok=True)
+            
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(generation_entry, f, indent=2, ensure_ascii=False)
+            
+            self.logger.info(f"Logged dataset generation: {task_id}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log dataset generation: {e}")
+
     def get_model_comparison_stats(self) -> Dict[str, Any]:
         """Get overall statistics about model comparisons"""
         try:
@@ -307,6 +340,144 @@ class ResearchLogger:
         except Exception as e:
             self.logger.error(f"Failed to get comparison stats: {e}")
             return {"error": str(e)}
+    
+    def log_training_visualization_data(self, task_id: str, step: int, metrics: Dict[str, Any]) -> str:
+        """Log training visualization data for real-time charting"""
+        try:
+            visualization_entry = {
+                "log_id": f"viz_{task_id}_{step}_{int(datetime.now().timestamp() * 1000)}",
+                "task_id": task_id,
+                "step": step,
+                "timestamp": datetime.now().isoformat(),
+                "metrics": metrics,
+                "type": "training_visualization"
+            }
+            
+            # Save to JSON file for real-time access
+            viz_file = self.base_log_dir / "training_analytics" / f"{task_id}_step_{step}.json"
+            with open(viz_file, 'w', encoding='utf-8') as f:
+                json.dump(visualization_entry, f, indent=2, ensure_ascii=False)
+            
+            # Also append to aggregated file for the task
+            aggregated_file = self.base_log_dir / "training_analytics" / f"{task_id}_metrics.jsonl"
+            with open(aggregated_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(visualization_entry) + '\n')
+            
+            return visualization_entry["log_id"]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log training visualization data: {e}")
+            return ""
+    
+    def log_dataset_analytics(self, dataset_path: str, analytics_data: Dict[str, Any]) -> str:
+        """Log dataset analytics for visualization"""
+        try:
+            analytics_entry = {
+                "log_id": f"dataset_{hashlib.md5(dataset_path.encode()).hexdigest()[:8]}_{int(datetime.now().timestamp())}",
+                "dataset_path": dataset_path,
+                "timestamp": datetime.now().isoformat(),
+                "analytics": analytics_data,
+                "type": "dataset_analytics"
+            }
+            
+            # Save to JSON file
+            analytics_file = self.base_log_dir / "dataset_analytics" / f"{analytics_entry['log_id']}.json"
+            with open(analytics_file, 'w', encoding='utf-8') as f:
+                json.dump(analytics_entry, f, indent=2, ensure_ascii=False)
+            
+            return analytics_entry["log_id"]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log dataset analytics: {e}")
+            return ""
+    
+    def get_training_visualization_data(self, task_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get training visualization data for a specific task"""
+        try:
+            aggregated_file = self.base_log_dir / "training_analytics" / f"{task_id}_metrics.jsonl"
+            if not aggregated_file.exists():
+                return []
+            
+            visualization_data = []
+            with open(aggregated_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                # Get the last 'limit' entries
+                for line in lines[-limit:]:
+                    try:
+                        data = json.loads(line.strip())
+                        visualization_data.append(data)
+                    except json.JSONDecodeError:
+                        continue
+            
+            return visualization_data
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get training visualization data: {e}")
+            return []
+    
+    def log_resource_metrics(self, task_id: str, resource_data: Dict[str, Any]) -> str:
+        """Log system resource metrics for visualization"""
+        try:
+            resource_entry = {
+                "log_id": f"resource_{task_id}_{int(datetime.now().timestamp() * 1000)}",
+                "task_id": task_id,
+                "timestamp": datetime.now().isoformat(),
+                "resources": resource_data,
+                "type": "resource_metrics"
+            }
+            
+            # Save to timestamped file
+            resource_file = self.base_log_dir / "visualizations" / f"resources_{task_id}.jsonl"
+            with open(resource_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(resource_entry) + '\n')
+            
+            return resource_entry["log_id"]
+            
+        except Exception as e:
+            self.logger.error(f"Failed to log resource metrics: {e}")
+            return ""
+    
+    def get_recent_resource_metrics(self, task_id: str, minutes: int = 10) -> List[Dict[str, Any]]:
+        """Get recent resource metrics for a specific task"""
+        try:
+            resource_file = self.base_log_dir / "visualizations" / f"resources_{task_id}.jsonl"
+            if not resource_file.exists():
+                return []
+            
+            cutoff_time = datetime.now().timestamp() - (minutes * 60)
+            recent_metrics = []
+            
+            with open(resource_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        data = json.loads(line.strip())
+                        entry_time = datetime.fromisoformat(data['timestamp']).timestamp()
+                        if entry_time >= cutoff_time:
+                            recent_metrics.append(data)
+                    except (json.JSONDecodeError, ValueError, KeyError):
+                        continue
+            
+            return recent_metrics
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get recent resource metrics: {e}")
+            return []
+    
+    def cleanup_old_visualization_data(self, days_to_keep: int = 7):
+        """Clean up old visualization data to manage storage"""
+        try:
+            cutoff_time = datetime.now().timestamp() - (days_to_keep * 24 * 60 * 60)
+            
+            for viz_dir in ["training_analytics", "visualizations", "dataset_analytics"]:
+                viz_path = self.base_log_dir / viz_dir
+                if viz_path.exists():
+                    for file_path in viz_path.glob("*"):
+                        if file_path.stat().st_mtime < cutoff_time:
+                            file_path.unlink()
+                            self.logger.info(f"Cleaned up old visualization file: {file_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to cleanup old visualization data: {e}")
 
 
 # Global research logger instance
