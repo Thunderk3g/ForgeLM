@@ -201,4 +201,54 @@ export const getApiInfo = async () => {
   return response.data;
 };
 
+// =====================================
+// VISUALIZATION API ENDPOINTS
+// =====================================
+
+// Training analytics/visualization
+export const getTrainingAnalytics = async (taskId: string, limit: number = 100) => {
+  const response = await api.get(`/visualization/training/${taskId}?limit=${limit}`);
+  return response.data;
+};
+
+// Enhanced training visualization data
+export const getTrainingVisualizationData = async (taskId: string, limit: number = 100) => {
+  const response = await api.get(`/fine-tune/visualization/${taskId}?limit=${limit}`);
+  return response.data;
+};
+
+// Dataset analytics
+export const getDatasetAnalytics = async (datasetPath: string) => {
+  const response = await api.get(`/visualization/dataset?dataset_path=${encodeURIComponent(datasetPath)}`);
+  return response.data;
+};
+
+// Model comparison analytics
+export const getComparisonAnalytics = async (timeRangeHours: number = 24) => {
+  const response = await api.get(`/visualization/comparisons?time_range_hours=${timeRangeHours}`);
+  return response.data;
+};
+
+// System health metrics
+export const getSystemHealth = async () => {
+  const response = await api.get('/visualization/system/health');
+  return response.data;
+};
+
+// Dashboard summary
+export const getDashboardSummary = async (
+  includeTraining: boolean = true,
+  includeComparisons: boolean = true,
+  includeSystem: boolean = true
+) => {
+  const params = new URLSearchParams({
+    include_training: includeTraining.toString(),
+    include_comparisons: includeComparisons.toString(),
+    include_system: includeSystem.toString()
+  });
+  
+  const response = await api.get(`/visualization/dashboard/summary?${params}`);
+  return response.data;
+};
+
 export default api;

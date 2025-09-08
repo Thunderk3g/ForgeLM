@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, ScatterPlot, Scatter } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Database, FileText, TrendingUp, Filter } from 'lucide-react';
 
 interface TokenDistribution {
@@ -59,10 +59,10 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
 
   if (isLoading) {
     return (
-      <div className="bg-white rounded-lg shadow border p-8">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8">
         <div className="flex items-center justify-center space-x-2">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
-          <span className="text-gray-600">Analyzing dataset...</span>
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
+          <span className="text-muted-foreground">Analyzing dataset...</span>
         </div>
       </div>
     );
@@ -70,14 +70,14 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
 
   if (!analyticsData) {
     return (
-      <div className="bg-white rounded-lg shadow border p-8">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-8">
         <div className="text-center">
-          <Database className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No Dataset Analytics Available</h3>
-          <p className="text-gray-500 mb-4">Load a dataset to see detailed analytics and insights.</p>
+          <Database className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-foreground mb-2">No Dataset Analytics Available</h3>
+          <p className="text-muted-foreground mb-4">Load a dataset to see detailed analytics and insights.</p>
           <button
             onClick={onRefresh}
-            className="btn-primary"
+            className="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 text-sm font-medium shadow transition-colors"
           >
             Load Dataset Analytics
           </button>
@@ -227,7 +227,7 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
                   />
                   <YAxis />
                   <Tooltip 
-                    formatter={(value, name) => [
+                    formatter={(value) => [
                       `${value} samples (${token_distribution.find(d => d.count === value)?.percentage?.toFixed(1) || 0}%)`,
                       'Count'
                     ]}

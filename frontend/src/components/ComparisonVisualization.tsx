@@ -92,7 +92,7 @@ export const ComparisonVisualization: React.FC<ComparisonVisualizationProps> = (
   }));
 
   // Similarity vs Response Length scatter data
-  const similarityScatterData = filteredData.map((item, index) => ({
+  const similarityScatterData = filteredData.map((item) => ({
     similarity: item.similarity_score * 100,
     length_ratio: item.finetuned_response_length / Math.max(item.base_response_length, 1),
     base_time: item.base_time_ms,

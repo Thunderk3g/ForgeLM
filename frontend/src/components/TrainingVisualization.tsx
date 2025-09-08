@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { Activity, Cpu, Memory, Gpu } from 'lucide-react';
+import { Activity, Cpu, HardDrive, Zap } from 'lucide-react';
 
 interface TrainingMetric {
   step: number;
@@ -38,7 +38,6 @@ interface TrainingVisualizationProps {
 }
 
 export const TrainingVisualization: React.FC<TrainingVisualizationProps> = ({ 
-  taskId, 
   trainingMetrics, 
   resourceMetrics, 
   isRealTime = false 
@@ -76,48 +75,48 @@ export const TrainingVisualization: React.FC<TrainingVisualizationProps> = ({
     <div className="space-y-6">
       {/* Header with current stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div className="bg-white p-4 rounded-lg shadow border">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4">
           <div className="flex items-center space-x-2">
-            <Activity className="h-5 w-5 text-blue-500" />
+            <Activity className="h-5 w-5 text-primary" />
             <div>
-              <p className="text-sm font-medium text-gray-600">Current Loss</p>
-              <p className="text-xl font-bold text-gray-900">
+              <p className="text-sm font-medium text-muted-foreground">Current Loss</p>
+              <p className="text-xl font-bold text-foreground">
                 {latestMetric?.loss?.toFixed(4) || 'N/A'}
               </p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg shadow border">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4">
           <div className="flex items-center space-x-2">
             <Cpu className="h-5 w-5 text-green-500" />
             <div>
-              <p className="text-sm font-medium text-gray-600">CPU Usage</p>
-              <p className="text-xl font-bold text-gray-900">
+              <p className="text-sm font-medium text-muted-foreground">CPU Usage</p>
+              <p className="text-xl font-bold text-foreground">
                 {latestResource?.cpu_load?.toFixed(1) || 'N/A'}%
               </p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg shadow border">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4">
           <div className="flex items-center space-x-2">
-            <Memory className="h-5 w-5 text-purple-500" />
+            <HardDrive className="h-5 w-5 text-purple-500" />
             <div>
-              <p className="text-sm font-medium text-gray-600">Memory Usage</p>
-              <p className="text-xl font-bold text-gray-900">
+              <p className="text-sm font-medium text-muted-foreground">Memory Usage</p>
+              <p className="text-xl font-bold text-foreground">
                 {latestResource?.memory_pressure?.toFixed(1) || 'N/A'}%
               </p>
             </div>
           </div>
         </div>
         
-        <div className="bg-white p-4 rounded-lg shadow border">
+        <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-4">
           <div className="flex items-center space-x-2">
-            <Gpu className="h-5 w-5 text-orange-500" />
+            <Zap className="h-5 w-5 text-orange-500" />
             <div>
-              <p className="text-sm font-medium text-gray-600">GPU Usage</p>
-              <p className="text-xl font-bold text-gray-900">
+              <p className="text-sm font-medium text-muted-foreground">GPU Usage</p>
+              <p className="text-xl font-bold text-foreground">
                 {latestResource?.gpu_utilization?.toFixed(1) || 'N/A'}%
               </p>
             </div>
@@ -126,13 +125,13 @@ export const TrainingVisualization: React.FC<TrainingVisualizationProps> = ({
       </div>
 
       {/* Chart selection tabs */}
-      <div className="bg-white rounded-lg shadow border">
-        <div className="border-b border-gray-200">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+        <div className="border-b border-border">
           <nav className="flex space-x-8 px-6" aria-label="Tabs">
             {[
               { id: 'loss', name: 'Training Loss', icon: Activity },
               { id: 'resources', name: 'System Resources', icon: Cpu },
-              { id: 'performance', name: 'Performance', icon: Gpu }
+              { id: 'performance', name: 'Performance', icon: Zap }
             ].map((tab) => {
               const Icon = tab.icon;
               return (
@@ -141,8 +140,8 @@ export const TrainingVisualization: React.FC<TrainingVisualizationProps> = ({
                   onClick={() => setSelectedChart(tab.id as any)}
                   className={`${
                     selectedChart === tab.id
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
                   } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2`}
                 >
                   <Icon className="h-4 w-4" />
@@ -272,7 +271,7 @@ export const TrainingVisualization: React.FC<TrainingVisualizationProps> = ({
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex items-center justify-center h-64 text-gray-500">
+                <div className="flex items-center justify-center h-64 text-muted-foreground">
                   <p>Performance metrics will appear when training data is available</p>
                 </div>
               )}

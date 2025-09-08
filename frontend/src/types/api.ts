@@ -102,3 +102,171 @@ export interface AvailableModelsResponse {
   total_models: number;
   message?: string;
 }
+
+// =====================================
+// VISUALIZATION DATA INTERFACES
+// =====================================
+
+export interface TrainingMetric {
+  step: number;
+  loss: number;
+  learning_rate: number;
+  epoch: number;
+  gradient_norm?: number;
+  tokens_per_second?: number;
+  memory_usage?: number;
+  timestamp: string;
+}
+
+export interface ResourceMetric {
+  timestamp: string;
+  cpu_load: number;
+  memory_pressure: number;
+  gpu_utilization: number;
+  resources: {
+    gpu: {
+      allocated_mb: number;
+      total_mb: number;
+    };
+    memory: {
+      used_mb: number;
+      total_mb: number;
+    };
+  };
+}
+
+export interface TrainingAnalyticsResponse {
+  status: string;
+  task_id: string;
+  training_metrics: TrainingMetric[];
+  resource_metrics: ResourceMetric[];
+  total_metrics: number;
+}
+
+export interface TokenDistribution {
+  range: string;
+  count: number;
+  percentage: number;
+}
+
+export interface TemplateFormat {
+  name: string;
+  count: number;
+  percentage: number;
+  color: string;
+}
+
+export interface DatasetAnalyticsData {
+  total_samples: number;
+  token_distribution: TokenDistribution[];
+  length_statistics: {
+    mean: number;
+    median: number;
+    min: number;
+    max: number;
+    std_dev: number;
+  };
+  template_formats: TemplateFormat[];
+  quality_metrics: {
+    duplicate_ratio: number;
+    avg_response_length: number;
+    unique_instructions: number;
+  };
+  sample_examples: Array<{
+    instruction: string;
+    response: string;
+    token_count: number;
+    template_format: string;
+  }>;
+}
+
+export interface DatasetAnalyticsResponse {
+  status: string;
+  dataset_path: string;
+  analytics_data: DatasetAnalyticsData;
+}
+
+export interface ComparisonMetric {
+  session_id: string;
+  base_time_ms: number;
+  finetuned_time_ms: number;
+  base_response_length: number;
+  finetuned_response_length: number;
+  similarity_score: number;
+  timestamp: string;
+  user_message_length: number;
+}
+
+export interface ComparisonStats {
+  total_comparisons: number;
+  avg_similarity: number;
+  avg_base_time: number;
+  avg_finetuned_time: number;
+  performance_improvement: number;
+  model_pair_info: {
+    base_model: string;
+    finetuned_model: string;
+  };
+}
+
+export interface ComparisonAnalyticsResponse {
+  status: string;
+  comparison_data: ComparisonMetric[];
+  stats: ComparisonStats;
+  time_range_hours: number;
+}
+
+export interface SystemHealthData {
+  cpu: {
+    usage_percent: number;
+    load_average: number[];
+  };
+  memory: {
+    total_gb: number;
+    used_gb: number;
+    available_gb: number;
+    usage_percent: number;
+  };
+  gpu: {
+    device_count: number;
+    devices: Array<{
+      name: string;
+      memory_total_mb: number;
+      memory_used_mb: number;
+      utilization_percent: number;
+      temperature_c: number;
+    }>;
+  };
+  disk: {
+    total_gb: number;
+    used_gb: number;
+    available_gb: number;
+    usage_percent: number;
+  };
+  network: {
+    bytes_sent: number;
+    bytes_received: number;
+  };
+}
+
+export interface SystemHealthResponse {
+  status: string;
+  timestamp: string;
+  health_data: SystemHealthData;
+}
+
+export interface DashboardSummaryResponse {
+  status: string;
+  timestamp: string;
+  summary: {
+    active_trainings: number;
+    completed_trainings: number;
+    recent_comparisons: number;
+    system_status: 'healthy' | 'warning' | 'critical';
+    quick_stats: {
+      avg_training_loss: number;
+      avg_response_time: number;
+      model_performance_score: number;
+    };
+  };
+}
