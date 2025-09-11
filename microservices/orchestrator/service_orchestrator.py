@@ -15,10 +15,11 @@ import logging
 import uuid
 import os
 from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from enum import Enum
 from datetime import datetime, timedelta
 import aiohttp
+import uvicorn
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -134,7 +135,7 @@ class CircuitBreaker:
 class ServiceRegistry:
     """Service registry with automatic discovery and health monitoring"""
     
-    def __init__(self, consul_client: Optional[consul.aio.Consul] = None):
+    def __init__(self, consul_client: Optional[Any] = None):
         self.services: Dict[str, List[ServiceInstance]] = {}
         self.circuit_breakers: Dict[str, CircuitBreaker] = {}
         self.consul = consul_client
@@ -263,8 +264,8 @@ class LoadBalancer:
         
         if self.strategy == LoadBalancingStrategy.ROUND_ROBIN:
             return self._round_robin_selection(service_name, instances)
-        elif self.strategy == LoadBalancingStrategy.WEIGHTED_ROUND_ROBIN:
-            return self._weighted_round_robin_selection(service_name, instances)
+        elif self.strategy == LoadBalancingStrategy.WEIGHTED_RESPONSE_TIME:
+            return self._weighted_response_time_selection(instances)
         elif self.strategy == LoadBalancingStrategy.LEAST_CONNECTIONS:
             return self._least_connections_selection(instances)
         elif self.strategy == LoadBalancingStrategy.HEALTH_AWARE:
