@@ -11,7 +11,10 @@ import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from models.schemas import ComparisonRequest, ComparisonResponse, ChatMessage, SessionCreateRequest, SessionInfo
+from models.schemas import (
+    ComparisonRequest, ComparisonResponse, ChatMessage, SessionCreateRequest, SessionInfo,
+    EnhancedComparisonRequest, DualModelConfig, GenerationConfig
+)
 from models.entities import ChatSession, ModelPair
 from services.model_service import ModelService
 from services.chat_service import ChatService
@@ -574,6 +577,311 @@ class ComparisonService:
         except Exception as e:
             self.logger.error(f"Failed to calculate trending metrics: {e}")
             return {}
+    
+    # ============================
+    # Enhanced Configuration Methods
+    # ============================
+    
+    async def generate_enhanced_comparison(self, request: EnhancedComparisonRequest) -> ComparisonResponse:
+        """Generate comparison with full configuration support"""
+        start_time = time.time()
+        
+        try:
+            # Update metrics
+            self.metrics["total_comparisons"] += 1
+            
+            # Validate session exists
+            session_info = await self.chat_service.get_session_info(request.session_id)
+            
+            # Convert Pydantic messages to dict format for model service
+            messages = [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp or datetime.now().isoformat()
+                }
+                for msg in request.messages
+            ]
+            
+            # Add messages to chat session
+            for msg in request.messages:
+                await self.chat_service.add_message(request.session_id, msg)
+            
+            # Prepare generation parameters with configuration
+            generation_params = {}
+            debug_info = {}
+            
+            if request.config:
+                # Apply base model configuration
+                base_config = request.config.base_model.generation_config
+                finetuned_config = request.config.finetuned_model.generation_config
+                
+                generation_params = {
+                    "base_model_params": self._config_to_params(base_config),
+                    "finetuned_model_params": self._config_to_params(finetuned_config),
+                    "base_system_prompt": request.config.base_model.system_prompt,
+                    "finetuned_system_prompt": request.config.finetuned_model.system_prompt,
+                    "context_length": {
+                        "base": request.config.base_model.context_length,
+                        "finetuned": request.config.finetuned_model.context_length
+                    }
+                }
+                
+                if request.return_debug_info:
+                    debug_info = {
+                        "applied_config": request.config.dict(),
+                        "parameter_validation": await self._validate_generation_params(generation_params)
+                    }
+            
+            # Generate comparison responses with configuration
+            result = await self.model_service.generate_comparison_responses_with_config(
+                session_id=request.session_id,
+                messages=messages,
+                generation_params=generation_params,
+                use_agent_orchestrator=request.use_agent_orchestrator
+            )
+            
+            # Calculate generation time
+            generation_time = (time.time() - start_time) * 1000
+            
+            # Create response
+            comparison_response = ComparisonResponse(
+                base_response=result["base_response"],
+                finetuned_response=result["finetuned_response"],
+                generation_time_ms=result["generation_time_ms"],
+                model_info=result["model_info"],
+                cache_metrics=result.get("cache_metrics", {}),
+                session_id=request.session_id,
+                timestamp=datetime.now().isoformat()
+            )
+            
+            # Add debug info if requested
+            if request.return_debug_info:
+                comparison_response.debug_info = debug_info
+            
+            # Update metrics
+            self.metrics["successful_comparisons"] += 1
+            self.metrics["average_comparison_time_ms"] = (
+                (self.metrics["average_comparison_time_ms"] * (self.metrics["successful_comparisons"] - 1) + generation_time)
+                / self.metrics["successful_comparisons"]
+            )
+            
+            # Add assistant messages to session history
+            base_assistant_msg = ChatMessage(
+                role="assistant",
+                content=result["base_response"],
+                timestamp=datetime.now().isoformat()
+            )
+            finetuned_assistant_msg = ChatMessage(
+                role="assistant", 
+                content=result["finetuned_response"],
+                timestamp=datetime.now().isoformat()
+            )
+            
+            await self.chat_service.add_message(request.session_id, base_assistant_msg)
+            await self.chat_service.add_message(request.session_id, finetuned_assistant_msg)
+            
+            # Log comparison for research if enabled
+            try:
+                user_message = request.messages[-1].content if request.messages else ""
+                log_id = research_logger.log_enhanced_comparison(
+                    session_id=request.session_id,
+                    user_message=user_message,
+                    comparison_response=comparison_response,
+                    model_pair_info=result["model_info"],
+                    generation_config=request.config.dict() if request.config else {},
+                    debug_info=debug_info
+                )
+                self.logger.info(f"Logged enhanced comparison for research: {log_id}")
+            except Exception as log_error:
+                self.logger.warning(f"Failed to log enhanced comparison: {log_error}")
+            
+            return comparison_response
+            
+        except Exception as e:
+            self.metrics["failed_comparisons"] += 1
+            self.logger.error(f"Error generating enhanced comparison: {e}")
+            raise
+    
+    async def generate_enhanced_comparison_stream(self, request: EnhancedComparisonRequest):
+        """Stream enhanced comparison responses with configuration support"""
+        start_time = time.time()
+        
+        try:
+            # Update metrics
+            self.metrics["total_comparisons"] += 1
+            
+            # Validate session exists
+            session_info = await self.chat_service.get_session_info(request.session_id)
+            
+            # Convert Pydantic messages to dict format
+            messages = [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp or datetime.now().isoformat()
+                }
+                for msg in request.messages
+            ]
+            
+            # Add messages to chat session
+            for msg in request.messages:
+                await self.chat_service.add_message(request.session_id, msg)
+            
+            # Yield initial status
+            yield {
+                "type": "status",
+                "data": {
+                    "status": "starting", 
+                    "session_id": request.session_id,
+                    "config_applied": request.config is not None
+                }
+            }
+            
+            # Prepare generation parameters
+            generation_params = {}
+            if request.config:
+                base_config = request.config.base_model.generation_config
+                finetuned_config = request.config.finetuned_model.generation_config
+                
+                generation_params = {
+                    "base_model_params": self._config_to_params(base_config),
+                    "finetuned_model_params": self._config_to_params(finetuned_config),
+                    "base_system_prompt": request.config.base_model.system_prompt,
+                    "finetuned_system_prompt": request.config.finetuned_model.system_prompt
+                }
+                
+                # Yield configuration info
+                yield {
+                    "type": "config_info",
+                    "data": {
+                        "base_temperature": base_config.temperature,
+                        "finetuned_temperature": finetuned_config.temperature,
+                        "base_max_tokens": base_config.max_tokens,
+                        "finetuned_max_tokens": finetuned_config.max_tokens
+                    }
+                }
+            
+            # Yield generation progress
+            yield {
+                "type": "progress",
+                "data": {"phase": "generating", "models": ["base", "finetuned"]}
+            }
+            
+            # Generate comparison responses
+            result = await self.model_service.generate_comparison_responses_with_config(
+                session_id=request.session_id,
+                messages=messages,
+                generation_params=generation_params,
+                use_agent_orchestrator=request.use_agent_orchestrator
+            )
+            
+            # Stream base response
+            yield {
+                "type": "response",
+                "data": {
+                    "model_type": "base",
+                    "content": result["base_response"],
+                    "generation_time_ms": result["generation_time_ms"]["base"],
+                    "config_used": generation_params.get("base_model_params", {}) if request.config else None
+                }
+            }
+            
+            # Stream finetuned response
+            yield {
+                "type": "response",
+                "data": {
+                    "model_type": "finetuned",
+                    "content": result["finetuned_response"], 
+                    "generation_time_ms": result["generation_time_ms"]["finetuned"],
+                    "config_used": generation_params.get("finetuned_model_params", {}) if request.config else None
+                }
+            }
+            
+            # Create assistant messages
+            base_assistant_msg = ChatMessage(
+                role="assistant",
+                content=result["base_response"],
+                timestamp=datetime.now().isoformat()
+            )
+            finetuned_assistant_msg = ChatMessage(
+                role="assistant",
+                content=result["finetuned_response"], 
+                timestamp=datetime.now().isoformat()
+            )
+            
+            await self.chat_service.add_message(request.session_id, base_assistant_msg)
+            await self.chat_service.add_message(request.session_id, finetuned_assistant_msg)
+            
+            # Yield completion status
+            yield {
+                "type": "complete",
+                "data": {
+                    "session_id": request.session_id,
+                    "generation_time_ms": (time.time() - start_time) * 1000,
+                    "cache_metrics": result.get("cache_metrics", {}),
+                    "model_info": result["model_info"]
+                }
+            }
+            
+            self.metrics["successful_comparisons"] += 1
+            
+        except Exception as e:
+            self.metrics["failed_comparisons"] += 1
+            self.logger.error(f"Error in enhanced comparison stream: {e}")
+            yield {
+                "type": "error",
+                "data": {"error": str(e), "session_id": request.session_id}
+            }
+    
+    def _config_to_params(self, config: GenerationConfig) -> Dict[str, Any]:
+        """Convert GenerationConfig to model service parameters"""
+        return {
+            "temperature": config.temperature,
+            "top_p": config.top_p,
+            "top_k": config.top_k,
+            "max_tokens": config.max_tokens,
+            "presence_penalty": config.presence_penalty,
+            "frequency_penalty": config.frequency_penalty,
+            "repetition_penalty": config.repetition_penalty,
+            "do_sample": config.do_sample,
+            "early_stopping": config.early_stopping,
+            "seed": config.seed,
+            "pad_token_id": config.pad_token_id,
+            "eos_token_id": config.eos_token_id
+        }
+    
+    async def _validate_generation_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate generation parameters and return validation results"""
+        validation_results = {
+            "base_model": {"valid": True, "warnings": [], "errors": []},
+            "finetuned_model": {"valid": True, "warnings": [], "errors": []}
+        }
+        
+        for model_type in ["base_model_params", "finetuned_model_params"]:
+            if model_type in params:
+                model_params = params[model_type]
+                model_key = "base_model" if "base" in model_type else "finetuned_model"
+                
+                # Validate temperature
+                if model_params.get("temperature", 0.7) > 1.5:
+                    validation_results[model_key]["warnings"].append(
+                        f"High temperature ({model_params['temperature']}) may produce unpredictable results"
+                    )
+                
+                # Validate max_tokens
+                if model_params.get("max_tokens", 1024) > 2048:
+                    validation_results[model_key]["warnings"].append(
+                        f"High max_tokens ({model_params['max_tokens']}) may impact performance"
+                    )
+                
+                # Check for invalid combinations
+                if not model_params.get("do_sample", True) and model_params.get("temperature", 0.7) > 1.0:
+                    validation_results[model_key]["warnings"].append(
+                        "High temperature with do_sample=False may not have expected effect"
+                    )
+        
+        return validation_results
 
 
 # Note: Global service instance should be created with proper dependencies

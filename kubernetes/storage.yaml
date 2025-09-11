@@ -1,0 +1,247 @@
+# Persistent Volume Claims for LLMForge microservices
+
+---
+# Training Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-data-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-training
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Training Models PVC (for base models and fine-tuned outputs)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-models-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-training
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 500Gi
+
+---
+# Training Logs PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: training-logs-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-training
+    component: logs
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Model Cache PVC (shared across services)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-cache-pvc
+  namespace: llmforge
+  labels:
+    component: cache
+spec:
+  accessModes:
+  - ReadWriteMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 200Gi
+
+---
+# Comparison Service Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: comparison-data-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-chat-comparison
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Data Generation PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: generation-data-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-data-generation
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Visualization Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: visualization-data-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-visualization
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+# Prometheus Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data-pvc
+  namespace: llmforge
+  labels:
+    app: prometheus
+    component: monitoring
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+# Grafana Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data-pvc
+  namespace: llmforge
+  labels:
+    app: grafana
+    component: monitoring
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+# Redis Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+  namespace: llmforge
+  labels:
+    app: redis
+    component: cache
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+# Storage Classes
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: kubernetes.io/gce-pd  # Change based on your cloud provider
+parameters:
+  type: pd-ssd
+  replication-type: regional-pd
+  zones: us-central1-b,us-central1-c  # Adjust zones as needed
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# Standard storage class for logs and less critical data
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: standard
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: kubernetes.io/gce-pd  # Change based on your cloud provider
+parameters:
+  type: pd-standard
+  replication-type: regional-pd
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+
+---
+# Shared model storage for read-only base models
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-model-storage-pvc
+  namespace: llmforge
+  labels:
+    component: shared-storage
+spec:
+  accessModes:
+  - ReadOnlyMany
+  storageClassName: fast-ssd
+  resources:
+    requests:
+      storage: 1Ti
+
+---
+# Backup storage for critical data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage-pvc
+  namespace: llmforge
+  labels:
+    component: backup
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 2Ti

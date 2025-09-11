@@ -17,11 +17,13 @@ from controllers.training_controller import training_controller
 from controllers.chat_controller import chat_controller
 from controllers.config_controller import config_controller
 from controllers.visualization_controller import VisualizationController
+from controllers.configuration_controller import ConfigurationController
 
 # Import schemas for type annotations
 from models.schemas import (
     SelectModelRequest, PrepareDataRequest, FineTuneRequest,
-    ComparisonRequest, SessionCreateRequest
+    ComparisonRequest, SessionCreateRequest, ModelConfigRequest,
+    ConfigPresetRequest, DualModelConfig, ConfigPreset
 )
 
 # Import services
@@ -125,6 +127,18 @@ except Exception as e:
     data_generation_service = None
     data_generation_controller = None
     DATA_GENERATION_AVAILABLE = False
+
+# Initialize configuration controller
+try:
+    configuration_controller = ConfigurationController()
+    print("[OK] ConfigurationController initialized")
+    CONFIGURATION_AVAILABLE = True
+except Exception as e:
+    print(f"[ERROR] Error initializing ConfigurationController: {e}")
+    import traceback
+    traceback.print_exc()
+    configuration_controller = None
+    CONFIGURATION_AVAILABLE = False
 
 # Initialize controllers with services
 model_controller.model_service = model_service
@@ -682,6 +696,75 @@ async def get_active_generations():
     if not DATA_GENERATION_AVAILABLE:
         raise HTTPException(status_code=503, detail="Data generation service not available")
     return await data_generation_controller.get_active_generations()
+
+# =====================================
+# CONFIGURATION ENDPOINTS
+# =====================================
+
+@app.get("/chat/sessions/{session_id}/config")
+async def get_session_config(session_id: str):
+    """Get configuration for a specific chat session"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.get_session_config(session_id)
+
+@app.post("/chat/sessions/{session_id}/config")
+async def update_session_config(session_id: str, config: DualModelConfig):
+    """Update configuration for a specific chat session"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    
+    request = ModelConfigRequest(session_id=session_id, config=config)
+    return await configuration_controller.update_session_config(request)
+
+@app.post("/chat/sessions/{session_id}/config/validate")
+async def validate_session_config(session_id: str, config: DualModelConfig):
+    """Validate configuration without applying it"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.validate_config(config)
+
+@app.get("/chat/models/{model_id}/capabilities")
+async def get_model_capabilities(model_id: str):
+    """Get capabilities and constraints for a specific model"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.get_model_capabilities(model_id)
+
+@app.post("/chat/config/presets")
+async def create_config_preset(preset: ConfigPresetRequest):
+    """Create a new configuration preset"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.save_config_preset(preset)
+
+@app.get("/chat/config/presets")
+async def list_config_presets(category: str = None):
+    """List available configuration presets"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.list_config_presets(category)
+
+@app.get("/chat/config/presets/{preset_id}")
+async def get_config_preset(preset_id: str):
+    """Get a specific configuration preset"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.get_config_preset(preset_id)
+
+@app.delete("/chat/config/presets/{preset_id}")
+async def delete_config_preset(preset_id: str):
+    """Delete a configuration preset"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.delete_config_preset(preset_id)
+
+@app.post("/chat/sessions/{session_id}/config/apply-preset/{preset_id}")
+async def apply_preset_to_session(session_id: str, preset_id: str):
+    """Apply a configuration preset to a session"""
+    if not CONFIGURATION_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Configuration service not available")
+    return await configuration_controller.apply_preset_to_session(session_id, preset_id)
 
 # =====================================
 # ERROR HANDLERS

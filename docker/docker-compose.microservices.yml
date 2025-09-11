@@ -1,0 +1,403 @@
+version: '3.8'
+
+services:
+  # Service Orchestrator
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: docker/orchestrator/Dockerfile
+    container_name: llmforge-orchestrator
+    ports:
+      - "8080:8080"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8080
+      - CONSUL_HOST=${CONSUL_HOST:-consul}
+      - CONSUL_PORT=${CONSUL_PORT:-8500}
+    volumes:
+      - orchestrator_logs:/app/logs
+    networks:
+      - llmforge-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: docker/api_gateway/Dockerfile
+    container_name: llmforge-api-gateway
+    ports:
+      - "${API_PORT:-8000}:8000"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8000
+      - ORCHESTRATOR_URL=http://orchestrator:8080
+    volumes:
+      - gateway_logs:/app/logs
+    networks:
+      - llmforge-network
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Training Service
+  training-service:
+    build:
+      context: ..
+      dockerfile: docker/training_service/Dockerfile
+    container_name: llmforge-training
+    ports:
+      - "8001:8001"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8001
+      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - training_data:/app/data
+      - training_models:/app/models
+      - training_logs:/app/logs
+      - training_cache:/home/llmforge/.cache
+    networks:
+      - llmforge-network
+    depends_on:
+      - orchestrator
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "16"
+          memory: 24G
+        reservations:
+          cpus: "8"
+          memory: 12G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: 8g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Chat Comparison Service  
+  chat-comparison-service:
+    build:
+      context: ..
+      dockerfile: docker/chat_comparison_service/Dockerfile
+    container_name: llmforge-chat-comparison
+    ports:
+      - "8002:8002"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8002
+      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - comparison_data:/app/data
+      - comparison_models:/app/models
+      - comparison_logs:/app/logs
+      - comparison_cache:/home/llmforge/.cache
+    networks:
+      - llmforge-network
+    depends_on:
+      - orchestrator
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 16G
+        reservations:
+          cpus: "4"
+          memory: 8G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Data Generation Service
+  data-generation-service:
+    build:
+      context: ..
+      dockerfile: docker/data_generation_service/Dockerfile
+    container_name: llmforge-data-generation
+    ports:
+      - "8003:8003"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8003
+      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+    volumes:
+      - generation_data:/app/data
+      - generation_templates:/app/templates
+      - generation_logs:/app/logs
+    networks:
+      - llmforge-network
+    depends_on:
+      - orchestrator
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+        reservations:
+          cpus: "2"
+          memory: 4G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Visualization Service
+  visualization-service:
+    build:
+      context: ..
+      dockerfile: docker/visualization_service/Dockerfile
+    container_name: llmforge-visualization
+    ports:
+      - "8004:8004"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8004
+      - ORCHESTRATOR_URL=http://orchestrator:8080
+    volumes:
+      - visualization_data:/app/data
+      - visualization_logs:/app/logs
+    networks:
+      - llmforge-network
+    depends_on:
+      - orchestrator
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "1"
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Model Management Service
+  model-management-service:
+    build:
+      context: ..
+      dockerfile: docker/model_management_service/Dockerfile
+    container_name: llmforge-model-management
+    ports:
+      - "8005:8005"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8005
+      - ORCHESTRATOR_URL=http://orchestrator:8080
+      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN}
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - model_storage:/app/models
+      - model_cache:/home/llmforge/.cache
+      - model_logs:/app/logs
+    networks:
+      - llmforge-network
+    depends_on:
+      - orchestrator
+      - redis
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 12G
+        reservations:
+          cpus: "2"
+          memory: 6G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: 2g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: llmforge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+    networks:
+      - llmforge-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: llmforge-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - llmforge-network
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+      - training-service
+      - chat-comparison-service
+      - data-generation-service
+      - visualization-service
+      - model-management-service
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: llmforge-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - llmforge-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  # nginx Load Balancer (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: llmforge-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    networks:
+      - llmforge-network
+    restart: unless-stopped
+    depends_on:
+      - api-gateway
+
+volumes:
+  # Orchestrator volumes
+  orchestrator_logs:
+    driver: local
+
+  # Gateway volumes  
+  gateway_logs:
+    driver: local
+
+  # Training service volumes
+  training_data:
+    driver: local
+  training_models:
+    driver: local
+  training_logs:
+    driver: local
+  training_cache:
+    driver: local
+
+  # Comparison service volumes
+  comparison_data:
+    driver: local
+  comparison_models:
+    driver: local
+  comparison_logs:
+    driver: local
+  comparison_cache:
+    driver: local
+
+  # Data generation volumes
+  generation_data:
+    driver: local
+  generation_templates:
+    driver: local
+  generation_logs:
+    driver: local
+
+  # Visualization volumes
+  visualization_data:
+    driver: local
+  visualization_logs:
+    driver: local
+
+  # Model management volumes
+  model_storage:
+    driver: local
+  model_cache:
+    driver: local
+  model_logs:
+    driver: local
+
+  # Infrastructure volumes
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  llmforge-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

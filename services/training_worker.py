@@ -44,7 +44,7 @@ def setup_worker_environment():
             pass
     
     # Optimize memory settings for multiple concurrent processes
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256,expandable_segments:True"
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:1024,expandable_segments:True"
     os.environ["OMP_NUM_THREADS"] = "1"  # Reduce CPU thread contention
     os.environ["MKL_NUM_THREADS"] = "1"  # Reduce Intel MKL thread contention
 

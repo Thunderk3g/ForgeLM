@@ -1,0 +1,165 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmforge-orchestrator
+  namespace: llmforge
+  labels:
+    app: llmforge-orchestrator
+    component: orchestrator
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/part-of: llmforge-platform
+spec:
+  replicas: 2  # Run multiple instances for HA
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: llmforge-orchestrator
+  template:
+    metadata:
+      labels:
+        app: llmforge-orchestrator
+        component: orchestrator
+        app.kubernetes.io/name: orchestrator
+        app.kubernetes.io/part-of: llmforge-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: orchestrator
+        image: llmforge/orchestrator:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: SERVICE_HOST
+          value: "0.0.0.0"
+        - name: SERVICE_PORT
+          value: "8080"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: llmforge-secrets
+              key: redis-url
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: LOG_LEVEL
+        - name: PROMETHEUS_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: PROMETHEUS_ENABLED
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 6
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - llmforge-orchestrator
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmforge-orchestrator
+  namespace: llmforge
+  labels:
+    app: llmforge-orchestrator
+    component: orchestrator
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app: llmforge-orchestrator
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: llmforge-orchestrator-hpa
+  namespace: llmforge
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: llmforge-orchestrator
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: llmforge-orchestrator-pdb
+  namespace: llmforge
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: llmforge-orchestrator

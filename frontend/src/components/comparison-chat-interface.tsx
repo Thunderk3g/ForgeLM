@@ -169,7 +169,7 @@ export const ComparisonChatInterface: React.FC = () => {
         session_id: activeSessionId,
         messages: [...messages, userMessage],
         generation_params: {
-          max_new_tokens: 256,
+          max_new_tokens: 512,
           temperature: 0.7,
           do_sample: true,
           top_p: 0.9,

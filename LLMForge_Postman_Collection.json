@@ -169,7 +169,7 @@
           ],
           "body": {
             "mode": "raw",
-            "raw": "{\n  \"input_file\": \"/app/data/input/dataset.csv\",\n  \"output_dir\": \"/app/data/prepared\",\n  \"task\": \"supervised\",\n  \"augment\": true,\n  \"balance\": true,\n  \"test_size\": 0.2,\n  \"max_length\": 256\n}"
+            "raw": "{\n  \"input_file\": \"/app/data/input/dataset.csv\",\n  \"output_dir\": \"/app/data/prepared\",\n  \"task\": \"supervised\",\n  \"augment\": true,\n  \"balance\": true,\n  \"test_size\": 0.2,\n  \"max_length\": 1024\n}"
           },
           "url": {
             "raw": "{{baseUrl}}/prepare-data",

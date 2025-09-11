@@ -1,0 +1,307 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmforge-config
+  namespace: llmforge
+data:
+  # Service Configuration
+  ORCHESTRATOR_URL: "http://llmforge-orchestrator:8080"
+  
+  # API Gateway Config
+  API_HOST: "0.0.0.0"
+  API_PORT: "8000"
+  
+  # Training Service Config
+  BASE_MODEL_DIR: "/app/models/base"
+  DATASET_DIR: "/app/data/prepared"
+  OUTPUT_DIR: "/app/models/finetuned"
+  CUDA_VISIBLE_DEVICES: "0"
+  TOKENIZERS_PARALLELISM: "false"
+  CUDA_LAUNCH_BLOCKING: "0"
+  
+  # Redis Config
+  REDIS_HOST: "llmforge-redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Monitoring Config
+  PROMETHEUS_HOST: "llmforge-prometheus"
+  PROMETHEUS_PORT: "9090"
+  
+  # Logging Config
+  LOG_LEVEL: "INFO"
+  LOG_FORMAT: "json"
+  
+  # Performance Config
+  MAX_CONCURRENT_JOBS: "3"
+  MEMORY_OPTIMIZATION: "true"
+  BACKGROUND_OPTIMIZATION: "true"
+  
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: training-config
+  namespace: llmforge
+data:
+  # Training specific configuration
+  MAX_TRAINING_JOBS: "2"
+  DEFAULT_EPOCHS: "1"
+  DEFAULT_BATCH_SIZE: "4"
+  DEFAULT_LEARNING_RATE: "0.0002"
+  GRADIENT_ACCUMULATION_STEPS: "4"
+  MAX_SEQ_LENGTH: "2048"
+  
+  # GPU Configuration
+  GPU_MEMORY_FRACTION: "0.9"
+  MIXED_PRECISION: "true"
+  
+  # Unsloth Configuration
+  UNSLOTH_ENABLED: "true"
+  UNSLOTH_OPTIMIZATION_LEVEL: "high"
+  
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: llmforge
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    
+    rule_files:
+      - "llmforge_rules.yml"
+    
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              - alertmanager:9093
+    
+    scrape_configs:
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      
+      - job_name: 'orchestrator'
+        static_configs:
+          - targets: ['llmforge-orchestrator:8080']
+        metrics_path: '/metrics'
+        scrape_interval: 5s
+      
+      - job_name: 'api-gateway'
+        static_configs:
+          - targets: ['llmforge-api-gateway:8000']
+        metrics_path: '/metrics'
+        scrape_interval: 5s
+      
+      - job_name: 'training-service'
+        static_configs:
+          - targets: ['llmforge-training:8001']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+      
+      - job_name: 'chat-comparison-service'
+        static_configs:
+          - targets: ['llmforge-chat-comparison:8002']
+        metrics_path: '/metrics'
+        scrape_interval: 5s
+      
+      - job_name: 'data-generation-service'
+        static_configs:
+          - targets: ['llmforge-data-generation:8003']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+      
+      - job_name: 'visualization-service'
+        static_configs:
+          - targets: ['llmforge-visualization:8004']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+      
+      - job_name: 'model-management-service'
+        static_configs:
+          - targets: ['llmforge-model-management:8005']
+        metrics_path: '/metrics'
+        scrape_interval: 10s
+      
+      - job_name: 'redis'
+        static_configs:
+          - targets: ['llmforge-redis-exporter:9121']
+      
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+          action: keep
+          regex: default;kubernetes;https
+      
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+        - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics
+      
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: kubernetes_namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+
+  llmforge_rules.yml: |
+    groups:
+    - name: llmforge_alerts
+      rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been down for more than 30 seconds."
+      
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is above 90% for more than 2 minutes."
+      
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 90
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is above 90% for more than 2 minutes."
+      
+      - alert: TrainingJobFailed
+        expr: increase(training_errors_total[5m]) > 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Training job failed"
+          description: "Training service reported {{ $value }} errors in the last 5 minutes."
+      
+      - alert: GPUMemoryHigh
+        expr: gpu_memory_usage_bytes / gpu_memory_total_bytes > 0.95
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU memory usage is high"
+          description: "GPU memory usage is above 95% for more than 1 minute."
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: llmforge
+data:
+  llmforge-overview.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "LLMForge Overview",
+        "tags": ["llmforge"],
+        "style": "dark",
+        "timezone": "browser",
+        "panels": [
+          {
+            "title": "Service Status",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=~\".*llmforge.*\"}",
+                "legendFormat": "{{ job }}"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+          },
+          {
+            "title": "Request Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(gateway_requests_total[5m])",
+                "legendFormat": "Requests/sec"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+          },
+          {
+            "title": "Training Jobs",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "active_training_jobs",
+                "legendFormat": "Active Jobs"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+          },
+          {
+            "title": "GPU Utilization",
+            "type": "gauge",
+            "targets": [
+              {
+                "expr": "gpu_utilization_percent",
+                "legendFormat": "GPU %"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "10s"
+      }
+    }

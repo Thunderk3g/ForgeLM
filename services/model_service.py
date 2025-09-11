@@ -745,7 +745,6 @@ class ModelService:
                 device_map="auto" if torch.cuda.is_available() else "cpu",
                 dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
                 load_in_8bit=True if torch.cuda.is_available() else False,
-                llm_int8_enable_fp32_cpu_offload=True,
                 low_cpu_mem_usage=True
             )
             
@@ -868,7 +867,7 @@ class ModelService:
         # Default generation parameters
         if generation_params is None:
             generation_params = {
-                "max_new_tokens": 256,
+                "max_new_tokens": 1024,
                 "temperature": 0.7,
                 "do_sample": True,
                 "top_p": 0.9
@@ -1090,7 +1089,6 @@ class ModelService:
                             self.logger.warning(f"Limited GPU memory ({gpu_free_gb:.1f}GB free, {gpu_allocated_gb:.1f}GB allocated), enabling CPU offload")
                             # Note: Unsloth handles device mapping automatically, but we can add fallback
                             model_kwargs['device_map'] = "auto"
-                            model_kwargs['llm_int8_enable_fp32_cpu_offload'] = True
                             
                             # Try to clear some GPU memory first
                             await self._emergency_memory_cleanup()
@@ -1135,7 +1133,6 @@ class ModelService:
                         if gpu_free_gb < 4.0:  # Lower threshold for adapter
                             self.logger.warning(f"Limited GPU memory ({gpu_free_gb:.1f}GB free), enabling CPU offload for adapter")
                             adapter_kwargs['device_map'] = "auto"
-                            adapter_kwargs['llm_int8_enable_fp32_cpu_offload'] = True
                         
                         finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(**adapter_kwargs)
                         
@@ -1657,6 +1654,42 @@ class ModelService:
         except Exception as e:
             self.logger.error(f"Error during emergency cleanup: {e}")
     
+    def _generate_mock_base_response(self, user_message: str) -> str:
+        """Generate a mock response for the base model"""
+        mock_responses = {
+            "hello": "Hello! I'm the base model. How can I help you today?",
+            "code": "Here's a basic code example:\n\n```python\ndef hello_world():\n    print('Hello, World!')\n```\n\nThis is a simple function that demonstrates basic Python syntax.",
+            "explain": "Let me explain this concept step by step:\n\n1. First, we need to understand the fundamentals\n2. Then we can build upon that knowledge\n3. Finally, we apply it to practical examples\n\nThis is how the base model approaches explanations.",
+            "help": "I'm here to help! As the base model, I provide general assistance with various topics. What specific topic would you like help with?",
+            "default": "I'm the base model responding to your message. I provide general, helpful responses based on my training data."
+        }
+        
+        # Simple keyword matching for demonstration
+        user_lower = user_message.lower()
+        for keyword, response in mock_responses.items():
+            if keyword in user_lower:
+                return response
+        
+        return f"Base Model Response: I understand you said '{user_message[:50]}...' Let me help you with that. As the base model, I provide general information and assistance."
+
+    def _generate_mock_finetuned_response(self, user_message: str) -> str:
+        """Generate a mock response for the fine-tuned model"""
+        mock_responses = {
+            "hello": "Greetings! I'm the fine-tuned model, specialized for enhanced performance. How may I assist you with advanced capabilities?",
+            "code": "Here's an optimized code solution:\n\n```python\ndef advanced_hello_world(name: str = \"World\") -> None:\n    \"\"\"\n    Enhanced hello world function with type hints and documentation.\n    \"\"\"\n    greeting = f\"Hello, {name}!\"\n    print(greeting)\n    return greeting\n```\n\nThe fine-tuned version includes better practices and documentation.",
+            "explain": "I'll provide a comprehensive explanation with enhanced detail:\n\n🔍 **Analysis**: Let me break this down systematically\n📊 **Key Points**: \n   • Advanced perspective on the topic\n   • Nuanced understanding from fine-tuning\n   • Specialized knowledge application\n\n💡 **Insight**: The fine-tuned model offers deeper analysis and specialized knowledge.",
+            "help": "Absolutely! As a fine-tuned model, I offer specialized assistance with enhanced capabilities. I can provide more detailed, context-aware responses. What specific challenge can I help you solve?",
+            "default": "Fine-tuned Model Response: Thank you for your message. As a specialized model, I can provide enhanced, detailed responses with improved understanding and contextual awareness."
+        }
+        
+        # Simple keyword matching for demonstration
+        user_lower = user_message.lower()
+        for keyword, response in mock_responses.items():
+            if keyword in user_lower:
+                return response
+        
+        return f"Fine-tuned Model Response: I've analyzed your message '{user_message[:50]}...' and can provide specialized insights. My fine-tuning allows me to offer more targeted and sophisticated assistance."
+
     def _get_system_prompt_for_session(self, session_id: str, custom_system_prompt: str = None, 
                                      use_agent_orchestrator: bool = False, user_message: str = "") -> str:
         """Get the appropriate system prompt for a session"""
