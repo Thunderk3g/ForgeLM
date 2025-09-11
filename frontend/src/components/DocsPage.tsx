@@ -115,6 +115,10 @@ export default function DocsPage({ onNavigate }: DocsPageProps) {
                 <Workflow className="mr-2 h-4 w-4" />
                 Workflows
               </Button>
+              <Button variant="ghost" onClick={() => onNavigate("analytics")} className="text-sm">
+                <BarChart3 className="mr-2 h-4 w-4" />
+                Analytics
+              </Button>
               <Button variant="default" className="text-sm">
                 <BookOpen className="mr-2 h-4 w-4" />
                 Documentation

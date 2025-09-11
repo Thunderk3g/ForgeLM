@@ -26,7 +26,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 
 interface WorkflowPageProps {
-  onNavigate: (page: "home" | "training" | "workflow" | "docs") => void
+  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "analytics") => void
 }
 
 const workflowSteps = [
@@ -159,6 +159,10 @@ export default function WorkflowPage({ onNavigate }: WorkflowPageProps) {
               <Button variant="default" className="text-sm">
                 <Workflow className="mr-2 h-4 w-4" />
                 Workflows
+              </Button>
+              <Button variant="ghost" onClick={() => onNavigate("analytics")} className="text-sm">
+                <BarChart3 className="mr-2 h-4 w-4" />
+                Analytics
               </Button>
               <Button variant="ghost" onClick={() => onNavigate("docs")} className="text-sm">
                 <BookOpen className="mr-2 h-4 w-4" />
