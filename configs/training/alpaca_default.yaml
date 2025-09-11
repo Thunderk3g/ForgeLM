@@ -1,6 +1,6 @@
 author: ''
 config_name: alpaca_default
-created_at: '2025-09-11T06:57:08.103066'
+created_at: '2025-09-11T17:14:53.070199'
 dataset:
   format: alpaca
   max_samples: null
