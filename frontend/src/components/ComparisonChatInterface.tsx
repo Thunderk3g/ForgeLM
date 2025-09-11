@@ -5,9 +5,23 @@ import {
   RotateCcw,
   Send,
   Settings,
+  Sliders,
   Trash2,
 } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { Separator } from "@/components/ui/separator";
 
 interface ModelPair {
   pair_id: string;
@@ -80,6 +94,17 @@ export const ComparisonChatInterface: React.FC = () => {
   const [useAgentOrchestrator, setUseAgentOrchestrator] = useState(false);
   const [availableAgents, setAvailableAgents] = useState<any[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
+
+  // Generation parameters state
+  const [generationParams, setGenerationParams] = useState({
+    max_new_tokens: 256,
+    temperature: 0.7,
+    do_sample: true,
+    top_p: 0.9,
+    top_k: 50,
+    repetition_penalty: 1.1,
+  });
+  const [showParametersSheet, setShowParametersSheet] = useState(false);
 
   // Refs for auto-scrolling
   const baseMessagesRef = useRef<HTMLDivElement>(null);
@@ -239,12 +264,7 @@ export const ComparisonChatInterface: React.FC = () => {
         body: JSON.stringify({
           session_id: activeSessionId,
           messages: [...messages, userMessage],
-          generation_params: {
-            max_new_tokens: 256,
-            temperature: 0.7,
-            do_sample: true,
-            top_p: 0.9,
-          },
+          generation_params: generationParams,
           custom_system_prompt: customSystemPrompt || undefined,
           use_agent_orchestrator: useAgentOrchestrator,
         }),
@@ -443,6 +463,16 @@ export const ComparisonChatInterface: React.FC = () => {
                   >
                     <Settings className="w-4 h-4" />
                   </button>
+                  <Sheet open={showParametersSheet} onOpenChange={setShowParametersSheet}>
+                    <SheetTrigger asChild>
+                      <button
+                        className="p-2 hover:bg-muted rounded-md"
+                        title="Generation Parameters"
+                      >
+                        <Sliders className="w-4 h-4" />
+                      </button>
+                    </SheetTrigger>
+                  </Sheet>
                 </div>
               </div>
             </div>
@@ -868,6 +898,276 @@ export const ComparisonChatInterface: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Parameters Sheet */}
+      <Sheet open={showParametersSheet} onOpenChange={setShowParametersSheet}>
+        <SheetContent side="right" className="w-80 sm:w-96">
+          <SheetHeader>
+            <SheetTitle>Generation Parameters</SheetTitle>
+          </SheetHeader>
+          
+          <div className="space-y-6 mt-6">
+            {/* Max New Tokens */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="max-tokens">Max New Tokens</Label>
+                <Input
+                  id="max-tokens"
+                  type="number"
+                  value={generationParams.max_new_tokens}
+                  onChange={(e) => setGenerationParams(prev => ({
+                    ...prev,
+                    max_new_tokens: parseInt(e.target.value) || 256
+                  }))}
+                  className="w-20 text-right"
+                  min="1"
+                  max="4096"
+                />
+              </div>
+              <Slider
+                value={[generationParams.max_new_tokens]}
+                onValueChange={(value) => setGenerationParams(prev => ({
+                  ...prev,
+                  max_new_tokens: value[0]
+                }))}
+                min={1}
+                max={4096}
+                step={1}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                Maximum number of tokens to generate in the response.
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Temperature */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="temperature">Temperature</Label>
+                <Input
+                  id="temperature"
+                  type="number"
+                  value={generationParams.temperature}
+                  onChange={(e) => setGenerationParams(prev => ({
+                    ...prev,
+                    temperature: parseFloat(e.target.value) || 0.7
+                  }))}
+                  className="w-20 text-right"
+                  min="0"
+                  max="2"
+                  step="0.01"
+                />
+              </div>
+              <Slider
+                value={[generationParams.temperature]}
+                onValueChange={(value) => setGenerationParams(prev => ({
+                  ...prev,
+                  temperature: value[0]
+                }))}
+                min={0}
+                max={2}
+                step={0.01}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                Controls randomness. Higher values make output more creative, lower values more focused.
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Top P */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="top-p">Top P</Label>
+                <Input
+                  id="top-p"
+                  type="number"
+                  value={generationParams.top_p}
+                  onChange={(e) => setGenerationParams(prev => ({
+                    ...prev,
+                    top_p: parseFloat(e.target.value) || 0.9
+                  }))}
+                  className="w-20 text-right"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                />
+              </div>
+              <Slider
+                value={[generationParams.top_p]}
+                onValueChange={(value) => setGenerationParams(prev => ({
+                  ...prev,
+                  top_p: value[0]
+                }))}
+                min={0}
+                max={1}
+                step={0.01}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                Nucleus sampling. Considers only tokens with cumulative probability up to this value.
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Top K */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="top-k">Top K</Label>
+                <Input
+                  id="top-k"
+                  type="number"
+                  value={generationParams.top_k}
+                  onChange={(e) => setGenerationParams(prev => ({
+                    ...prev,
+                    top_k: parseInt(e.target.value) || 50
+                  }))}
+                  className="w-20 text-right"
+                  min="1"
+                  max="200"
+                />
+              </div>
+              <Slider
+                value={[generationParams.top_k]}
+                onValueChange={(value) => setGenerationParams(prev => ({
+                  ...prev,
+                  top_k: value[0]
+                }))}
+                min={1}
+                max={200}
+                step={1}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                Considers only the top K most likely tokens at each step.
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Repetition Penalty */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="rep-penalty">Repetition Penalty</Label>
+                <Input
+                  id="rep-penalty"
+                  type="number"
+                  value={generationParams.repetition_penalty}
+                  onChange={(e) => setGenerationParams(prev => ({
+                    ...prev,
+                    repetition_penalty: parseFloat(e.target.value) || 1.1
+                  }))}
+                  className="w-20 text-right"
+                  min="0.5"
+                  max="2"
+                  step="0.01"
+                />
+              </div>
+              <Slider
+                value={[generationParams.repetition_penalty]}
+                onValueChange={(value) => setGenerationParams(prev => ({
+                  ...prev,
+                  repetition_penalty: value[0]
+                }))}
+                min={0.5}
+                max={2}
+                step={0.01}
+                className="w-full"
+              />
+              <p className="text-xs text-muted-foreground">
+                Penalty for repeating tokens. Higher values reduce repetition.
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Do Sample Toggle */}
+            <div className="flex items-center justify-between">
+              <Label htmlFor="do-sample" className="text-sm">
+                Enable Sampling
+              </Label>
+              <Switch
+                id="do-sample"
+                checked={generationParams.do_sample}
+                onCheckedChange={(checked) => setGenerationParams(prev => ({
+                  ...prev,
+                  do_sample: checked
+                }))}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              When enabled, uses sampling instead of greedy decoding. Disable for more deterministic output.
+            </p>
+
+            {/* Preset Buttons */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Quick Presets</Label>
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGenerationParams({
+                    max_new_tokens: 256,
+                    temperature: 0.1,
+                    do_sample: true,
+                    top_p: 0.9,
+                    top_k: 50,
+                    repetition_penalty: 1.1,
+                  })}
+                >
+                  Conservative
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGenerationParams({
+                    max_new_tokens: 512,
+                    temperature: 0.7,
+                    do_sample: true,
+                    top_p: 0.9,
+                    top_k: 50,
+                    repetition_penalty: 1.1,
+                  })}
+                >
+                  Balanced
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGenerationParams({
+                    max_new_tokens: 512,
+                    temperature: 1.2,
+                    do_sample: true,
+                    top_p: 0.8,
+                    top_k: 40,
+                    repetition_penalty: 1.15,
+                  })}
+                >
+                  Creative
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setGenerationParams({
+                    max_new_tokens: 256,
+                    temperature: 0.0,
+                    do_sample: false,
+                    top_p: 1.0,
+                    top_k: 1,
+                    repetition_penalty: 1.0,
+                  })}
+                >
+                  Deterministic
+                </Button>
+              </div>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 };
