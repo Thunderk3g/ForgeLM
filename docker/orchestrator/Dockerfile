@@ -1,7 +1,7 @@
 # LLMForge Orchestrator Service
 # Multi-stage build for optimal image size and security
 
-FROM python:3.11-slim as builder
+FROM python:3.11-slim AS builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \

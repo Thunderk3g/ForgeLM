@@ -1,7 +1,7 @@
 # LLMForge Training Service
 # GPU-optimized multi-stage build with Unsloth support
 
-FROM nvidia/cuda:12.1-devel-ubuntu22.04 as builder
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS builder
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -49,7 +49,7 @@ COPY microservices/training_service/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Production stage
-FROM nvidia/cuda:12.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
