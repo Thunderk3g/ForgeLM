@@ -91,48 +91,48 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
   return (
     <div className="space-y-6">
       {/* Header with dataset info */}
-      <div className="bg-white rounded-lg shadow border p-6">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm p-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <Database className="h-8 w-8 text-blue-500" />
+            <Database className="h-8 w-8 text-primary" />
             <div>
-              <h2 className="text-xl font-bold text-gray-900">Dataset Analytics</h2>
-              <p className="text-sm text-gray-600 mt-1">Path: {datasetPath}</p>
+              <h2 className="text-xl font-bold tracking-tight">Dataset Analytics</h2>
+              <p className="text-sm text-muted-foreground mt-1">Path: {datasetPath}</p>
             </div>
           </div>
           <button
             onClick={onRefresh}
-            className="btn-secondary flex items-center space-x-2"
+            className="inline-flex items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 text-sm font-medium shadow transition-colors"
           >
-            <TrendingUp className="h-4 w-4" />
-            <span>Refresh</span>
+            <TrendingUp className="h-4 w-4 mr-2" />
+            Refresh
           </button>
         </div>
 
         {/* Quick stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm font-medium text-gray-600">Total Samples</p>
-            <p className="text-2xl font-bold text-gray-900">{total_samples.toLocaleString()}</p>
+          <div className="bg-muted/50 rounded-lg p-4">
+            <p className="text-sm font-medium text-muted-foreground">Total Samples</p>
+            <p className="text-2xl font-bold">{total_samples.toLocaleString()}</p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm font-medium text-gray-600">Avg Length</p>
-            <p className="text-2xl font-bold text-gray-900">{length_statistics.mean.toFixed(0)}</p>
+          <div className="bg-muted/50 rounded-lg p-4">
+            <p className="text-sm font-medium text-muted-foreground">Avg Length</p>
+            <p className="text-2xl font-bold">{length_statistics.mean.toFixed(0)}</p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm font-medium text-gray-600">Unique Instructions</p>
-            <p className="text-2xl font-bold text-gray-900">{quality_metrics.unique_instructions.toLocaleString()}</p>
+          <div className="bg-muted/50 rounded-lg p-4">
+            <p className="text-sm font-medium text-muted-foreground">Unique Instructions</p>
+            <p className="text-2xl font-bold">{quality_metrics.unique_instructions.toLocaleString()}</p>
           </div>
-          <div className="bg-gray-50 rounded-lg p-4">
-            <p className="text-sm font-medium text-gray-600">Duplicate Ratio</p>
-            <p className="text-2xl font-bold text-gray-900">{(quality_metrics.duplicate_ratio * 100).toFixed(1)}%</p>
+          <div className="bg-muted/50 rounded-lg p-4">
+            <p className="text-sm font-medium text-muted-foreground">Duplicate Ratio</p>
+            <p className="text-2xl font-bold">{(quality_metrics.duplicate_ratio * 100).toFixed(1)}%</p>
           </div>
         </div>
       </div>
 
       {/* Navigation tabs */}
-      <div className="bg-white rounded-lg shadow border">
-        <div className="border-b border-gray-200">
+      <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
+        <div className="border-b border-border">
           <nav className="flex space-x-8 px-6" aria-label="Tabs">
             {[
               { id: 'overview', name: 'Overview', icon: Database },
@@ -147,8 +147,8 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
                   onClick={() => setSelectedView(tab.id as any)}
                   className={`${
                     selectedView === tab.id
-                      ? 'border-blue-500 text-blue-600'
-                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                      ? 'border-primary text-primary'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
                   } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center space-x-2`}
                 >
                   <Icon className="h-4 w-4" />
@@ -188,26 +188,26 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
               <div>
                 <h3 className="text-lg font-semibold mb-4">Length Statistics</h3>
                 <div className="space-y-4">
-                  <div className="bg-gray-50 rounded-lg p-4">
+                  <div className="bg-muted/50 rounded-lg p-4">
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-gray-600">Mean Length</span>
-                      <span className="text-lg font-bold text-gray-900">{length_statistics.mean.toFixed(0)} tokens</span>
+                      <span className="text-sm font-medium text-muted-foreground">Mean Length</span>
+                      <span className="text-lg font-bold">{length_statistics.mean.toFixed(0)} tokens</span>
                     </div>
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-gray-600">Median Length</span>
-                      <span className="text-lg font-bold text-gray-900">{length_statistics.median.toFixed(0)} tokens</span>
+                      <span className="text-sm font-medium text-muted-foreground">Median Length</span>
+                      <span className="text-lg font-bold">{length_statistics.median.toFixed(0)} tokens</span>
                     </div>
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-gray-600">Min Length</span>
-                      <span className="text-lg font-bold text-gray-900">{length_statistics.min} tokens</span>
+                      <span className="text-sm font-medium text-muted-foreground">Min Length</span>
+                      <span className="text-lg font-bold">{length_statistics.min} tokens</span>
                     </div>
                     <div className="flex justify-between items-center mb-2">
-                      <span className="text-sm font-medium text-gray-600">Max Length</span>
-                      <span className="text-lg font-bold text-gray-900">{length_statistics.max} tokens</span>
+                      <span className="text-sm font-medium text-muted-foreground">Max Length</span>
+                      <span className="text-lg font-bold">{length_statistics.max} tokens</span>
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium text-gray-600">Std Deviation</span>
-                      <span className="text-lg font-bold text-gray-900">{length_statistics.std_dev.toFixed(0)}</span>
+                      <span className="text-sm font-medium text-muted-foreground">Std Deviation</span>
+                      <span className="text-lg font-bold">{length_statistics.std_dev.toFixed(0)}</span>
                     </div>
                   </div>
                 </div>
@@ -241,28 +241,28 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
           {selectedView === 'quality' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-gradient-to-r from-blue-50 to-blue-100 rounded-lg p-6">
-                  <h4 className="text-lg font-semibold text-blue-900 mb-2">Data Quality Score</h4>
-                  <p className="text-3xl font-bold text-blue-700">
+                <div className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-lg border border-primary/20 p-6">
+                  <h4 className="text-lg font-semibold mb-2">Data Quality Score</h4>
+                  <p className="text-3xl font-bold text-primary">
                     {((1 - quality_metrics.duplicate_ratio) * 100).toFixed(0)}%
                   </p>
-                  <p className="text-sm text-blue-600 mt-2">Based on uniqueness and completeness</p>
+                  <p className="text-sm text-muted-foreground mt-2">Based on uniqueness and completeness</p>
                 </div>
                 
-                <div className="bg-gradient-to-r from-green-50 to-green-100 rounded-lg p-6">
-                  <h4 className="text-lg font-semibold text-green-900 mb-2">Response Quality</h4>
-                  <p className="text-3xl font-bold text-green-700">
+                <div className="bg-gradient-to-r from-secondary/10 to-secondary/5 rounded-lg border border-secondary/20 p-6">
+                  <h4 className="text-lg font-semibold mb-2">Response Quality</h4>
+                  <p className="text-3xl font-bold text-secondary">
                     {quality_metrics.avg_response_length.toFixed(0)}
                   </p>
-                  <p className="text-sm text-green-600 mt-2">Average response length (tokens)</p>
+                  <p className="text-sm text-muted-foreground mt-2">Average response length (tokens)</p>
                 </div>
                 
-                <div className="bg-gradient-to-r from-purple-50 to-purple-100 rounded-lg p-6">
-                  <h4 className="text-lg font-semibold text-purple-900 mb-2">Diversity Score</h4>
-                  <p className="text-3xl font-bold text-purple-700">
+                <div className="bg-gradient-to-r from-chart-1/10 to-chart-1/5 rounded-lg border border-chart-1/20 p-6">
+                  <h4 className="text-lg font-semibold mb-2">Diversity Score</h4>
+                  <p className="text-3xl font-bold text-chart-1">
                     {((quality_metrics.unique_instructions / total_samples) * 100).toFixed(0)}%
                   </p>
-                  <p className="text-sm text-purple-600 mt-2">Unique instruction ratio</p>
+                  <p className="text-sm text-muted-foreground mt-2">Unique instruction ratio</p>
                 </div>
               </div>
             </div>
@@ -292,24 +292,24 @@ export const DatasetAnalytics: React.FC<DatasetAnalyticsProps> = ({
                   .filter(sample => filterBy === 'all' || sample.template_format === filterBy)
                   .slice(0, 5)
                   .map((sample, index) => (
-                    <div key={index} className="bg-gray-50 rounded-lg p-4 border">
+                    <div key={index} className="bg-muted/30 rounded-lg p-4 border border-border">
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-medium bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                        <span className="text-xs font-medium bg-primary/10 text-primary px-2 py-1 rounded">
                           {sample.template_format}
                         </span>
-                        <span className="text-xs text-gray-500">{sample.token_count} tokens</span>
+                        <span className="text-xs text-muted-foreground">{sample.token_count} tokens</span>
                       </div>
                       <div className="space-y-2">
                         <div>
-                          <p className="text-sm font-medium text-gray-700">Instruction:</p>
-                          <p className="text-sm text-gray-600 bg-white p-2 rounded border">
+                          <p className="text-sm font-medium">Instruction:</p>
+                          <p className="text-sm text-muted-foreground bg-background p-2 rounded border">
                             {sample.instruction.slice(0, 200)}
                             {sample.instruction.length > 200 && '...'}
                           </p>
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-gray-700">Response:</p>
-                          <p className="text-sm text-gray-600 bg-white p-2 rounded border">
+                          <p className="text-sm font-medium">Response:</p>
+                          <p className="text-sm text-muted-foreground bg-background p-2 rounded border">
                             {sample.response.slice(0, 200)}
                             {sample.response.length > 200 && '...'}
                           </p>

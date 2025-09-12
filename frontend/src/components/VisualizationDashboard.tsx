@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { BarChart3, Activity, Database, Eye, RefreshCw, TrendingUp } from 'lucide-react';
+import { BarChart3, Activity, Database, Eye, RefreshCw, TrendingUp, Brain, Home, Settings, Workflow, BookOpen } from 'lucide-react';
+import { Button } from "@/components/ui/button";
 import { TrainingVisualization } from './TrainingVisualization';
 import { DatasetAnalytics } from './DatasetAnalytics';
 import { useVisualizationDashboard } from '../hooks/useVisualizationData';
@@ -41,29 +42,62 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
   ];
 
   return (
-    <div className="space-y-6">
-      {/* Header with refresh button */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-3">
-          <BarChart3 className="h-8 w-8 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Analytics Dashboard</h1>
-            <p className="text-muted-foreground">
-              Comprehensive visualization and analysis of your LLM training pipeline
-            </p>
+    <div className="min-h-screen bg-background">
+      {/* Navigation Header */}
+      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container mx-auto max-w-7xl">
+          <div className="flex h-16 items-center justify-between px-4">
+            <div className="flex items-center space-x-3">
+              <Brain className="h-8 w-8 text-primary" />
+              <h1 className="text-2xl font-bold tracking-tight">LLMForge</h1>
+            </div>
+
+            <nav className="hidden md:flex items-center space-x-1">
+              <Button variant="ghost" onClick={onNavigateToTraining} className="text-sm">
+                <Home className="mr-2 h-4 w-4" />
+                Home
+              </Button>
+              <Button variant="ghost" onClick={onNavigateToTraining} className="text-sm">
+                <Settings className="mr-2 h-4 w-4" />
+                Fine-tuning
+              </Button>
+              <Button variant="ghost" className="text-sm">
+                <Workflow className="mr-2 h-4 w-4" />
+                Workflows
+              </Button>
+              <Button variant="default" className="text-sm">
+                <BarChart3 className="mr-2 h-4 w-4" />
+                Analytics
+              </Button>
+              <Button variant="ghost" className="text-sm">
+                <BookOpen className="mr-2 h-4 w-4" />
+                Documentation
+              </Button>
+            </nav>
+
+            <Button onClick={refetchAll} disabled={isLoading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh Data
+            </Button>
           </div>
         </div>
-        <button
-          onClick={refetchAll}
-          disabled={isLoading}
-          className="inline-flex items-center justify-center rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground px-4 py-2 text-sm font-medium shadow-sm transition-colors disabled:pointer-events-none disabled:opacity-50"
-        >
-          <RefreshCw className={`mr-2 h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
-          Refresh All Data
-        </button>
-      </div>
+      </header>
 
-      {/* Error Display */}
+      <main className="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8 space-y-8">
+        {/* Page Header */}
+        <div className="space-y-4">
+          <div className="flex items-center space-x-3">
+            <div className="rounded-lg bg-primary/10 p-2">
+              <BarChart3 className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight">Analytics Dashboard</h1>
+              <p className="text-muted-foreground">Comprehensive visualization and analysis of your LLM training pipeline</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Error Display */}
       {hasError && (
         <div className="rounded-lg border border-destructive bg-destructive/10 text-destructive p-4">
           <div className="flex items-center space-x-2">
@@ -323,7 +357,8 @@ export const VisualizationDashboard: React.FC<VisualizationDashboardProps> = ({
             )}
           </div>
         )}
-      </div>
+        </div>
+      </main>
     </div>
   );
 };
