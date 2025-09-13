@@ -54,7 +54,6 @@ COPY config/ ./config/
 
 # Copy service-specific code
 COPY microservices/model_management_service/ ./microservices/model_management_service/
-COPY models/ ./models/
 
 # Create directories and set permissions
 RUN mkdir -p logs data models && \

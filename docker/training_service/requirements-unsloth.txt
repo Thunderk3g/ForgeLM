@@ -1,3 +1,0 @@
-# Unsloth - separate layer for optional advanced optimization
-# This allows builds to succeed even if Unsloth installation fails
-unsloth[cu121]>=2024.8

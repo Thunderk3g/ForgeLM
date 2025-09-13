@@ -83,6 +83,7 @@ coverage.xml
 .env.*.local
 
 # Large model files and data (should be mounted as volumes)
+models/
 models/*.bin
 models/*.safetensors
 models/*/pytorch_model.bin

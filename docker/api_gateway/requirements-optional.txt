@@ -1,3 +1,0 @@
-# Optional ML dependencies for API Gateway
-# Only needed for basic model interactions
-torch>=2.1.0

@@ -1,15 +1,6 @@
 services:
 
-  # Shared Base Image - Build once, use by all services
-  # This contains all common dependencies to avoid rebuilding
-  llmforge-base:
-    build:
-      context: .
-      dockerfile: docker/shared-base/Dockerfile
-    image: llmforge-base:latest
-    profiles: ["build-base"]  # Only build when explicitly requested
-
-  # Service Orchestrator - Lightweight build using shared base
+  # Service Orchestrator - Self-contained multi-stage build
   orchestrator:
     build:
       context: .
@@ -34,10 +25,8 @@ services:
       start_period: 40s
     networks:
       - llmforge-network
-    depends_on:
-      - llmforge-base
 
-  # API Gateway - Fast build using shared base + minimal deps
+  # API Gateway - Self-contained multi-stage build
   api-gateway:
     build:
       context: .
@@ -59,7 +48,6 @@ services:
       - ./logs:/app/logs
     depends_on:
       - orchestrator
-      - llmforge-base
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -136,7 +124,6 @@ services:
       - model_cache:/home/llmforge/.cache
     depends_on:
       - orchestrator
-      - llmforge-base
     deploy:
       resources:
         reservations:
@@ -153,7 +140,7 @@ services:
     networks:
       - llmforge-network
 
-  # Data Generation Service - Minimal build using shared base
+  # Data Generation Service - Self-contained multi-stage build
   data-generation-service:
     build:
       context: .
@@ -174,7 +161,6 @@ services:
       - ./logs:/app/logs
     depends_on:
       - orchestrator
-      - llmforge-base
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -184,7 +170,7 @@ services:
     networks:
       - llmforge-network
 
-  # Visualization Service - Fast build with plotting libraries
+  # Visualization Service - Self-contained multi-stage build
   visualization-service:
     build:
       context: .
@@ -202,7 +188,6 @@ services:
       - ./logs:/app/logs
     depends_on:
       - orchestrator
-      - llmforge-base
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
       interval: 30s
@@ -235,7 +220,6 @@ services:
       - model_cache:/home/llmforge/.cache
     depends_on:
       - orchestrator
-      - llmforge-base
     deploy:
       resources:
         reservations:

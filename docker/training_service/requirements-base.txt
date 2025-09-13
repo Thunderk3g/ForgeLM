@@ -1,7 +1,0 @@
-# Base stable dependencies - core Python libraries that rarely change
-# These are lightweight, stable packages that form the foundation
-fastapi>=0.104.1
-uvicorn[standard]>=0.24.0
-pydantic>=2.4.2
-prometheus-client>=0.19.0
-psutil>=5.9.0

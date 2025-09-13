@@ -76,7 +76,6 @@ COPY config/ ./config/
 # Copy service-specific code
 COPY microservices/training_service/ ./microservices/training_service/
 COPY services/ ./services/
-COPY models/ ./models/
 COPY configs/ ./configs/
 
 # Create directories and set permissions

@@ -1,4 +1,0 @@
-# Heavy ML dependencies - large packages for model management
-torch>=2.0.0
-transformers>=4.35.0
-huggingface-hub>=0.17.0
