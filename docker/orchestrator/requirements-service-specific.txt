@@ -1,0 +1,8 @@
+# Orchestrator Service-Specific Dependencies
+# These are dependencies unique to Orchestrator (not in shared base)
+
+# Asynchronous task throttling for service coordination
+asyncio-throttle>=1.0.2
+
+# WebSocket support for real-time service communication
+websockets>=12.0

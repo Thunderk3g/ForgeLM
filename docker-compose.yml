@@ -1,6 +1,15 @@
 services:
 
-  # Service Orchestrator - Python LLM agent orchestrator
+  # Shared Base Image - Build once, use by all services
+  # This contains all common dependencies to avoid rebuilding
+  llmforge-base:
+    build:
+      context: .
+      dockerfile: docker/shared-base/Dockerfile
+    image: llmforge-base:latest
+    profiles: ["build-base"]  # Only build when explicitly requested
+
+  # Service Orchestrator - Lightweight build using shared base
   orchestrator:
     build:
       context: .
@@ -25,15 +34,16 @@ services:
       start_period: 40s
     networks:
       - llmforge-network
+    depends_on:
+      - llmforge-base
 
-  # API Gateway - Central entry point
+  # API Gateway - Fast build using shared base + minimal deps
   api-gateway:
     build:
       context: .
       dockerfile: docker/api_gateway/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
-      target: production
     container_name: llmforge-api-gateway
     restart: unless-stopped
     ports:
@@ -49,23 +59,23 @@ services:
       - ./logs:/app/logs
     depends_on:
       - orchestrator
+      - llmforge-base
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 30s
     networks:
       - llmforge-network
 
-  # Training Service - GPU-optimized fine-tuning
+  # Training Service - Optimized GPU build with dependency layering
   training-service:
     build:
       context: .
       dockerfile: docker/training_service/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
-      target: production
     container_name: llmforge-training
     restart: unless-stopped
     ports:
@@ -103,14 +113,13 @@ services:
     networks:
       - llmforge-network
 
-  # Chat Comparison Service - Model inference and comparison
+  # Chat Comparison Service - Fast ML inference using shared patterns
   chat-comparison-service:
     build:
       context: .
       dockerfile: docker/chat_comparison_service/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
-      target: production
     container_name: llmforge-chat-comparison
     restart: unless-stopped
     ports:
@@ -127,6 +136,7 @@ services:
       - model_cache:/home/llmforge/.cache
     depends_on:
       - orchestrator
+      - llmforge-base
     deploy:
       resources:
         reservations:
@@ -143,7 +153,7 @@ services:
     networks:
       - llmforge-network
 
-  # Data Generation Service - Dataset creation and validation
+  # Data Generation Service - Minimal build using shared base
   data-generation-service:
     build:
       context: .
@@ -164,6 +174,7 @@ services:
       - ./logs:/app/logs
     depends_on:
       - orchestrator
+      - llmforge-base
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
@@ -173,7 +184,7 @@ services:
     networks:
       - llmforge-network
 
-  # Visualization Service - Analytics and monitoring dashboards
+  # Visualization Service - Fast build with plotting libraries
   visualization-service:
     build:
       context: .
@@ -191,6 +202,7 @@ services:
       - ./logs:/app/logs
     depends_on:
       - orchestrator
+      - llmforge-base
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
       interval: 30s
@@ -200,14 +212,13 @@ services:
     networks:
       - llmforge-network
 
-  # Model Management Service - Model lifecycle and caching
+  # Model Management Service - Optimized GPU inference build
   model-management-service:
     build:
       context: .
       dockerfile: docker/model_management_service/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
-      target: production
     container_name: llmforge-model-management
     restart: unless-stopped
     ports:
@@ -224,6 +235,7 @@ services:
       - model_cache:/home/llmforge/.cache
     depends_on:
       - orchestrator
+      - llmforge-base
     deploy:
       resources:
         reservations:

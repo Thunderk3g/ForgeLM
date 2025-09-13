@@ -1,9 +1,10 @@
-# LLMForge Training Service
-# GPU-optimized multi-stage build with intelligent dependency layering
+# LLMForge Training Service - Optimized GPU Build
+# Uses CUDA base and shared dependencies for efficient training
 
+# Build stage: Install ML dependencies on CUDA base
 FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS builder
 
-# Set environment variables
+# Set CUDA environment
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=$CUDA_HOME/bin:$PATH
@@ -11,45 +12,39 @@ ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3 \
+    python3.11 \
+    python3.11-dev \
+    python3.11-venv \
     python3-pip \
-    python3-venv \
     gcc \
     g++ \
     cmake \
     git \
     wget \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3.11 /usr/bin/python
 
 # Create virtual environment
-RUN python3 -m venv /opt/venv
+RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Upgrade pip and install build dependencies
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+# Install common dependencies first (shared layer)
+COPY docker/shared-base/requirements-common.txt /tmp/requirements-common.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-common.txt
 
-# Layer 1: Install base stable dependencies (cached aggressively)
-COPY docker/training_service/requirements-base.txt /tmp/requirements-base.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-base.txt
-
-# Layer 2: Install PyTorch with CUDA support (cached well)
-# Add timeout and retry logic to prevent hangs during network operations
+# Install PyTorch with CUDA support
 RUN pip install --no-cache-dir --timeout=300 --retries=3 \
     torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# Layer 3: Install heavy ML dependencies (cached moderately)
-COPY docker/training_service/requirements-ml.txt /tmp/requirements-ml.txt
-RUN pip install --no-cache-dir --timeout=600 --retries=2 -r /tmp/requirements-ml.txt
+# Install training-specific dependencies
+COPY docker/training_service/requirements-service-specific.txt /tmp/requirements-service-specific.txt
+RUN pip install --no-cache-dir --timeout=600 --retries=2 -r /tmp/requirements-service-specific.txt
 
-# Layer 4: Install Unsloth separately with proper error handling (can fail gracefully)
-COPY docker/training_service/requirements-unsloth.txt /tmp/requirements-unsloth.txt
-RUN pip install --no-cache-dir --timeout=600 --retries=1 -r /tmp/requirements-unsloth.txt || \
-    echo "Warning: Unsloth installation failed, service will continue without advanced optimizations"
-
-# Production stage
+# Production stage: CUDA runtime
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS production
 
-# Set environment variables
+# Set CUDA environment
 ENV DEBIAN_FRONTEND=noninteractive
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=$CUDA_HOME/bin:$PATH
@@ -62,32 +57,32 @@ RUN groupadd -r llmforge && useradd -r -g llmforge llmforge
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
-    python3 \
+    python3.11 \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3.11 /usr/bin/python
 
-# Copy virtual environment from builder stage
+# Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Set working directory
 WORKDIR /app
 
-# Copy application code
-COPY microservices/training_service/ ./microservices/training_service/
-COPY services/ ./services/
+# Copy shared utilities and configuration
 COPY utils/ ./utils/
 COPY config/ ./config/
+
+# Copy service-specific code
+COPY microservices/training_service/ ./microservices/training_service/
+COPY services/ ./services/
 COPY models/ ./models/
 COPY configs/ ./configs/
 
-# Create necessary directories with proper permissions
+# Create directories and set permissions
 RUN mkdir -p logs data models/base models/finetuned datasets && \
-    chown -R llmforge:llmforge /app
-
-# Create model cache directory
-RUN mkdir -p /home/llmforge/.cache && \
-    chown -R llmforge:llmforge /home/llmforge/.cache
+    mkdir -p /home/llmforge/.cache && \
+    chown -R llmforge:llmforge /app /home/llmforge/.cache
 
 # Switch to non-root user
 USER llmforge

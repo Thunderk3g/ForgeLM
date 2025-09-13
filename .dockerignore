@@ -93,9 +93,12 @@ datasets/*.parquet
 data/large_files/
 
 # Exclude large directories
-legacy/
-unsloth_compiled_cache/
 venv/
+
+# Exclude additional development files
+tests/
+scripts/
+kubernetes/
 
 # Docker files (except what we need)
 Dockerfile*

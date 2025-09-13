@@ -1,0 +1,9 @@
+# Data Generation Service-Specific Dependencies
+# These are dependencies unique to Data Generation (not in shared base)
+
+# AI/LLM API clients for data generation
+openai>=1.0.0
+anthropic>=0.7.0
+
+# Dataset manipulation and processing
+datasets>=2.14.0

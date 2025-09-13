@@ -1,0 +1,8 @@
+# API Gateway Service-Specific Dependencies
+# These are dependencies unique to API Gateway (not in shared base)
+
+# Rate limiting and API management
+slowapi>=0.1.9
+
+# WebSocket support for real-time communications
+websockets>=12.0

@@ -1,51 +1,25 @@
-# LLMForge Orchestrator Service
-# Multi-stage build for optimal image size and security
+# LLMForge Orchestrator - Optimized Multi-Stage Build
+# Uses shared base image to avoid rebuilding common dependencies
 
-FROM python:3.11-slim AS builder
+# Build stage: Add service-specific dependencies to shared base
+FROM llmforge-base:latest AS builder
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+# Install service-specific dependencies only
+COPY docker/orchestrator/requirements-service-specific.txt /tmp/requirements-service-specific.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-service-specific.txt
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+# Production stage: Lean runtime image
+FROM llmforge-base:latest AS production
 
-# Copy requirements and install Python dependencies
-COPY microservices/orchestrator/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt
-
-# Production stage
-FROM python:3.11-slim
-
-# Create non-root user
-RUN groupadd -r llmforge && useradd -r -g llmforge llmforge
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy virtual environment from builder stage
+# Copy virtual environment with all dependencies from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Set working directory
-WORKDIR /app
-
-# Copy application code
+# Copy service-specific code
 COPY microservices/orchestrator/ ./microservices/orchestrator/
-COPY utils/ ./utils/
-COPY config/ ./config/
-COPY models/ ./models/
 
-# Create necessary directories
-RUN mkdir -p logs data && \
-    chown -R llmforge:llmforge /app
+# Copy models for service orchestration
+COPY models/ ./models/
 
 # Switch to non-root user
 USER llmforge
@@ -57,10 +31,9 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
-# Set environment variables
-ENV PYTHONPATH=/app \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# Set service-specific environment variables
+ENV SERVICE_HOST=0.0.0.0 \
+    SERVICE_PORT=8080
 
 # Start the orchestrator
 CMD ["python", "-m", "microservices.orchestrator.service_orchestrator"]

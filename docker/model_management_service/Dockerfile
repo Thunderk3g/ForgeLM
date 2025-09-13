@@ -1,6 +1,7 @@
-# LLMForge Model Management Service
-# Multi-stage build for optimal image size and GPU optimization
+# LLMForge Model Management Service - Optimized GPU Build
+# Uses CUDA base and shared dependencies for efficient model serving
 
+# Build stage: Install ML dependencies on CUDA base
 FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS builder
 
 # Install system dependencies
@@ -18,16 +19,16 @@ RUN apt-get update && apt-get install -y \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Layer 1: Install base stable dependencies (cached aggressively)
-COPY docker/model_management_service/requirements-base.txt /tmp/requirements-base.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-base.txt
+# Install common dependencies first (shared layer)
+COPY docker/shared-base/requirements-common.txt /tmp/requirements-common.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-common.txt
 
-# Layer 2: Install heavy ML dependencies (cached moderately)
-COPY docker/model_management_service/requirements-ml.txt /tmp/requirements-ml.txt
-RUN pip install --no-cache-dir --timeout=900 --retries=3 --default-timeout=900 -r /tmp/requirements-ml.txt
+# Install service-specific ML dependencies
+COPY docker/model_management_service/requirements-service-specific.txt /tmp/requirements-service-specific.txt
+RUN pip install --no-cache-dir --timeout=900 --retries=3 -r /tmp/requirements-service-specific.txt
 
-# Production stage
+# Production stage: CUDA runtime
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS production
 
 # Create non-root user
@@ -40,20 +41,22 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3.11 /usr/bin/python
 
-# Copy virtual environment from builder stage
+# Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Set working directory
 WORKDIR /app
 
-# Copy application code
-COPY microservices/model_management_service/ ./microservices/model_management_service/
+# Copy shared utilities and configuration
 COPY utils/ ./utils/
 COPY config/ ./config/
+
+# Copy service-specific code
+COPY microservices/model_management_service/ ./microservices/model_management_service/
 COPY models/ ./models/
 
-# Create necessary directories
+# Create directories and set permissions
 RUN mkdir -p logs data models && \
     chown -R llmforge:llmforge /app
 
