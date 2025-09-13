@@ -1,17 +1,12 @@
-# Training Service-Specific Dependencies
-# These are heavy ML dependencies unique to Training Service
+torch==2.4.1
+torchvision==0.19.1
+torchaudio==2.4.1
+unsloth_zoo>=2025.9.5
 
-# Core ML and Training Framework
-torch>=2.0.0
-transformers>=4.35.0
-datasets>=2.14.0
-accelerate>=0.24.0
-
-# Fine-tuning and Optimization
-peft>=0.6.0
-trl>=0.7.0
-bitsandbytes>=0.41.0
-xformers>=0.0.22
-
-# Unsloth for training optimization (CUDA 12.1)
-unsloth[cu121]>=2024.8
+unsloth[cu121]
+transformers>=4.44.0
+accelerate>=0.34.1
+datasets>=3.4.1,<4.0.0
+trl==0.11.4
+peft==0.12.0
+bitsandbytes>=0.43.3
