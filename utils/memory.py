@@ -2,7 +2,12 @@
 Memory management utilities
 """
 
-import torch
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    
 import gc
 import psutil
 from typing import Dict, Any
@@ -12,6 +17,15 @@ import os
 
 def get_gpu_memory_info() -> Dict[str, Any]:
     """Get GPU memory usage information"""
+    if not TORCH_AVAILABLE:
+        return {
+            "gpu_available": False,
+            "allocated_mb": 0,
+            "cached_mb": 0,
+            "total_mb": 0,
+            "error": "torch_not_available"
+        }
+        
     if not torch.cuda.is_available():
         return {
             "gpu_available": False,
@@ -34,7 +48,7 @@ def get_gpu_memory_info() -> Dict[str, Any]:
 
 def cleanup_gpu_memory():
     """Clean up GPU memory"""
-    if torch.cuda.is_available():
+    if TORCH_AVAILABLE and torch.cuda.is_available():
         torch.cuda.empty_cache()
     gc.collect()
 

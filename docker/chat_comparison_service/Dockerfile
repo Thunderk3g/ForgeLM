@@ -24,6 +24,10 @@ COPY docker/shared-base/requirements-common.txt /tmp/requirements-common.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-common.txt
 
+# Install PyTorch with CUDA support (specific versions for compatibility)
+RUN pip install --no-cache-dir --timeout=300 --retries=3 \
+    torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+
 # Install service-specific ML dependencies
 COPY docker/chat_comparison_service/requirements-service-specific.txt /tmp/requirements-service-specific.txt
 RUN pip install --no-cache-dir --timeout=900 --retries=3 -r /tmp/requirements-service-specific.txt
@@ -54,6 +58,8 @@ COPY config/ ./config/
 
 # Copy service-specific code
 COPY microservices/chat_comparison_service/ ./microservices/chat_comparison_service/
+COPY services/ ./services/
+COPY models/ ./models/
 
 # Create directories and set permissions
 RUN mkdir -p logs data models && \

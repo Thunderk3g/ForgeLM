@@ -48,6 +48,8 @@ COPY config/ ./config/
 # Copy service-specific code
 COPY microservices/api_gateway/ ./microservices/api_gateway/
 COPY microservices/orchestrator/ ./microservices/orchestrator/
+COPY services/ ./services/
+COPY models/ ./models/
 
 # Create directories and set permissions
 RUN mkdir -p logs data models && \

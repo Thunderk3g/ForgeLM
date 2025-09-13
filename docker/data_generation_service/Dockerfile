@@ -47,6 +47,8 @@ COPY config/ ./config/
 
 # Copy service-specific code
 COPY microservices/data_generation_service/ ./microservices/data_generation_service/
+COPY services/ ./services/
+COPY models/ ./models/
 
 # Copy configurations for data generation
 COPY configs/ ./configs/

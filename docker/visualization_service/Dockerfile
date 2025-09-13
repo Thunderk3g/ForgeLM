@@ -47,6 +47,8 @@ COPY config/ ./config/
 
 # Copy service-specific code
 COPY microservices/visualization_service/ ./microservices/visualization_service/
+COPY services/ ./services/
+COPY models/ ./models/
 
 # Create directories and set permissions
 RUN mkdir -p logs data && \
