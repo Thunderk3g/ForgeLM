@@ -1,5 +1,5 @@
 # LLMForge Training Service
-# GPU-optimized multi-stage build with Unsloth support
+# GPU-optimized multi-stage build with intelligent dependency layering
 
 FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS builder
 
@@ -28,28 +28,26 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Upgrade pip and install build dependencies
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install PyTorch with CUDA support first
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Layer 1: Install base stable dependencies (cached aggressively)
+COPY docker/training_service/requirements-base.txt /tmp/requirements-base.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-base.txt
 
-# Install core ML dependencies
-RUN pip install --no-cache-dir \
-    transformers \
-    datasets \
-    accelerate \
-    bitsandbytes \
-    peft \
-    trl
+# Layer 2: Install PyTorch with CUDA support (cached well)
+# Add timeout and retry logic to prevent hangs during network operations
+RUN pip install --no-cache-dir --timeout=300 --retries=3 \
+    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-# Install Unsloth (if available)
-RUN pip install --no-cache-dir unsloth[colab-new] @ git+https://github.com/unslothai/unsloth.git || \
-    echo "Warning: Unsloth installation failed, continuing without it"
+# Layer 3: Install heavy ML dependencies (cached moderately)
+COPY docker/training_service/requirements-ml.txt /tmp/requirements-ml.txt
+RUN pip install --no-cache-dir --timeout=600 --retries=2 -r /tmp/requirements-ml.txt
 
-# Copy requirements and install remaining dependencies
-COPY microservices/training_service/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Layer 4: Install Unsloth separately with proper error handling (can fail gracefully)
+COPY docker/training_service/requirements-unsloth.txt /tmp/requirements-unsloth.txt
+RUN pip install --no-cache-dir --timeout=600 --retries=1 -r /tmp/requirements-unsloth.txt || \
+    echo "Warning: Unsloth installation failed, service will continue without advanced optimizations"
 
 # Production stage
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS production
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive

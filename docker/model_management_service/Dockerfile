@@ -7,6 +7,7 @@ FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS builder
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-dev \
+    python3.11-venv \
     python3-pip \
     gcc \
     g++ \
@@ -17,13 +18,17 @@ RUN apt-get update && apt-get install -y \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements and install Python dependencies
-COPY microservices/model_management_service/requirements.txt /tmp/requirements.txt
+# Layer 1: Install base stable dependencies (cached aggressively)
+COPY docker/model_management_service/requirements-base.txt /tmp/requirements-base.txt
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt
+    pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-base.txt
+
+# Layer 2: Install heavy ML dependencies (cached moderately)
+COPY docker/model_management_service/requirements-ml.txt /tmp/requirements-ml.txt
+RUN pip install --no-cache-dir --timeout=900 --retries=3 --default-timeout=900 -r /tmp/requirements-ml.txt
 
 # Production stage
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04 AS production
 
 # Create non-root user
 RUN groupadd -r llmforge && useradd -r -g llmforge llmforge

@@ -1,28 +1,110 @@
-# Version control
+# Git and version control
 .git
 .gitignore
+.gitattributes
+.github/
 
-# Python cache and bytecode
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-.Python
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
 *.so
-.pytest_cache
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Virtual environments
-venv
-env
-.env
-.venv
+venv/
+env/
+ENV/
 
-# IDE and editor files
-.vscode
-.idea
+# IDEs and editors
+.vscode/
+.idea/
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+logs/*.log
+tmp/
+temp/
+
+# Node.js (for frontend development)
+frontend/node_modules/
+frontend/dist/
+frontend/build/
+frontend/.next/
+frontend/out/
+node_modules/
+
+# Exclude entire frontend directory from Docker context
+frontend/
+
+# Documentation and README files (not needed in containers)
+*.md
+docs/
+
+# Test files and coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter notebooks (if any)
+.ipynb_checkpoints/
+
+# Environment files (contain secrets)
+.env
+.env.local
+.env.*.local
+
+# Large model files and data (should be mounted as volumes)
+models/*.bin
+models/*.safetensors
+models/*/pytorch_model.bin
+models/*/model.safetensors
+datasets/*.json
+datasets/*.jsonl
+datasets/*.parquet
+data/large_files/
+
+# Exclude large directories
+legacy/
+unsloth_compiled_cache/
+venv/
+
+# Docker files (except what we need)
+Dockerfile*
+docker-compose*.yml
+
+# CI/CD files
+.github/
+.gitlab-ci.yml
+Jenkinsfile
 
 # OS generated files
 .DS_Store
@@ -32,28 +114,3 @@ env
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-# Documentation and README files
-*.md
-README*
-docs/
-
-# Logs and temporary files
-*.log
-*.tmp
-*.temp
-
-# Build artifacts that shouldn't be copied
-dist/
-build/
-*.egg-info/
-
-# Data files that might be large
-data/input/*
-models/base/*
-models/finetuned/*
-
-# Keep the directory structure but ignore contents
-!data/input/.gitkeep
-!models/base/.gitkeep
-!models/finetuned/.gitkeep

@@ -31,6 +31,9 @@ services:
     build:
       context: .
       dockerfile: docker/api_gateway/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+      target: production
     container_name: llmforge-api-gateway
     restart: unless-stopped
     ports:
@@ -60,6 +63,9 @@ services:
     build:
       context: .
       dockerfile: docker/training_service/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+      target: production
     container_name: llmforge-training
     restart: unless-stopped
     ports:
@@ -102,6 +108,9 @@ services:
     build:
       context: .
       dockerfile: docker/chat_comparison_service/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+      target: production
     container_name: llmforge-chat-comparison
     restart: unless-stopped
     ports:
@@ -196,6 +205,9 @@ services:
     build:
       context: .
       dockerfile: docker/model_management_service/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+      target: production
     container_name: llmforge-model-management
     restart: unless-stopped
     ports:

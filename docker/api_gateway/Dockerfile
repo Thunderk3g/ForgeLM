@@ -6,19 +6,24 @@ FROM python:3.11-slim AS builder
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy requirements and install Python dependencies
-COPY microservices/api_gateway/requirements.txt /tmp/requirements.txt
+# Layer 1: Install base stable dependencies (cached aggressively)
+COPY docker/api_gateway/requirements-base.txt /tmp/requirements-base.txt
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /tmp/requirements.txt
+    pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-base.txt
+
+# Layer 2: Install optional ML dependencies (cached moderately)
+COPY docker/api_gateway/requirements-optional.txt /tmp/requirements-optional.txt
+RUN pip install --no-cache-dir --timeout=600 --retries=2 -r /tmp/requirements-optional.txt
 
 # Production stage
-FROM python:3.11-slim
+FROM python:3.11-slim AS production
 
 # Create non-root user
 RUN groupadd -r llmforge && useradd -r -g llmforge llmforge

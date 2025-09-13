@@ -7,6 +7,7 @@ FROM python:3.11-slim AS builder
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment
