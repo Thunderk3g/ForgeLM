@@ -20,7 +20,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
-from microservices.api_gateway.services.service_orchestrator import register_with_orchestrator
+from microservices.orchestrator.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from config.settings import settings
