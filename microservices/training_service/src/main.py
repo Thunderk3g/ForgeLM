@@ -23,10 +23,7 @@ from .services.training_worker import process_manager
 from .models.schemas import FineTuneRequest, TrainingStatus
 from microservices.orchestrator.service_orchestrator import register_with_orchestrator
 
-# Import shared utilities from parent directory  
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# Import local utilities
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from config.settings import settings

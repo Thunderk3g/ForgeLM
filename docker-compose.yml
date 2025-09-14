@@ -63,11 +63,11 @@ services:
     networks:
       - llmforge-network
 
-  # API Gateway - Self-contained multi-stage build
+  # API Gateway - Lightweight self-contained service
   api-gateway:
     build:
       context: .
-      dockerfile: docker/api_gateway/Dockerfile
+      dockerfile: microservices/api_gateway/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-api-gateway
@@ -95,11 +95,11 @@ services:
     networks:
       - llmforge-network
 
-  # Training Service - Optimized GPU build with dependency layering
+  # Training Service - ML optimized self-contained service
   training-service:
     build:
       context: .
-      dockerfile: docker/training_service/Dockerfile
+      dockerfile: microservices/training_service/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-training

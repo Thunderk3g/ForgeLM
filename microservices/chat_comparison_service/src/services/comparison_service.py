@@ -18,10 +18,10 @@ from ..models.schemas import (
 from ..models.entities import ChatSession, ModelPair
 from .model_service import ModelService
 from .chat_service import ChatService
-from utils.logging import get_logger
-from utils.performance import performance_monitor, timing_context, timed
-from utils.research_logger import research_logger
-from config.settings import settings
+from ..utils.logging import get_logger
+from ..utils.performance import performance_monitor, timing_context, timed
+from ..utils.research_logger import research_logger
+from ..config.settings import settings
 
 
 class ComparisonService:

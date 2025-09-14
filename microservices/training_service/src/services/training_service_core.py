@@ -17,7 +17,7 @@ import torch
 from datasets import load_from_disk
 
 from ..models.schemas import FineTuneRequest
-from utils.logging import get_logger
+from ..utils.logging import get_logger
 
 # Import ML dependencies with error handling
 try:

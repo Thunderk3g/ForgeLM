@@ -18,11 +18,11 @@ import weakref
 from enum import Enum
 
 from ..models.entities import ModelPair, LoRAMetadata, KVCacheEntry, CacheState
-from utils.memory import get_gpu_memory_info, cleanup_gpu_memory, estimate_model_memory
-from utils.performance import performance_monitor, timing_context, timed
-from utils.logging import get_logger
-from utils.model_config import model_config
-from config.settings import settings
+from ..utils.memory import get_gpu_memory_info, cleanup_gpu_memory, estimate_model_memory
+from ..utils.performance import performance_monitor, timing_context, timed
+from ..utils.logging import get_logger
+from ..utils.model_config import model_config
+from ..config.settings import settings
 
 # Import Agent Orchestrator (will be imported when needed to avoid circular imports)
 
