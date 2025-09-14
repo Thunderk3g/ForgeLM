@@ -43,6 +43,14 @@ class PerformanceMonitor:
     def reset(self):
         """Reset all metrics"""
         self.metrics.clear()
+    
+    def start_monitoring(self):
+        """Start performance monitoring - placeholder for compatibility"""
+        pass
+    
+    def stop_monitoring(self):
+        """Stop performance monitoring - placeholder for compatibility"""
+        pass
 
 
 # Global performance monitor

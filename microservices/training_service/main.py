@@ -17,11 +17,16 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
-# Import core training components
+# Import core training components (now local to this microservice)
 from services.training_service import TrainingService
 from services.training_worker import process_manager
 from models.schemas import FineTuneRequest, TrainingStatus
 from microservices.orchestrator.service_orchestrator import register_with_orchestrator
+
+# Import shared utilities from parent directory  
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from config.settings import settings

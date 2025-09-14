@@ -18,10 +18,10 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core comparison components
-from services.comparison_service import ComparisonService
-from services.model_service import ModelService
-from services.chat_service import ChatService
-from models.schemas import (
+from .services.comparison_service import ComparisonService
+from .services.model_service import ModelService
+from .services.chat_service import ChatService
+from .models.schemas import (
     ComparisonRequest, ComparisonResponse, ChatMessage, 
     SessionCreateRequest, SessionInfo, DualModelConfig
 )

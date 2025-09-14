@@ -33,9 +33,9 @@ COPY docker/shared-base/requirements-common.txt /tmp/requirements-common.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-common.txt
 
-# Install PyTorch with CUDA support (specific versions for compatibility)
+# Install PyTorch with CUDA support (updated versions for compatibility)
 RUN pip install --no-cache-dir --timeout=300 --retries=3 \
-    torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
 
 # Install training-specific dependencies
 COPY docker/training_service/requirements-service-specific.txt /tmp/requirements-service-specific.txt

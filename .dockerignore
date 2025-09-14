@@ -83,11 +83,13 @@ coverage.xml
 .env.*.local
 
 # Large model files and data (should be mounted as volumes)
-models/
+# models/  # Comment out to allow models directory structure but exclude large files
 models/*.bin
 models/*.safetensors
 models/*/pytorch_model.bin
 models/*/model.safetensors
+models/**/*.bin
+models/**/*.safetensors
 datasets/*.json
 datasets/*.jsonl
 datasets/*.parquet

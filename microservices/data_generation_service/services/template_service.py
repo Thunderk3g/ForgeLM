@@ -12,6 +12,11 @@ from pathlib import Path
 
 from models.templates import Template, get_template, list_available_templates
 from models.schemas import FineTuneRequest
+
+# Import shared utilities from parent directory
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from utils.logging import get_logger
 
 

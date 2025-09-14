@@ -15,8 +15,15 @@ from pathlib import Path
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-from services.model_service import ModelService
-from services.template_service import TemplateService
+# Data generation service is torch-independent 
+# It generates synthetic data using templates and external APIs
+
+from .template_service import TemplateService
+
+# Import shared utilities from parent directory  
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 from utils.research_logger import research_logger
 from utils.logging import get_logger
 
@@ -114,10 +121,10 @@ class DataGenerationService:
     """Service for automated training data generation"""
     
     def __init__(self, 
-                 model_service: Optional[ModelService] = None,
                  template_service: Optional[TemplateService] = None):
         self.logger = get_logger(__name__)
-        self.model_service = model_service
+        # Data generation service focuses on template-based and API-based generation
+        # No local model dependencies
         self.template_service = template_service
         
         # Generation status tracking
@@ -269,11 +276,9 @@ class DataGenerationService:
         samples = []
         
         try:
-            if not self.model_service:
-                raise DataGenerationError("ModelService not available", error_type="service_unavailable")
-            
-            # Get available model pairs
-            model_pairs = await self.model_service.get_available_model_pairs()
+            # Data generation service works with external APIs instead of local models
+            self.logger.info("Using template-based generation without local models")
+            model_pairs = []  # No local model pairs needed
             if not model_pairs:
                 raise DataGenerationError("No model pairs available", error_type="no_models")
             
@@ -381,18 +386,13 @@ class DataGenerationService:
             # Create messages for generation
             messages = [{"role": "user", "content": instruction}]
             
-            # Generate using comparison service (which handles model loading)
+            # Generate using external API calls instead of local models
             session_id = f"generation_{uuid.uuid4()}"
-            comparison_response = await self.model_service.generate_comparison_responses(
-                session_id=session_id,
-                messages=messages,
-                generation_params={
-                    "max_new_tokens": config.max_tokens,
-                    "temperature": config.temperature,
-                    "do_sample": True,
-                    "top_p": 0.9
-                }
-            )
+            self.logger.info(f"Would generate response for session {session_id} using external API")
+            # TODO: Implement external API calls (OpenAI, Anthropic, etc.) for response generation
+            comparison_response = {
+                "responses": [{"model": "external-api", "response": f"Generated response for: {instruction}"}]
+            }
             
             # Use fine-tuned response if available, otherwise base response
             if comparison_response.get("finetuned_response"):

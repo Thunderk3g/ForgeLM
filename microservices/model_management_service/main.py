@@ -17,8 +17,8 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core model management components
-from services.model_service import ModelService
-from models.schemas import (
+from .services.model_service import ModelService
+from .models.schemas import (
     ModelLoadRequest, ModelInfo, ModelConfig, CacheStats,
     ModelUploadRequest, ModelVersionInfo
 )
