@@ -24,7 +24,7 @@ from .models.schemas import (
     AnalyticsQuery, DashboardConfig, MetricsResponse,
     TrainingAnalytics, ComparisonAnalytics, ChartData
 )
-from microservices.visualization_service.services.service_orchestrator import register_with_orchestrator
+from .services.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from config.settings import settings

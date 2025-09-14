@@ -20,7 +20,7 @@ import uvicorn
 # Import core data generation components (local to this microservice)
 from .services.data_generation_service import DataGenerationService
 from .services.template_service import TemplateService
-from microservices.orchestrator.service_orchestrator import register_with_orchestrator
+from .services.service_orchestrator import register_with_orchestrator
 
 # Import shared utilities and schemas from parent directories
 from .models.schemas import (

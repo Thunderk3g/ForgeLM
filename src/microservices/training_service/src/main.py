@@ -21,7 +21,7 @@ import uvicorn
 from .services.training_service import TrainingService
 from .services.training_worker import process_manager
 from .models.schemas import FineTuneRequest, TrainingStatus
-from microservices.orchestrator.service_orchestrator import register_with_orchestrator
+from .services.service_orchestrator import register_with_orchestrator
 
 # Import local utilities
 from utils.logging import get_logger

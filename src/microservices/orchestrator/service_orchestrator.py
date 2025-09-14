@@ -14,13 +14,13 @@ import json
 import logging
 import uuid
 import os
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Set
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 from datetime import datetime, timedelta
 import aiohttp
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import weakref
@@ -576,6 +576,18 @@ async def register_with_orchestrator(
             else:
                 raise Exception(f"Registration failed: {response.status}")
 
+
+# Global orchestrator instance
+_orchestrator_instance: Optional[ServiceOrchestrator] = None
+
+async def get_orchestrator() -> ServiceOrchestrator:
+    """Get or create the global orchestrator instance"""
+    global _orchestrator_instance
+    if _orchestrator_instance is None:
+        _orchestrator_instance = ServiceOrchestrator()
+        # Start the registry
+        await _orchestrator_instance.registry.start()
+    return _orchestrator_instance
 
 if __name__ == "__main__":
     # Run the orchestrator
