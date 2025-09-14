@@ -13,6 +13,28 @@ services:
     networks:
       - llmforge-network
 
+  # Shared ML Base - CUDA, PyTorch, Transformers for ML services
+  ml-base:
+    build:
+      context: .
+      dockerfile: docker/shared-ml-base/Dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+    image: llmforge-ml-base:latest
+    container_name: llmforge-ml-base
+    command: ["echo", "ML Base image built successfully"]
+    depends_on:
+      - base
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - llmforge-network
+
   # Service Orchestrator - Self-contained multi-stage build
   orchestrator:
     build:
@@ -100,7 +122,7 @@ services:
       - ./logs:/app/logs
       - model_cache:/home/llmforge/.cache
     depends_on:
-      - base
+      - ml-base
       - orchestrator
     deploy:
       resources:
@@ -140,7 +162,7 @@ services:
       - ./logs:/app/logs
       - model_cache:/home/llmforge/.cache
     depends_on:
-      - base
+      - ml-base
       - orchestrator
     deploy:
       resources:
@@ -239,7 +261,7 @@ services:
       - ./logs:/app/logs
       - model_cache:/home/llmforge/.cache
     depends_on:
-      - base
+      - ml-base
       - orchestrator
     deploy:
       resources:
