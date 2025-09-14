@@ -1,38 +1,29 @@
-# LLMForge Shared ML Dependencies
-# ML-specific dependencies for training, inference, and model management
-# Used by: training-service, chat-comparison-service, model-management-service
+# LLMForge Minimal ML Dependencies
+# Only includes packages actually used by the microservices
+# Based on training-service, chat-comparison-service, model-management-service requirements
 
-# Core ML Framework (compatible versions to avoid conflicts)
-unsloth==2024.12.8
-transformers==4.46.3
-xformers>=0.0.27.post2
-accelerate>=0.34.1
-datasets>=3.4.1,<4.0.0
+# Core ML Framework - required by all 3 services
+torch>=2.0.0
+transformers>=4.35.0
 
-# Compatible versions with unsloth and transformers
-trl==0.11.4
-peft==0.12.0
-bitsandbytes>=0.43.3
+# Training service specific
+unsloth[cu121]>=2024.8
+peft>=0.6.0
+trl>=0.7.0
+bitsandbytes>=0.41.0
+xformers>=0.0.22
+datasets>=2.14.0
+accelerate>=0.24.0
 
-# Additional ML utilities
-tokenizers>=0.15.0
-sentence-transformers>=2.2.0
-huggingface-hub>=0.19.0
-
-# Model serving and inference
+# Chat comparison service specific  
 vllm>=0.2.0
-ray>=2.8.0
 
-# GPU memory optimization
-flash-attn>=2.0.0; platform_machine == "x86_64"
+# Model management service specific
+huggingface-hub>=0.17.0
 
-# Quantization support  
-auto-gptq>=0.5.0
-optimum>=1.14.0
+# Common utilities
+psutil>=5.9.0
+httpx>=0.25.0
 
-# Training utilities
-wandb>=0.16.0
-tensorboard>=2.14.0
-
-# Note: PyTorch is installed separately in the base image
-# Skip unsloth_zoo to avoid conflicts - can be added manually if needed
+# Note: FastAPI, uvicorn, pydantic, prometheus, psycopg2, sqlalchemy, redis 
+# are already included in the base common requirements
