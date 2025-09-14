@@ -19,12 +19,12 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core visualization components
-from .services.visualization_service import VisualizationService
-from .models.schemas import (
+from services.visualization_service import VisualizationService
+from models.schemas import (
     AnalyticsQuery, DashboardConfig, MetricsResponse,
     TrainingAnalytics, ComparisonAnalytics, ChartData
 )
-from .services.service_orchestrator import register_with_orchestrator
+from services.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from config.settings import settings

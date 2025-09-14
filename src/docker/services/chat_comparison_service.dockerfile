@@ -4,11 +4,11 @@ FROM llmforge-ml-base:latest
 # Copy chat comparison service source code
 COPY src/microservices/chat_comparison_service/ /app/
 
-# Install any service-specific dependencies
-# (chat comparison uses ML base dependencies)
-
 # Set working directory
 WORKDIR /app
+
+# Install service-specific dependencies
+RUN pip install -r requirements.txt
 
 # Create required directories
 RUN mkdir -p /app/logs /app/models

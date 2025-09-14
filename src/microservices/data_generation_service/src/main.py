@@ -18,12 +18,12 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core data generation components (local to this microservice)
-from .services.data_generation_service import DataGenerationService
-from .services.template_service import TemplateService
-from .services.service_orchestrator import register_with_orchestrator
+from services.data_generation_service import DataGenerationService
+from services.template_service import TemplateService
+from services.service_orchestrator import register_with_orchestrator
 
 # Import shared utilities and schemas from parent directories
-from .models.schemas import (
+from models.schemas import (
     DataGenerationRequest, DataGenerationResponse, TemplateConfig,
     DatasetValidationRequest, ValidationResult
 )

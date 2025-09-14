@@ -17,12 +17,12 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core model management components (local to this microservice)
-from .services.model_service import ModelService
-from .models.schemas import (
+from services.model_service import ModelService
+from models.schemas import (
     ModelLoadRequest, ModelInfo, ModelConfig, CacheStats,
     ModelUploadRequest, ModelVersionInfo
 )
-from .services.service_orchestrator import register_with_orchestrator
+from services.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from utils.memory import get_gpu_memory_info

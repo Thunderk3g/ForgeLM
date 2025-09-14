@@ -18,10 +18,10 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core training components (now local to this microservice)
-from .services.training_service import TrainingService
-from .services.training_worker import process_manager
-from .models.schemas import FineTuneRequest, TrainingStatus
-from .services.service_orchestrator import register_with_orchestrator
+from services.training_service import TrainingService
+from services.training_worker import process_manager
+from models.schemas import FineTuneRequest, TrainingStatus
+from services.service_orchestrator import register_with_orchestrator
 
 # Import local utilities
 from utils.logging import get_logger
@@ -79,7 +79,8 @@ async def lifespan(app: FastAPI):
     
     # Start performance monitoring
     performance_monitor.start_monitoring()
-    
+     # 🔥 Start background metrics updater
+    asyncio.create_task(update_metrics())
     logger.info("Training Microservice started successfully")
     yield
     
@@ -349,7 +350,6 @@ async def update_metrics():
 
 if __name__ == "__main__":
     # Start metrics update task
-    asyncio.create_task(update_metrics())
     
     # Run the service
     port = int(os.getenv('SERVICE_PORT', '8001'))

@@ -18,14 +18,14 @@ from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
 # Import core comparison components (local to this microservice)
-from .services.comparison_service import ComparisonService
-from .services.model_service import ModelService
-from .services.chat_service import ChatService
-from .models.schemas import (
+from services.comparison_service import ComparisonService
+from services.model_service import ModelService
+from services.chat_service import ChatService
+from models.schemas import (
     ComparisonRequest, ComparisonResponse, ChatMessage, 
     SessionCreateRequest, SessionInfo, DualModelConfig
 )
-from .services.service_orchestrator import register_with_orchestrator
+from services.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
 from utils.performance import performance_monitor
 from config.settings import settings
@@ -119,8 +119,18 @@ async def lifespan(app: FastAPI):
     # Start performance monitoring
     performance_monitor.start_monitoring()
     
+    # Start metrics update task
+    metrics_task = asyncio.create_task(update_metrics())
+    
     logger.info("Chat Comparison Microservice started successfully")
     yield
+    
+    # Cancel metrics task on shutdown
+    metrics_task.cancel()
+    try:
+        await metrics_task
+    except asyncio.CancelledError:
+        pass
     
     # Shutdown
     logger.info("Shutting down Chat Comparison Microservice...")
@@ -453,9 +463,6 @@ async def update_metrics():
 
 
 if __name__ == "__main__":
-    # Start metrics update task
-    asyncio.create_task(update_metrics())
-    
     # Run the service
     port = int(os.getenv('SERVICE_PORT', '8002'))
     host = os.getenv('SERVICE_HOST', '0.0.0.0')

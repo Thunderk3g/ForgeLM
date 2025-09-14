@@ -12,7 +12,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from service_orchestrator import ServiceOrchestrator, get_orchestrator
+from service_orchestrator import get_orchestrator
 
 # Configure logging
 logging.basicConfig(

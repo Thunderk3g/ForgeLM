@@ -17,7 +17,7 @@ from pathlib import Path
 import weakref
 from enum import Enum
 
-from ..models.entities import ModelPair, LoRAMetadata, KVCacheEntry, CacheState
+from models.entities import ModelPair, LoRAMetadata, KVCacheEntry, CacheState
 from utils.memory import get_gpu_memory_info, cleanup_gpu_memory, estimate_model_memory
 from utils.performance import performance_monitor, timing_context, timed
 from utils.logging import get_logger
