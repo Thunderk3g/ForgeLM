@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
-# Import core comparison components
+# Import core comparison components (local to this microservice)
 from .services.comparison_service import ComparisonService
 from .services.model_service import ModelService
 from .services.chat_service import ChatService

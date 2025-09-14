@@ -17,20 +17,13 @@ from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
-# Add current microservice directory to Python path
-import sys
-import os
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, current_dir)
-
-# Import core data generation components (now local to this microservice)
-from services.data_generation_service import DataGenerationService
-from services.template_service import TemplateService
+# Import core data generation components (local to this microservice)
+from .services.data_generation_service import DataGenerationService
+from .services.template_service import TemplateService
 from microservices.orchestrator.service_orchestrator import register_with_orchestrator
 
-# Import shared utilities from parent directory  
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from models.schemas import (
+# Import shared utilities and schemas from parent directories
+from .models.schemas import (
     DataGenerationRequest, DataGenerationResponse, TemplateConfig,
     DatasetValidationRequest, ValidationResult
 )

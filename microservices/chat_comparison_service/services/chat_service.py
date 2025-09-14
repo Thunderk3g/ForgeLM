@@ -13,8 +13,8 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from models.schemas import ChatMessage, SessionCreateRequest, SessionInfo
-from models.entities import ChatSession, ModelPair
+from ..models.schemas import ChatMessage, SessionCreateRequest, SessionInfo
+from ..models.entities import ChatSession, ModelPair
 from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
 from config.settings import settings

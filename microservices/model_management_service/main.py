@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
-# Import core model management components
+# Import core model management components (local to this microservice)
 from .services.model_service import ModelService
 from .models.schemas import (
     ModelLoadRequest, ModelInfo, ModelConfig, CacheStats,

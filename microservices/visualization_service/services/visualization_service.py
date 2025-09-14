@@ -15,9 +15,11 @@ import numpy as np
 from datasets import load_from_disk, Dataset
 from concurrent.futures import ThreadPoolExecutor
 
-from services.training_service import TrainingService
-from services.comparison_service import ComparisonService
-from services.template_service import TemplateService
+# NOTE: Cross-service imports are removed to maintain microservice boundaries
+# These services should be accessed via HTTP API calls through the orchestrator
+# from services.training_service import TrainingService
+# from services.comparison_service import ComparisonService  
+# from services.template_service import TemplateService
 from utils.research_logger import research_logger
 from utils.memory import get_system_resource_info
 from utils.logging import get_logger
@@ -36,9 +38,9 @@ class VisualizationService:
     """Enhanced service for comprehensive visualization data preparation and analytics"""
     
     def __init__(self, 
-                 training_service: Optional[TrainingService] = None,
-                 comparison_service: Optional[ComparisonService] = None,
-                 template_service: Optional[TemplateService] = None):
+                 training_service: Optional[Any] = None,
+                 comparison_service: Optional[Any] = None,
+                 template_service: Optional[Any] = None):
         self.logger = get_logger(__name__)
         
         # Inject dependencies (will be properly initialized in app.py)

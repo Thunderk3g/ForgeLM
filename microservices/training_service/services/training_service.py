@@ -24,7 +24,7 @@ from dataclasses import dataclass
 import torch
 from datasets import load_from_disk
 
-from models.schemas import FineTuneRequest, TrainingStatus
+from ..models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
 from config.settings import settings

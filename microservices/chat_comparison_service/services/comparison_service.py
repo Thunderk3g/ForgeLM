@@ -11,13 +11,13 @@ import uuid
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from models.schemas import (
+from ..models.schemas import (
     ComparisonRequest, ComparisonResponse, ChatMessage, SessionCreateRequest, SessionInfo,
     EnhancedComparisonRequest, DualModelConfig, GenerationConfig
 )
-from models.entities import ChatSession, ModelPair
-from services.model_service import ModelService
-from services.chat_service import ChatService
+from ..models.entities import ChatSession, ModelPair
+from .model_service import ModelService
+from .chat_service import ChatService
 from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
 from utils.research_logger import research_logger
