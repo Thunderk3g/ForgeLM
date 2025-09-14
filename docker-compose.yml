@@ -4,7 +4,7 @@ services:
   base:
     build:
       context: .
-      dockerfile: docker/shared-base/Dockerfile
+      dockerfile: src/docker/shared-base/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     image: llmforge-base:latest
@@ -17,7 +17,7 @@ services:
   ml-base:
     build:
       context: .
-      dockerfile: docker/shared-ml-base/Dockerfile
+      dockerfile: src/docker/shared-ml-base/Dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     image: llmforge-ml-base:latest
@@ -39,7 +39,7 @@ services:
   orchestrator:
     build:
       context: .
-      dockerfile: docker/services/orchestrator.dockerfile
+      dockerfile: src/docker/services/orchestrator.dockerfile
     container_name: llmforge-orchestrator
     restart: unless-stopped
     ports:
@@ -67,7 +67,7 @@ services:
   api-gateway:
     build:
       context: .
-      dockerfile: docker/services/api_gateway.dockerfile
+      dockerfile: src/docker/services/api_gateway.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-api-gateway
@@ -99,7 +99,7 @@ services:
   training-service:
     build:
       context: .
-      dockerfile: docker/services/training_service.dockerfile
+      dockerfile: src/docker/services/training_service.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-training
@@ -144,7 +144,7 @@ services:
   chat-comparison-service:
     build:
       context: .
-      dockerfile: docker/services/chat_comparison_service.dockerfile
+      dockerfile: src/docker/services/chat_comparison_service.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-chat-comparison
@@ -184,7 +184,7 @@ services:
   data-generation-service:
     build:
       context: .
-      dockerfile: docker/services/data_generation_service.dockerfile
+      dockerfile: src/docker/services/data_generation_service.dockerfile
     container_name: llmforge-data-generation
     restart: unless-stopped
     ports:
@@ -215,7 +215,7 @@ services:
   visualization-service:
     build:
       context: .
-      dockerfile: docker/services/visualization_service.dockerfile
+      dockerfile: src/docker/services/visualization_service.dockerfile
     container_name: llmforge-visualization
     restart: unless-stopped
     ports:
@@ -243,7 +243,7 @@ services:
   model-management-service:
     build:
       context: .
-      dockerfile: docker/services/model_management_service.dockerfile
+      dockerfile: src/docker/services/model_management_service.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-model-management

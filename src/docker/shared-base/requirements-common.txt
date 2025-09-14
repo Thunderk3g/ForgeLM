@@ -1,0 +1,29 @@
+# LLMForge Shared Base Dependencies
+# Common dependencies used across ALL microservices
+# These are stable, frequently used packages that rarely change
+
+# Core API Framework (used by all services)
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.4.2
+
+# Monitoring and Observability (used by all services)
+prometheus-client>=0.19.0
+psutil>=5.9.0
+
+# HTTP Client and Networking (used by most services)
+httpx>=0.25.0
+aiohttp>=3.9.0
+
+# Database and Storage (used by most services)
+redis>=5.0.1
+psycopg2-binary>=2.9.0
+sqlalchemy>=2.0.0
+
+# Data Processing (used by data-intensive services)
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Logging and Configuration
+pyyaml>=6.0.0
+python-dotenv>=1.0.0
