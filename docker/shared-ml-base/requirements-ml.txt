@@ -1,29 +1,15 @@
-# LLMForge Minimal ML Dependencies
-# Only includes packages actually used by the microservices
-# Based on training-service, chat-comparison-service, model-management-service requirements
-
-# Core ML Framework - required by all 3 services
-torch>=2.0.0
-transformers>=4.35.0
+# Core ML Framework
+transformers>=4.56.1
 
 # Training service specific
-unsloth[cu121]>=2024.8
-peft>=0.6.0
-trl>=0.7.0
-bitsandbytes>=0.41.0
-xformers>=0.0.22
-datasets>=2.14.0
-accelerate>=0.24.0
-
-# Chat comparison service specific  
-vllm>=0.2.0
-
-# Model management service specific
-huggingface-hub>=0.17.0
+unsloth>=2025.9.4        # latest version of unsloth published on PyPI :contentReference[oaicite:0]{index=0}
+peft>=0.13.0             # assuming minor bump; latest stable around v0.13+ :contentReference[oaicite:1]{index=1}
+trl>=0.23.0              # latest TRL version :contentReference[oaicite:2]{index=2}
+bitsandbytes>=0.45.0     # pick a recent version; ensure compatibility with CUDA :contentReference[oaicite:3]{index=3}
+xformers>=0.0.32.post2    # latest stable xformers as of Aug 2025 :contentReference[oaicite:4]{index=4}
+datasets>=2.14.0          # your original lower bound; update if necessary
+accelerate>=0.34.0        # a newer version; to stay current
 
 # Common utilities
 psutil>=5.9.0
 httpx>=0.25.0
-
-# Note: FastAPI, uvicorn, pydantic, prometheus, psycopg2, sqlalchemy, redis 
-# are already included in the base common requirements
