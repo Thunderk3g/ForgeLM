@@ -39,7 +39,7 @@ services:
   orchestrator:
     build:
       context: .
-      dockerfile: docker/orchestrator/Dockerfile
+      dockerfile: docker/services/orchestrator.dockerfile
     container_name: llmforge-orchestrator
     restart: unless-stopped
     ports:
@@ -67,7 +67,7 @@ services:
   api-gateway:
     build:
       context: .
-      dockerfile: microservices/api_gateway/Dockerfile
+      dockerfile: docker/services/api_gateway.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-api-gateway
@@ -99,7 +99,7 @@ services:
   training-service:
     build:
       context: .
-      dockerfile: microservices/training_service/Dockerfile
+      dockerfile: docker/services/training_service.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-training
@@ -144,7 +144,7 @@ services:
   chat-comparison-service:
     build:
       context: .
-      dockerfile: docker/chat_comparison_service/Dockerfile
+      dockerfile: docker/services/chat_comparison_service.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-chat-comparison
@@ -184,7 +184,7 @@ services:
   data-generation-service:
     build:
       context: .
-      dockerfile: docker/data_generation_service/Dockerfile
+      dockerfile: docker/services/data_generation_service.dockerfile
     container_name: llmforge-data-generation
     restart: unless-stopped
     ports:
@@ -215,7 +215,7 @@ services:
   visualization-service:
     build:
       context: .
-      dockerfile: docker/visualization_service/Dockerfile
+      dockerfile: docker/services/visualization_service.dockerfile
     container_name: llmforge-visualization
     restart: unless-stopped
     ports:
@@ -243,7 +243,7 @@ services:
   model-management-service:
     build:
       context: .
-      dockerfile: docker/model_management_service/Dockerfile
+      dockerfile: docker/services/model_management_service.dockerfile
       args:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-model-management
