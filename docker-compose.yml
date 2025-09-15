@@ -77,6 +77,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8000
+      - SERVICE_ADVERTISED_HOST=llmforge-api-gateway
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - RATE_LIMIT_REQUESTS_PER_MINUTE=1000
@@ -109,6 +110,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8001
+      - SERVICE_ADVERTISED_HOST=llmforge-training
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       - TOKENIZERS_PARALLELISM=false
@@ -154,6 +156,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8002
+      - SERVICE_ADVERTISED_HOST=llmforge-chat-comparison
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - MAX_CACHED_PAIRS=${MAX_CACHED_PAIRS:-10}
       - MAX_HBM_GB=${MAX_HBM_GB:-12}
@@ -192,6 +195,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8003
+      - SERVICE_ADVERTISED_HOST=llmforge-data-generation
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -223,6 +227,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8004
+      - SERVICE_ADVERTISED_HOST=llmforge-visualization
       - ORCHESTRATOR_URL=http://orchestrator:8080
     volumes:
       - ./data:/app/data
@@ -253,6 +258,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8005
+      - SERVICE_ADVERTISED_HOST=llmforge-model-management
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - MAX_CACHED_MODELS=${MAX_CACHED_MODELS:-5}
       - CACHE_SIZE_GB=${CACHE_SIZE_GB:-20}

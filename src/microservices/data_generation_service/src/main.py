@@ -55,7 +55,7 @@ async def register_service():
             orchestrator_url=orchestrator_url,
             service_name="llmforge-data-generation",
             service_id=service_id,
-            host=os.getenv('SERVICE_HOST', 'localhost'),
+            host=os.getenv('SERVICE_ADVERTISED_HOST', 'llmforge-data-generation'),
             port=int(os.getenv('SERVICE_PORT', '8003')),
             health_endpoint="/health",
             metadata={

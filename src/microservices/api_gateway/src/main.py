@@ -40,24 +40,50 @@ logger = get_logger(__name__)
 SERVICE_ROUTES = {
     # Training service routes
     '/api/v1/fine-tune': 'llmforge-training',
-    '/api/v1/training/': 'llmforge-training',
+    '/api/v1/training': 'llmforge-training',
+    '/fine-tune': 'llmforge-training',  # Backward compatibility
     
     # Chat comparison service routes  
     '/api/v1/sessions': 'llmforge-chat-comparison',
     '/api/v1/compare': 'llmforge-chat-comparison',
     '/api/v1/models/pairs': 'llmforge-chat-comparison',
+    '/api/v1/chat': 'llmforge-chat-comparison',
+    '/chat': 'llmforge-chat-comparison',  # Backward compatibility
     
     # Data generation service routes
     '/api/v1/generate': 'llmforge-data-generation',
     '/api/v1/templates': 'llmforge-data-generation',
+    '/api/v1/data-generation': 'llmforge-data-generation',
+    '/data-generation': 'llmforge-data-generation',  # Backward compatibility
     
     # Visualization service routes
     '/api/v1/analytics': 'llmforge-visualization',
     '/api/v1/dashboard': 'llmforge-visualization',
+    '/api/v1/visualization': 'llmforge-visualization',
+    '/visualization': 'llmforge-visualization',  # Backward compatibility
     
     # Model management service routes
     '/api/v1/models': 'llmforge-model-management',
     '/api/v1/cache': 'llmforge-model-management',
+    '/models': 'llmforge-model-management',  # Backward compatibility
+    '/select-model': 'llmforge-model-management',  # Backward compatibility
+    
+    # Config routes (could be handled by any service, let's use model-management for now)
+    '/api/v1/config': 'llmforge-model-management',
+    '/config': 'llmforge-model-management',  # Backward compatibility
+    
+    # Agent routes (part of chat comparison service)
+    '/api/v1/agents': 'llmforge-chat-comparison',
+    '/agents': 'llmforge-chat-comparison',  # Backward compatibility
+}
+
+# Service port mappings for direct container access
+SERVICE_PORTS = {
+    'llmforge-training': 8001,
+    'llmforge-chat-comparison': 8002,
+    'llmforge-data-generation': 8003,
+    'llmforge-visualization': 8004,
+    'llmforge-model-management': 8005,
 }
 
 # Service discovery client
@@ -67,6 +93,10 @@ class ServiceDiscoveryClient:
         self.service_cache: Dict[str, Dict[str, Any]] = {}
         self.cache_ttl = 30  # 30 seconds
         self.last_cache_update: Dict[str, float] = {}
+        # Only allow localhost fallback in non-production by default
+        env = os.getenv('ENV', os.getenv('APP_ENV', 'development')).lower()
+        default_localhost = 'false' if env in ['prod', 'production'] else 'true'
+        self.allow_localhost_fallback = os.getenv('ALLOW_LOCALHOST_FALLBACK', default_localhost).lower() == 'true'
     
     async def get_service_instance(self, service_name: str) -> Optional[Dict[str, Any]]:
         """Get a healthy service instance"""
@@ -78,24 +108,57 @@ class ServiceDiscoveryClient:
             current_time - self.last_cache_update[service_name] < self.cache_ttl):
             return self.service_cache[service_name]
         
-        # Discover service from orchestrator
+        # Try orchestrator first
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{self.orchestrator_url}/discover/{service_name}",
-                    timeout=aiohttp.ClientTimeout(total=5)
+                    timeout=aiohttp.ClientTimeout(total=3)
                 ) as response:
                     if response.status == 200:
                         service_info = await response.json()
                         self.service_cache[service_name] = service_info
                         self.last_cache_update[service_name] = current_time
                         return service_info
-                    else:
-                        logger.warning(f"Service discovery failed for {service_name}: {response.status}")
-                        return None
         except Exception as e:
-            logger.error(f"Service discovery error for {service_name}: {e}")
-            return None
+            logger.warning(f"Orchestrator unavailable for {service_name}: {e}")
+        
+        # Fallback to direct container networking
+        if service_name in SERVICE_PORTS:
+            port = SERVICE_PORTS[service_name]
+            # Try the container/service DNS name first; include localhost only if allowed (non-prod)
+            hosts = [service_name]
+            if self.allow_localhost_fallback:
+                hosts.append('localhost')
+            for host in hosts:
+                service_url = f"http://{host}:{port}"
+                try:
+                    # Test if service is healthy
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            f"{service_url}/health",
+                            timeout=aiohttp.ClientTimeout(total=2)
+                        ) as response:
+                            if response.status == 200:
+                                service_info = {
+                                    'instance': {
+                                        'url': service_url,
+                                        'host': host,
+                                        'port': port,
+                                        'healthy': True
+                                    },
+                                    'service_name': service_name
+                                }
+                                self.service_cache[service_name] = service_info
+                                self.last_cache_update[service_name] = current_time
+                                logger.info(f"Using direct connection for {service_name}: {service_url}")
+                                return service_info
+                except Exception as e:
+                    logger.debug(f"Failed to connect directly to {service_url}: {e}")
+                    continue
+        
+        logger.error(f"No healthy instance found for service {service_name}")
+        return None
 
 # Global service discovery client
 service_discovery: Optional[ServiceDiscoveryClient] = None
@@ -111,7 +174,8 @@ async def register_service():
             orchestrator_url=orchestrator_url,
             service_name="llmforge-api-gateway",
             service_id=service_id,
-            host=os.getenv('SERVICE_HOST', 'localhost'),
+            # Advertised host should be reachable by other containers/services
+            host=os.getenv('SERVICE_ADVERTISED_HOST', 'llmforge-api-gateway'),
             port=int(os.getenv('SERVICE_PORT', '8000')),
             health_endpoint="/health",
             metadata={
@@ -237,9 +301,11 @@ async def proxy_request(
             gateway_errors_total.labels(service=service_name, error_type="service_unavailable").inc()
             raise HTTPException(status_code=503, detail=f"Service {service_name} unavailable")
         
-        # Build target URL
+        # Build target URL (normalize slashes)
         instance = service_info['instance']
-        target_url = f"{instance['url']}{target_path}"
+        base_url = instance['url'].rstrip('/')
+        normalized_path = '/' + target_path.lstrip('/')
+        target_url = f"{base_url}{normalized_path}"
         
         # Prepare request data
         headers = dict(request.headers)
@@ -307,6 +373,24 @@ async def api_proxy(path: str, request: Request):
     target_path = path
     
     return await proxy_request(request, service_name, target_path)
+
+
+# Backward compatibility route handlers (without /api/v1 prefix)
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def legacy_proxy(path: str, request: Request):
+    """Proxy legacy API requests to appropriate microservices for backward compatibility"""
+    # Skip internal routes
+    if path in ["health", "services", "routes", "metrics"] or path.startswith("api/v1/"):
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    full_path = f"/{path}"
+    service_name = get_service_name(full_path)
+    
+    if not service_name:
+        raise HTTPException(status_code=404, detail=f"No service found for path: {full_path}")
+    
+    # Use the full path as target path for backward compatibility
+    return await proxy_request(request, service_name, path)
 
 
 @app.get("/services")

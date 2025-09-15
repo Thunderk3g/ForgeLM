@@ -514,6 +514,10 @@ class ServiceOrchestrator:
         
         return app
     
+    async def stop(self):
+        """Gracefully stop orchestrator components"""
+        await self.registry.stop()
+
     async def _broadcast_service_update(self):
         """Broadcast service updates to connected WebSocket clients"""
         if not self.websocket_connections:

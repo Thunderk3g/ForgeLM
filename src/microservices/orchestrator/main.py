@@ -39,7 +39,15 @@ async def lifespan(app: FastAPI):
     # Shutdown
     logger.info("Shutting down Service Orchestrator...")
     if orchestrator_instance:
-        await orchestrator_instance.stop()
+        # Stop via service orchestrator stop if available
+        try:
+            await orchestrator_instance.stop()
+        except AttributeError:
+            # Fallback: stop registry directly
+            try:
+                await orchestrator_instance.registry.stop()
+            except Exception:
+                pass
     logger.info("Service Orchestrator stopped")
 
 # Create FastAPI app
@@ -74,7 +82,37 @@ async def register_service(service_data: dict):
     """Register a new service with the orchestrator"""
     try:
         orchestrator = await get_orchestrator()
-        result = await orchestrator.register_service(service_data)
+        # Accept the JSON payload as sent by clients and adapt to internal registry
+        # Expected keys from clients: service_name, service_id, host, port, health_endpoint, metadata
+        try:
+            instance_data = {
+                "service_name": service_data.get("service_name") or service_data.get("name"),
+                "service_id": service_data.get("service_id") or service_data.get("id") or service_data.get("serviceId"),
+                "host": service_data.get("host"),
+                "port": int(service_data.get("port")),
+                "health_endpoint": service_data.get("health_endpoint", "/health"),
+                "metadata": service_data.get("metadata", {}),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid registration payload: {e}")
+
+        if not instance_data["service_name"] or not instance_data["service_id"]:
+            raise HTTPException(status_code=400, detail="Missing service_name or service_id")
+
+        # Create and register the instance
+        from service_orchestrator import ServiceInstance
+        instance = ServiceInstance(
+            id=instance_data["service_id"],
+            name=instance_data["service_name"],
+            host=instance_data["host"],
+            port=instance_data["port"],
+            health_endpoint=instance_data["health_endpoint"],
+            metadata=instance_data["metadata"],
+        )
+
+        orchestrator.registry.register_service(instance)
+        await orchestrator._broadcast_service_update()
+        result = {"status": "registered", "service": instance.name, "id": instance.id}
         return result
     except Exception as e:
         logger.error(f"Service registration failed: {e}")
@@ -101,30 +139,26 @@ async def list_services():
         logger.error(f"Failed to list services: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/route/{service_name}")
-async def route_to_service(service_name: str, capabilities: str = None):
-    """Route a request to the best available service instance"""
+@app.get("/discover/{service_name}")
+async def discover_service(service_name: str):
+    """Discover a healthy instance and return its URL and metadata"""
     try:
         orchestrator = await get_orchestrator()
-        capabilities_list = capabilities.split(",") if capabilities else None
-        
-        service_instance = await orchestrator.route_request(service_name, capabilities_list)
-        
-        if service_instance:
+        instances = orchestrator.registry.get_healthy_instances(service_name)
+        selected = orchestrator.load_balancer.select_instance(service_name, instances)
+        if selected:
+            selected.active_connections += 1
             return {
-                "service_id": service_instance.service_id,
-                "service_name": service_instance.service_name,
-                "url": service_instance.url,
-                "state": service_instance.state.value,
-                "response_time_ms": service_instance.response_time_ms
+                "service": service_name,
+                "instance": {
+                    "id": selected.id,
+                    "url": selected.url,
+                    "metadata": selected.metadata
+                }
             }
-        else:
-            raise HTTPException(
-                status_code=503, 
-                detail=f"No healthy instances available for service '{service_name}'"
-            )
+        raise HTTPException(status_code=404, detail=f"Service {service_name} not found or unavailable")
     except Exception as e:
-        logger.error(f"Service routing failed: {e}")
+        logger.error(f"Service discovery failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/release/{service_id}")

@@ -52,7 +52,7 @@ async def register_service():
             orchestrator_url=orchestrator_url,
             service_name="llmforge-model-management",
             service_id=service_id,
-            host=os.getenv('SERVICE_HOST', 'localhost'),
+            host=os.getenv('SERVICE_ADVERTISED_HOST', 'llmforge-model-management'),
             port=int(os.getenv('SERVICE_PORT', '8005')),
             health_endpoint="/health",
             metadata={
@@ -236,6 +236,67 @@ async def list_available_models():
         return {"available_models": models}
     except Exception as e:
         logger.error(f"List available models failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/select-model")
+async def select_model(request: dict):
+    """Select and prepare a model for use (backward compatibility endpoint)"""
+    if not model_service:
+        raise HTTPException(status_code=503, detail="Model service not initialized")
+    
+    try:
+        model_name = request.get('model_name')
+        model_path = request.get('model_path')
+        
+        if not model_name and not model_path:
+            raise HTTPException(status_code=400, detail="Either model_name or model_path must be provided")
+        
+        # If model_name is provided, try to find the model path
+        if model_name and not model_path:
+            available_models = await model_service.list_available_models()
+            matching_models = [m for m in available_models if model_name.lower() in m.get('name', '').lower()]
+            if matching_models:
+                model_path = matching_models[0].get('path')
+            else:
+                # Try to download the model if it's not available locally
+                try:
+                    download_info = await model_service.download_model(model_name=model_name)
+                    model_path = download_info.get('path')
+                except Exception as e:
+                    logger.warning(f"Failed to download model {model_name}: {e}")
+                    raise HTTPException(status_code=404, detail=f"Model {model_name} not found")
+        
+        # Load the model if it's not already loaded
+        try:
+            model_info = await model_service.load_model(model_path=model_path)
+            
+            return {
+                "status": "success",
+                "message": f"Model {model_name or model_path} selected successfully",
+                "model_info": model_info,
+                "selected_model": {
+                    "name": model_name or model_path,
+                    "path": model_path,
+                    "loaded": True
+                }
+            }
+        except Exception as load_error:
+            logger.error(f"Failed to load selected model: {load_error}")
+            return {
+                "status": "partial_success",
+                "message": f"Model {model_name or model_path} found but failed to load",
+                "model_path": model_path,
+                "error": str(load_error),
+                "selected_model": {
+                    "name": model_name or model_path,
+                    "path": model_path,
+                    "loaded": False
+                }
+            }
+            
+    except Exception as e:
+        logger.error(f"Model selection failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

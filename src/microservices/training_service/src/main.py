@@ -7,6 +7,7 @@ and high-performance fine-tuning capabilities.
 
 import asyncio
 import os
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
@@ -50,7 +51,7 @@ async def register_service():
             orchestrator_url=orchestrator_url,
             service_name="llmforge-training",
             service_id=service_id,
-            host=os.getenv('SERVICE_HOST', 'localhost'),
+            host=os.getenv('SERVICE_ADVERTISED_HOST', 'llmforge-training'),
             port=int(os.getenv('SERVICE_PORT', '8001')),
             health_endpoint="/health",
             metadata={
@@ -244,6 +245,27 @@ async def list_training_jobs():
         return {"jobs": jobs}
     except Exception as e:
         logger.error(f"List jobs failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/fine-tune/active")
+async def list_active_training_jobs():
+    """List active training jobs (backward compatibility endpoint)"""
+    if not training_service:
+        raise HTTPException(status_code=503, detail="Training service not initialized")
+    
+    try:
+        # Get all jobs and filter for active ones
+        all_jobs = await training_service.list_training_jobs()
+        active_jobs = [job for job in all_jobs if job.get('status') in ['running', 'starting', 'in_progress']]
+        
+        return {
+            "active_jobs": active_jobs,
+            "total_active": len(active_jobs),
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logger.error(f"List active jobs failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
