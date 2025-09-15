@@ -246,7 +246,7 @@ async def select_model(request: dict):
         raise HTTPException(status_code=503, detail="Model service not initialized")
     
     try:
-        model_name = request.get('model_name')
+        model_name = request.get('model_id')
         model_path = request.get('model_path')
         
         if not model_name and not model_path:
