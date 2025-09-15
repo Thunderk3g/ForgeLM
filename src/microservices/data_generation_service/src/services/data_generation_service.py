@@ -563,3 +563,10 @@ class DataGenerationService:
         valid_templates = ["alpaca", "chatml", "sharegpt", "qwen"]
         if config.template_format not in valid_templates:
             raise DataGenerationError(f"Invalid template format. Must be one of: {valid_templates}", error_type="invalid_config")
+    
+    def get_active_job_count(self) -> int:
+        """Get the count of active generation jobs"""
+        return len([
+            job for job in self.active_generations.values() 
+            if job.get("status") in ["initializing", "running"]
+        ])

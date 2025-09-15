@@ -85,8 +85,18 @@ async def lifespan(app: FastAPI):
     # Start performance monitoring
     performance_monitor.start_monitoring()
     
+    # Start metrics update task
+    metrics_task = asyncio.create_task(update_metrics())
+    
     logger.info("Model Management Microservice started successfully")
     yield
+    
+    # Cancel metrics task on shutdown
+    metrics_task.cancel()
+    try:
+        await metrics_task
+    except asyncio.CancelledError:
+        pass
     
     # Shutdown
     logger.info("Shutting down Model Management Microservice...")
@@ -536,9 +546,6 @@ async def update_metrics():
 
 
 if __name__ == "__main__":
-    # Start metrics update task
-    asyncio.create_task(update_metrics())
-    
     # Run the service
     port = int(os.getenv('SERVICE_PORT', '8005'))
     host = os.getenv('SERVICE_HOST', '0.0.0.0')

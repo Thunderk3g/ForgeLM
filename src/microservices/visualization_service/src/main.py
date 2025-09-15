@@ -236,9 +236,9 @@ async def create_dashboard(dashboard_type: str, config: DashboardConfig):
 @app.get("/charts/{chart_type}")
 async def generate_chart(
     chart_type: str,
-    start_time: Optional[datetime] = Query(None),
-    end_time: Optional[datetime] = Query(None),
-    filters: Optional[Dict[str, Any]] = Query(None)
+    start_time: Optional[str] = Query(None),
+    end_time: Optional[str] = Query(None),
+    filters: Optional[str] = Query(None)
 ):
     """Generate chart data"""
     chart_generations.labels(chart_type=chart_type).inc()
@@ -320,7 +320,7 @@ async def get_comparison_metrics(
 @app.get("/export/{export_type}")
 async def export_data(
     export_type: str,
-    format: str = Query("json", regex="^(json|csv|pdf)$"),
+    format: str = Query("json", pattern="^(json|csv|pdf)$"),
     start_time: Optional[datetime] = Query(None),
     end_time: Optional[datetime] = Query(None)
 ):
@@ -512,7 +512,8 @@ async def update_metrics():
             await asyncio.sleep(30)  # Wait longer on error
 
 
-if __name__ == "__main__":
+async def main():
+    """Main entry point for the visualization service"""
     # Start metrics update task
     asyncio.create_task(update_metrics())
     
@@ -520,9 +521,14 @@ if __name__ == "__main__":
     port = int(os.getenv('SERVICE_PORT', '8004'))
     host = os.getenv('SERVICE_HOST', '0.0.0.0')
     
-    uvicorn.run(
-        app,
+    config = uvicorn.Config(
+        app=app,
         host=host,
         port=port,
         log_level="info"
     )
+    server = uvicorn.Server(config)
+    await server.serve()
+
+if __name__ == "__main__":
+    asyncio.run(main())

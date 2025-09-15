@@ -10,3 +10,4 @@ sqlalchemy>=2.0.0
 redis>=5.0.1
 psutil>=5.9.0
 httpx>=0.25.0
+python-multipart>=0.0.6

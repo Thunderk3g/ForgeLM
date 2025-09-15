@@ -653,6 +653,53 @@ class TrainingService:
         
         return sessions
     
+    def get_gpu_status(self) -> Dict[str, Any]:
+        """Get GPU status for health checks"""
+        try:
+            if torch.cuda.is_available():
+                gpu_count = torch.cuda.device_count()
+                gpu_info = []
+                
+                for i in range(gpu_count):
+                    device_props = torch.cuda.get_device_properties(i)
+                    memory_allocated = torch.cuda.memory_allocated(i) / 1024**3  # GB
+                    memory_reserved = torch.cuda.memory_reserved(i) / 1024**3   # GB
+                    memory_total = device_props.total_memory / 1024**3          # GB
+                    
+                    gpu_info.append({
+                        "device_id": i,
+                        "name": device_props.name,
+                        "memory_allocated_gb": round(memory_allocated, 2),
+                        "memory_reserved_gb": round(memory_reserved, 2),
+                        "memory_total_gb": round(memory_total, 2),
+                        "memory_free_gb": round(memory_total - memory_reserved, 2),
+                        "utilization_percent": round((memory_reserved / memory_total) * 100, 1),
+                        "available": True
+                    })
+                
+                return {
+                    "cuda_available": True,
+                    "gpu_count": gpu_count,
+                    "gpus": gpu_info,
+                    "total_allocated_gb": round(sum(g["memory_allocated_gb"] for g in gpu_info), 2),
+                    "total_reserved_gb": round(sum(g["memory_reserved_gb"] for g in gpu_info), 2)
+                }
+            else:
+                return {
+                    "cuda_available": False,
+                    "gpu_count": 0,
+                    "gpus": [],
+                    "message": "CUDA not available or no GPUs detected"
+                }
+        except Exception as e:
+            self.logger.error(f"Error getting GPU status: {e}")
+            return {
+                "cuda_available": False,
+                "gpu_count": 0,
+                "gpus": [],
+                "error": str(e)
+            }
+    
     def cancel_training(self, task_id: str) -> bool:
         """Cancel an active training session"""
         if task_id in self.active_trainings:

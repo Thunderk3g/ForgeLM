@@ -11,7 +11,29 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 import hashlib
 
-from models.schemas import ResearchLogEntry, ComparisonResponse, ChatMessage
+from pydantic import BaseModel
+from datetime import datetime
+
+
+class ResearchLogEntry(BaseModel):
+    timestamp: str
+    session_id: str
+    data: Dict[str, Any]
+    log_type: str
+
+
+class ComparisonResponse(BaseModel):
+    session_id: str
+    base_response: str
+    finetuned_response: str
+    metadata: Dict[str, Any]
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
 from utils.logging import get_logger
 
 

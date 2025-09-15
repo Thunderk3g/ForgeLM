@@ -346,6 +346,29 @@ class ProcessManager:
                         pass
         
         return active
+    
+    def get_active_job_count(self) -> int:
+        """Get the number of active training jobs for health checks"""
+        try:
+            with self.process_lock:
+                # Clean up finished processes first
+                finished_tasks = []
+                for task_id, process in list(self.active_processes.items()):
+                    if not process.is_alive():
+                        finished_tasks.append(task_id)
+                        try:
+                            process.join(timeout=0.1)
+                        except:
+                            pass
+                
+                # Remove finished processes
+                for task_id in finished_tasks:
+                    del self.active_processes[task_id]
+                
+                return len(self.active_processes)
+        except Exception as e:
+            print(f"Error getting active job count: {e}")
+            return 0
 
 
 # Global process manager instance

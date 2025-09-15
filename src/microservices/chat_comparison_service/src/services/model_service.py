@@ -1727,6 +1727,57 @@ class ModelService:
         except Exception as e:
             self.logger.error(f"Error getting system prompt for session {session_id}: {e}")
             return "You are a helpful assistant."
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get detailed cache statistics for health checks"""
+        try:
+            return {
+                "loaded_models": len(self.loaded_models_cache),
+                "base_models": len(self.base_models),
+                "lora_adapters": len(self.lora_adapters),
+                "kv_caches": len(self.kv_caches),
+                "active_pairs": len(self.active_pairs),
+                "active_lora_adapters": len([a for a in self.lora_adapters.values() if a.state == CacheState.ACTIVE]),
+                "max_hbm_gb": self.max_hbm_gb,
+                "max_cached_pairs": self.max_cached_pairs
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting cache stats: {e}")
+            return {
+                "error": str(e),
+                "loaded_models": len(self.loaded_models_cache) if hasattr(self, 'loaded_models_cache') else 0
+            }
+    
+    def get_loaded_models_info(self) -> Dict[str, Any]:
+        """Get information about currently loaded models for health checks"""
+        try:
+            info = {
+                "loaded_model_pairs": len(self.loaded_models_cache),
+                "base_models": list(self.base_models.keys()),
+                "lora_adapters": list(self.lora_adapters.keys()),
+                "active_sessions": list(self.active_pairs.keys()),
+                "cache_status": {}
+            }
+            
+            # Add detailed cache information
+            for pair_id, (base_model, tokenizer, ft_model, ft_tokenizer) in self.loaded_models_cache.items():
+                info["cache_status"][pair_id] = {
+                    "base_model_loaded": base_model is not None,
+                    "tokenizer_loaded": tokenizer is not None,
+                    "finetuned_model_loaded": ft_model is not None,
+                    "finetuned_tokenizer_loaded": ft_tokenizer is not None
+                }
+            
+            return info
+        except Exception as e:
+            self.logger.error(f"Error getting loaded models info: {e}")
+            return {
+                "error": str(e),
+                "loaded_model_pairs": 0,
+                "base_models": [],
+                "lora_adapters": [],
+                "active_sessions": []
+            }
 
 
 # Create global service instance

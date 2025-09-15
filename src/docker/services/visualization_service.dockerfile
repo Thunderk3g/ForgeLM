@@ -4,8 +4,9 @@ FROM llmforge-base:latest
 # Copy visualization service source code
 COPY src/microservices/visualization_service/ /app/
 
-# Install any service-specific dependencies
-# (visualization uses base dependencies)
+# Install service-specific dependencies
+COPY src/microservices/visualization_service/requirements.txt /tmp/requirements-viz.txt
+RUN pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-viz.txt
 
 # Set working directory
 WORKDIR /app

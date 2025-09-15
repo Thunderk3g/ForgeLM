@@ -645,3 +645,299 @@ class VisualizationService:
         except Exception as e:
             self.logger.error(f"Error calculating health score: {e}")
             return 0.5
+    
+    def list_dashboards(self) -> List[str]:
+        """List available dashboard types for health checks"""
+        return [
+            "training",
+            "comparison", 
+            "system",
+            "dataset_analytics",
+            "resource_monitoring"
+        ]
+    
+    def get_cache_size(self) -> int:
+        """Get current cache size for health checks"""
+        return len(self._cache)
+    
+    async def get_dashboard(self, dashboard_type: str) -> Dict[str, Any]:
+        """Get dashboard configuration and data"""
+        try:
+            if dashboard_type == "training":
+                return await self._get_training_dashboard()
+            elif dashboard_type == "comparison":
+                return await self._get_comparison_dashboard()
+            elif dashboard_type == "system":
+                return await self._get_system_dashboard()
+            elif dashboard_type == "dataset_analytics":
+                return await self._get_dataset_dashboard()
+            elif dashboard_type == "resource_monitoring":
+                return await self._get_resource_dashboard()
+            else:
+                raise ValueError(f"Unknown dashboard type: {dashboard_type}")
+        except Exception as e:
+            self.logger.error(f"Error getting dashboard {dashboard_type}: {e}")
+            return {"error": str(e), "dashboard_type": dashboard_type}
+    
+    async def create_dashboard(self, dashboard_type: str, config: Dict[str, Any]) -> bool:
+        """Create or update dashboard configuration"""
+        try:
+            # For now, just validate and return success
+            valid_types = self.list_dashboards()
+            if dashboard_type not in valid_types:
+                return False
+            
+            # Cache the dashboard config
+            cache_key = f"dashboard_config_{dashboard_type}"
+            self._set_cached_data(cache_key, config)
+            
+            self.logger.info(f"Dashboard {dashboard_type} created/updated successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error creating dashboard {dashboard_type}: {e}")
+            return False
+    
+    async def generate_chart(self, chart_type: str, start_time: str = None, 
+                           end_time: str = None, filters: Dict = None) -> Dict[str, Any]:
+        """Generate chart data"""
+        try:
+            filters = filters or {}
+            
+            if chart_type == "training_loss":
+                return await self._generate_training_loss_chart(start_time, end_time, filters)
+            elif chart_type == "resource_usage":
+                return await self._generate_resource_usage_chart(start_time, end_time, filters)
+            elif chart_type == "comparison_metrics":
+                return await self._generate_comparison_metrics_chart(start_time, end_time, filters)
+            else:
+                return {"error": f"Unknown chart type: {chart_type}"}
+        except Exception as e:
+            self.logger.error(f"Error generating chart {chart_type}: {e}")
+            return {"error": str(e)}
+    
+    async def get_system_metrics(self) -> Dict[str, Any]:
+        """Get system-wide metrics"""
+        return await self.get_system_health_metrics()
+    
+    async def get_training_metrics(self, start_time: datetime = None, 
+                                 end_time: datetime = None) -> Dict[str, Any]:
+        """Get training-related metrics"""
+        try:
+            # Get recent training data
+            training_data = research_logger.get_recent_training_logs(hours=24)
+            return {
+                "training_data": training_data,
+                "start_time": start_time.isoformat() if start_time else None,
+                "end_time": end_time.isoformat() if end_time else None,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting training metrics: {e}")
+            return {"error": str(e)}
+    
+    async def get_comparison_metrics(self, start_time: datetime = None,
+                                   end_time: datetime = None) -> Dict[str, Any]:
+        """Get comparison-related metrics"""
+        try:
+            hours_back = 24
+            if start_time:
+                hours_back = max(1, int((datetime.now() - start_time).total_seconds() / 3600))
+            
+            return await self.get_comparison_analytics(hours_back)
+        except Exception as e:
+            self.logger.error(f"Error getting comparison metrics: {e}")
+            return {"error": str(e)}
+    
+    async def export_data(self, export_type: str, format: str = "json",
+                         start_time: datetime = None, end_time: datetime = None) -> str:
+        """Export data in various formats"""
+        try:
+            if export_type == "training":
+                data = await self.get_training_metrics(start_time, end_time)
+            elif export_type == "comparison":
+                data = await self.get_comparison_metrics(start_time, end_time)
+            elif export_type == "system":
+                data = await self.get_system_metrics()
+            else:
+                data = {"error": f"Unknown export type: {export_type}"}
+            
+            if format == "json":
+                return json.dumps(data, indent=2, default=str)
+            elif format == "csv":
+                # Simple CSV export (would need proper CSV formatting)
+                return f"Export type: {export_type}\nData: {json.dumps(data)}"
+            elif format == "pdf":
+                # Mock PDF export
+                return f"PDF export of {export_type} data - {len(str(data))} bytes"
+            else:
+                return json.dumps({"error": f"Unknown format: {format}"})
+        except Exception as e:
+            self.logger.error(f"Error exporting data: {e}")
+            return json.dumps({"error": str(e)})
+    
+    async def stream_training_metrics(self, job_id: str):
+        """Stream real-time training metrics"""
+        try:
+            # Mock streaming for now
+            for i in range(5):
+                yield json.dumps({
+                    "job_id": job_id,
+                    "step": i,
+                    "loss": 1.0 - (i * 0.1),
+                    "timestamp": datetime.now().isoformat()
+                })
+                await asyncio.sleep(1)
+        except Exception as e:
+            self.logger.error(f"Error streaming training metrics: {e}")
+            yield json.dumps({"error": str(e)})
+    
+    async def stream_comparison_metrics(self, session_id: str):
+        """Stream real-time comparison metrics"""
+        try:
+            # Mock streaming for now
+            for i in range(3):
+                yield json.dumps({
+                    "session_id": session_id,
+                    "active_comparisons": i + 1,
+                    "timestamp": datetime.now().isoformat()
+                })
+                await asyncio.sleep(2)
+        except Exception as e:
+            self.logger.error(f"Error streaming comparison metrics: {e}")
+            yield json.dumps({"error": str(e)})
+    
+    async def generate_training_report(self, job_id: str) -> Dict[str, Any]:
+        """Generate comprehensive training report"""
+        try:
+            analytics = await self.get_training_analytics(job_id)
+            return {
+                "job_id": job_id,
+                "report_type": "training",
+                "analytics": analytics,
+                "generated_at": datetime.now().isoformat()
+            }
+        except Exception as e:
+            self.logger.error(f"Error generating training report: {e}")
+            return {"error": str(e)}
+    
+    async def generate_comparison_report(self, session_id: str) -> Dict[str, Any]:
+        """Generate comprehensive comparison report"""
+        try:
+            analytics = await self.get_comparison_analytics()
+            return {
+                "session_id": session_id,
+                "report_type": "comparison", 
+                "analytics": analytics,
+                "generated_at": datetime.now().isoformat()
+            }
+        except Exception as e:
+            self.logger.error(f"Error generating comparison report: {e}")
+            return {"error": str(e)}
+    
+    async def clear_cache(self):
+        """Clear visualization cache"""
+        try:
+            self._cache.clear()
+            self.logger.info("Visualization cache cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing cache: {e}")
+    
+    async def cleanup(self):
+        """Cleanup visualization service resources"""
+        try:
+            await self.clear_cache()
+            self.logger.info("VisualizationService cleanup completed")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
+    
+    # Helper methods for dashboard generation
+    async def _get_training_dashboard(self) -> Dict[str, Any]:
+        """Get training dashboard configuration"""
+        return {
+            "type": "training",
+            "widgets": [
+                {"type": "loss_chart", "title": "Training Loss"},
+                {"type": "metrics_table", "title": "Training Metrics"},
+                {"type": "resource_usage", "title": "Resource Usage"}
+            ],
+            "refresh_interval": 10
+        }
+    
+    async def _get_comparison_dashboard(self) -> Dict[str, Any]:
+        """Get comparison dashboard configuration"""
+        return {
+            "type": "comparison",
+            "widgets": [
+                {"type": "response_comparison", "title": "Model Responses"},
+                {"type": "performance_metrics", "title": "Performance Comparison"},
+                {"type": "session_history", "title": "Session History"}
+            ],
+            "refresh_interval": 5
+        }
+    
+    async def _get_system_dashboard(self) -> Dict[str, Any]:
+        """Get system dashboard configuration"""
+        return {
+            "type": "system",
+            "widgets": [
+                {"type": "system_health", "title": "System Health"},
+                {"type": "resource_monitoring", "title": "Resource Monitoring"},
+                {"type": "service_status", "title": "Service Status"}
+            ],
+            "refresh_interval": 15
+        }
+    
+    async def _get_dataset_dashboard(self) -> Dict[str, Any]:
+        """Get dataset analytics dashboard configuration"""
+        return {
+            "type": "dataset_analytics",
+            "widgets": [
+                {"type": "dataset_overview", "title": "Dataset Overview"},
+                {"type": "token_distribution", "title": "Token Distribution"},
+                {"type": "quality_metrics", "title": "Quality Metrics"}
+            ],
+            "refresh_interval": 60
+        }
+    
+    async def _get_resource_dashboard(self) -> Dict[str, Any]:
+        """Get resource monitoring dashboard configuration"""
+        return {
+            "type": "resource_monitoring",
+            "widgets": [
+                {"type": "cpu_usage", "title": "CPU Usage"},
+                {"type": "memory_usage", "title": "Memory Usage"},
+                {"type": "gpu_usage", "title": "GPU Usage"}
+            ],
+            "refresh_interval": 5
+        }
+    
+    # Helper methods for chart generation
+    async def _generate_training_loss_chart(self, start_time: str, end_time: str, filters: Dict) -> Dict[str, Any]:
+        """Generate training loss chart data"""
+        return {
+            "chart_type": "training_loss",
+            "data": [
+                {"step": i, "loss": 1.0 - (i * 0.1)} for i in range(10)
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    async def _generate_resource_usage_chart(self, start_time: str, end_time: str, filters: Dict) -> Dict[str, Any]:
+        """Generate resource usage chart data"""
+        return {
+            "chart_type": "resource_usage",
+            "data": [
+                {"time": i, "cpu": 50 + (i * 5), "memory": 60 + (i * 3)} for i in range(10)
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    async def _generate_comparison_metrics_chart(self, start_time: str, end_time: str, filters: Dict) -> Dict[str, Any]:
+        """Generate comparison metrics chart data"""
+        return {
+            "chart_type": "comparison_metrics",
+            "data": [
+                {"comparison": i, "base_time": 100 + (i * 10), "finetuned_time": 120 + (i * 8)} for i in range(10)
+            ],
+            "timestamp": datetime.now().isoformat()
+        }

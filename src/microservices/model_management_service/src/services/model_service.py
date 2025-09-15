@@ -1729,5 +1729,31 @@ class ModelService:
             return "You are a helpful assistant."
 
 
+    def get_loaded_models(self) -> Dict[str, Any]:
+        """Get information about currently loaded models"""
+        return {
+            "base_models": list(self.base_models.keys()),
+            "lora_adapters": list(self.lora_adapters.keys()),
+            "active_pairs": list(self.active_pairs.keys()),
+            "cached_models": list(self.loaded_models_cache.keys()),
+            "total_loaded": len(self.base_models) + len(self.lora_adapters)
+        }
+    
+    def get_cache_size(self) -> int:
+        """Get current cache size for health checks"""
+        return len(self.loaded_models_cache) + len(self.kv_caches)
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get detailed cache statistics for health checks"""
+        return {
+            "loaded_models": len(self.loaded_models_cache),
+            "kv_caches": len(self.kv_caches),
+            "active_lora_adapters": len([a for a in self.lora_adapters.values() if a.state == CacheState.ACTIVE]),
+            "cache_hit_rate": self.metrics["cache_hits"] / max(1, self.metrics["cache_hits"] + self.metrics["cache_misses"]),
+            "total_swap_operations": self.metrics["swap_operations"],
+            "memory_usage_mb": self.metrics["memory_usage_mb"]
+        }
+
+
 # Create global service instance
 model_service = ModelService()

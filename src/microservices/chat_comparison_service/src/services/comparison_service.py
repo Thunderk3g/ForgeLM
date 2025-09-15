@@ -42,6 +42,9 @@ class ComparisonService:
             "average_comparison_time_ms": 0.0,
         }
         
+        # Session tracking for health checks
+        self.sessions = {}
+        
         # Start background optimization if configured
         if settings.background_optimization:
             try:
@@ -107,6 +110,13 @@ class ComparisonService:
                 pair_id=request.pair_id,
                 session_name=request.session_name
             )
+            
+            # Track session for health checks
+            self.sessions[session_info.session_id] = {
+                "created_at": datetime.now().isoformat(),
+                "pair_id": request.pair_id,
+                "session_name": request.session_name
+            }
             
             # Load the model pair for this session to make it available for inference
             try:
@@ -363,6 +373,10 @@ class ComparisonService:
             
             # Delete chat session
             result = await self.chat_service.delete_session(session_id)
+            
+            # Remove from session tracking
+            if session_id in self.sessions:
+                del self.sessions[session_id]
             
             self.logger.info(f"Deleted comparison session {session_id}")
             return result
@@ -882,6 +896,32 @@ class ComparisonService:
                     )
         
         return validation_results
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics for health checks"""
+        try:
+            # Get cache stats from model service
+            model_cache_stats = self.model_service.get_cache_stats()
+            
+            # Get chat service stats
+            chat_stats = self.chat_service.get_service_metrics()
+            
+            return {
+                "model_cache": model_cache_stats,
+                "active_sessions": len(self.sessions),
+                "total_comparisons": self.metrics["total_comparisons"],
+                "successful_comparisons": self.metrics["successful_comparisons"],
+                "failed_comparisons": self.metrics["failed_comparisons"],
+                "average_comparison_time_ms": self.metrics["average_comparison_time_ms"],
+                "chat_service_stats": chat_stats
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting cache stats: {e}")
+            return {
+                "error": str(e),
+                "active_sessions": len(self.sessions),
+                "total_comparisons": self.metrics["total_comparisons"]
+            }
 
 
 # Note: Global service instance should be created with proper dependencies

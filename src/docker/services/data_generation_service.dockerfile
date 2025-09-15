@@ -4,11 +4,11 @@ FROM llmforge-base:latest
 # Copy data generation service source code
 COPY src/microservices/data_generation_service/ /app/
 
-# Install any service-specific dependencies
-# (data generation uses base dependencies)
-
 # Set working directory
 WORKDIR /app
+
+# Install service-specific dependencies
+RUN pip install -r requirements.txt
 
 # Create required directories
 RUN mkdir -p /app/logs /app/data /app/datasets

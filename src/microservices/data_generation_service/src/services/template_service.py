@@ -10,8 +10,8 @@ import asyncio
 from typing import Any, Dict, List, Optional, Union
 from pathlib import Path
 
-from ..models.templates import Template, get_template, list_available_templates
-from .models.schemas import FineTuneRequest
+from models.templates import Template, get_template, list_available_templates
+from models.schemas import FineTuneRequest
 
 # Import shared utilities from parent directory
 from utils.logging import get_logger
@@ -40,7 +40,7 @@ class TemplateService:
         
         return self.cached_templates[template_name]
     
-    async def list_templates(self) -> List[str]:
+    def list_templates(self) -> List[str]:
         """List available templates"""
         return list_available_templates()
     
