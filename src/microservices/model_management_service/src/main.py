@@ -230,16 +230,26 @@ async def list_loaded_models():
 
 @app.get("/models/available")
 async def list_available_models():
-    """List available models for loading"""
+    """List available models for loading (compatible with main branch)"""
     if not model_service:
         raise HTTPException(status_code=503, detail="Model service not initialized")
     
     try:
         models = await model_service.list_available_models()
-        return {"available_models": models}
+        # Return in the format expected by the main branch
+        return {
+            "status": "success", 
+            "models": models,
+            "models_directory": "/app/models/base",
+            "total_models": len(models)
+        }
     except Exception as e:
         logger.error(f"List available models failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "status": "error",
+            "message": f"Failed to scan models: {str(e)}",
+            "models": []
+        }
 
 
 @app.post("/select-model")

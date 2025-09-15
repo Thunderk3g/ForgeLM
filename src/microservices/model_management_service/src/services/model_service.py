@@ -1755,24 +1755,48 @@ class ModelService:
         }
 
     async def list_available_models(self) -> List[Dict[str, Any]]:
-        """List available models in the models directory"""
+        """List available models in the models directory (compatible with main branch)"""
         try:
             models = []
-            models_dir = Path("/app/models")
+            base_models_dir = Path("/app/models/base")
             
-            if models_dir.exists():
-                for model_path in models_dir.iterdir():
-                    if model_path.is_dir():
-                        # Check if it's a valid model directory
-                        config_file = model_path / "config.json"
-                        if config_file.exists() or (model_path / "pytorch_model.bin").exists() or (model_path / "model.safetensors").exists():
-                            model_info = {
-                                "name": model_path.name,
-                                "path": str(model_path),
-                                "type": self._detect_model_type(model_path),
-                                "size_mb": self._calculate_directory_size(model_path)
-                            }
-                            models.append(model_info)
+            if not base_models_dir.exists():
+                base_models_dir.mkdir(parents=True, exist_ok=True)
+                
+            # Scan for model directories in base models directory
+            for model_dir in base_models_dir.iterdir():
+                if model_dir.is_dir():
+                    # Check if it's a valid model directory (has config.json or model files)
+                    config_files = ["config.json", "pytorch_model.bin", "model.safetensors"]
+                    has_model_files = any((model_dir / file).exists() for file in config_files)
+                    
+                    if has_model_files:
+                        # Convert path to Unix format for Docker compatibility
+                        unix_path = str(model_dir).replace("\\", "/")
+                        
+                        model_info = {
+                            "model_id": model_dir.name.replace("_", "/"),
+                            "local_name": model_dir.name,
+                            "path": unix_path,
+                            "status": "available",
+                            "size_mb": self._calculate_directory_size(model_dir),
+                            "files": [str(f.name) for f in model_dir.glob("*")][:10],  # First 10 files for info
+                            "has_tokenizer": (model_dir / "tokenizer.json").exists() or (model_dir / "tokenizer_config.json").exists()
+                        }
+                        
+                        # Try to read model config for additional info
+                        config_path = model_dir / "config.json"
+                        if config_path.exists():
+                            try:
+                                import json
+                                with open(config_path, 'r') as f:
+                                    config = json.load(f)
+                                    model_info["architecture"] = config.get("architectures", ["unknown"])[0]
+                                    model_info["model_type"] = config.get("model_type", "unknown")
+                            except:
+                                pass
+                                
+                        models.append(model_info)
             
             return models
         except Exception as e:
