@@ -54,7 +54,9 @@ SERVICE_ROUTES = {
     '/api/v1/generate': 'llmforge-data-generation',
     '/api/v1/templates': 'llmforge-data-generation',
     '/api/v1/data-generation': 'llmforge-data-generation',
+    '/api/v1/prepare-data': 'llmforge-data-generation',
     '/data-generation': 'llmforge-data-generation',  # Backward compatibility
+    '/prepare-data': 'llmforge-data-generation',  # Backward compatibility
     
     # Visualization service routes
     '/api/v1/analytics': 'llmforge-visualization',
@@ -234,6 +236,13 @@ app.add_middleware(
 
 def get_service_name(path: str) -> Optional[str]:
     """Determine target service based on request path"""
+    import re
+    
+    # Strip locale prefixes like /en-GB/, /en/, etc.
+    locale_pattern = r'^/[a-z]{2}(-[A-Z]{2})?/'
+    if re.match(locale_pattern, path):
+        path = re.sub(locale_pattern, '/', path)
+    
     for route_prefix, service_name in SERVICE_ROUTES.items():
         if path.startswith(route_prefix):
             return service_name

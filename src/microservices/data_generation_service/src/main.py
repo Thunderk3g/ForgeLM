@@ -20,12 +20,13 @@ import uvicorn
 # Import core data generation components (local to this microservice)
 from services.data_generation_service import DataGenerationService
 from services.template_service import TemplateService
+from services.data_preparation_service import DataPreparationService
 from services.service_orchestrator import register_with_orchestrator
 
 # Import shared utilities and schemas from parent directories
 from models.schemas import (
     DataGenerationRequest, DataGenerationResponse, TemplateConfig,
-    DatasetValidationRequest, ValidationResult
+    DatasetValidationRequest, ValidationResult, PrepareDataRequest, PrepareDataResponse
 )
 from utils.logging import get_logger
 from utils.performance import performance_monitor
@@ -42,6 +43,7 @@ generated_samples = Counter('generated_samples_total', 'Total generated data sam
 # Global service instances
 data_generation_service: Optional[DataGenerationService] = None
 template_service: Optional[TemplateService] = None
+data_preparation_service: Optional[DataPreparationService] = None
 logger = get_logger(__name__)
 
 
@@ -73,7 +75,7 @@ async def register_service():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle management for the data generation service"""
-    global data_generation_service, template_service
+    global data_generation_service, template_service, data_preparation_service
     
     # Startup
     logger.info("Starting Data Generation Microservice...")
@@ -81,6 +83,7 @@ async def lifespan(app: FastAPI):
     # Initialize services
     template_service = TemplateService()
     data_generation_service = DataGenerationService(template_service)
+    data_preparation_service = DataPreparationService()
     
     # Register with orchestrator
     await register_service()
@@ -156,6 +159,28 @@ async def health_check():
             status_code=503,
             media_type="application/json"
         )
+
+
+@app.post("/prepare-data", response_model=PrepareDataResponse)
+async def prepare_data(request: PrepareDataRequest):
+    """Clean and prepare data for fine-tuning"""
+    if not data_preparation_service:
+        raise HTTPException(status_code=503, detail="Data preparation service not initialized")
+    
+    try:
+        logger.info(f"Starting data preparation for {request.input_file}")
+        response = await data_preparation_service.prepare_data(request)
+        
+        if response.status == "success":
+            logger.info(f"Data preparation completed successfully: {response.message}")
+        else:
+            logger.error(f"Data preparation failed: {response.message}")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Data preparation request failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/generate", response_model=DataGenerationResponse)

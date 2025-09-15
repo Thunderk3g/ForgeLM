@@ -18,9 +18,10 @@ import uvicorn
 
 # Import core model management components (local to this microservice)
 from services.model_service import ModelService
+from services.config_service import ConfigService
 from models.schemas import (
     ModelLoadRequest, ModelInfo, ModelConfig, CacheStats,
-    ModelUploadRequest, ModelVersionInfo
+    ModelUploadRequest, ModelVersionInfo, FineTuneRequest
 )
 from services.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
@@ -37,8 +38,9 @@ cache_misses = Counter('model_cache_misses_total', 'Model cache misses')
 gpu_memory_usage_bytes = Gauge('gpu_memory_usage_bytes', 'GPU memory usage in bytes')
 model_errors_total = Counter('model_errors_total', 'Total model-related errors', ['error_type'])
 
-# Global service instance
+# Global service instances
 model_service: Optional[ModelService] = None
+config_service: Optional[ConfigService] = None
 logger = get_logger(__name__)
 
 
@@ -71,13 +73,14 @@ async def register_service():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle management for the model management service"""
-    global model_service
+    global model_service, config_service
     
     # Startup
     logger.info("Starting Model Management Microservice...")
     
-    # Initialize service
+    # Initialize services
     model_service = ModelService()
+    config_service = ConfigService()
     
     # Register with orchestrator
     await register_service()
@@ -577,6 +580,103 @@ async def list_model_pairs():
         return {"pairs": pairs}
     except Exception as e:
         logger.error(f"List model pairs failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===============================
+# CONFIGURATION MANAGEMENT ENDPOINTS
+# ===============================
+
+@app.get("/config/list")
+async def list_configs():
+    """List all available configuration files"""
+    if not config_service:
+        raise HTTPException(status_code=503, detail="Config service not initialized")
+    
+    try:
+        return await config_service.list_configs()
+    except Exception as e:
+        logger.error(f"List configs failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/config/{config_name}")
+async def get_config(config_name: str):
+    """Get specific configuration by name"""
+    if not config_service:
+        raise HTTPException(status_code=503, detail="Config service not initialized")
+    
+    try:
+        result = await config_service.get_config(config_name)
+        if result["status"] == "error":
+            raise HTTPException(status_code=404, detail=result["message"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get config failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/config/create/{config_name}")
+async def create_config_from_request(config_name: str, request: FineTuneRequest):
+    """Create configuration from training request"""
+    if not config_service:
+        raise HTTPException(status_code=503, detail="Config service not initialized")
+    
+    try:
+        result = await config_service.create_config_from_request(request, config_name)
+        if result["status"] == "error":
+            raise HTTPException(status_code=400, detail=result["message"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create config failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/config/validate/{config_name}")
+async def validate_config(config_name: str):
+    """Validate configuration"""
+    if not config_service:
+        raise HTTPException(status_code=503, detail="Config service not initialized")
+    
+    try:
+        result = await config_service.validate_config(config_name)
+        if result["status"] == "error":
+            raise HTTPException(status_code=404, detail=result["message"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Validate config failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/config/templates")
+async def get_available_templates():
+    """List available dataset templates"""
+    if not config_service:
+        raise HTTPException(status_code=503, detail="Config service not initialized")
+    
+    try:
+        return await config_service.get_available_templates()
+    except Exception as e:
+        logger.error(f"Get templates failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/config/peft-methods")
+async def get_available_peft_methods():
+    """List available PEFT methods"""
+    if not config_service:
+        raise HTTPException(status_code=503, detail="Config service not initialized")
+    
+    try:
+        return await config_service.get_available_peft_methods()
+    except Exception as e:
+        logger.error(f"Get PEFT methods failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

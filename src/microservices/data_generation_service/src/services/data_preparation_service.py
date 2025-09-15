@@ -1,0 +1,386 @@
+"""
+Data Preparation Service for LLMForge
+
+Handles data cleaning, processing, and formatting for fine-tuning tasks.
+Port of the complete logic from utils/legacy/data_preparation.py
+"""
+
+import os
+import json
+import re
+from pathlib import Path
+from typing import Dict, Optional, List
+
+import numpy as np
+import pandas as pd
+from datasets import Dataset
+
+# Optional heavy deps (lazy usage)
+try:
+    import spacy
+except Exception:
+    spacy = None
+
+try:
+    import nltk  # noqa: F401  # kept for users who may extend with NLTK; not required here
+except Exception:
+    nltk = None
+
+# Optional heavy deps (lazy usage)
+try:
+    from imblearn.over_sampling import SMOTE
+except Exception:
+    SMOTE = None
+
+from models.schemas import PrepareDataRequest, PrepareDataResponse
+from utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class DataPreparationService:
+    """Service for data preparation and cleaning"""
+    
+    def __init__(self):
+        self.nlp = self._load_spacy_model()
+    
+    def _load_spacy_model(self):
+        """
+        Load a small spaCy English model if available; otherwise return None.
+        We keep this optional so CPU-only environments don't crash.
+        """
+        if spacy is None:
+            return None
+        try:
+            return spacy.load("en_core_web_sm")
+        except Exception:
+            return None
+    
+    def _clean_text(self, text: str) -> str:
+        """
+        Clean and normalize text: collapse whitespace, strip, and remove non-word
+        symbols except common punctuation.
+        """
+        if not isinstance(text, str):
+            text = str(text)
+
+        # Basic cleanup
+        text = re.sub(r"\s+", " ", text).strip()
+        # Keep word chars, spaces and selected punctuation
+        text = re.sub(r"[^\w\s\.\!\?\,\;\:\-\(\)]", "", text)
+        return text
+
+    def _augment_text(self, text: str) -> List[str]:
+        """
+        Simple augmentation: word shuffle on non-stopword tokens.
+        Returns [original, augmented?].
+        """
+        augmented = [text]
+        if self.nlp is None or not isinstance(text, str) or len(text) < 10:
+            return augmented
+
+        doc = self.nlp(text)
+        words = [t.text for t in doc if not t.is_stop and not t.is_punct]
+        if len(words) > 3:
+            shuffled = words.copy()
+            np.random.shuffle(shuffled)
+            augmented.append(" ".join(shuffled))
+        return augmented
+
+    def _format_for_instruction_tuning(self, df: pd.DataFrame) -> List[Dict]:
+        """
+        Convert a pandas DataFrame into instruction-tuning records.
+        Supports:
+          - Alpaca-like: instruction / input? / output
+          - OpenAI-like: prompt / completion
+          - Fallback single-column text -> completion with generic instruction
+        """
+        out: List[Dict] = []
+        has_instruction = "instruction" in df.columns
+        has_output = "output" in df.columns
+        has_input = "input" in df.columns
+        has_prompt = "prompt" in df.columns
+        has_completion = "completion" in df.columns
+        has_text = "text" in df.columns
+
+        for _, row in df.iterrows():
+            if has_instruction and has_output:
+                out.append({
+                    "instruction": str(row.get("instruction", "")),
+                    "input": str(row.get("input", "")) if has_input else "",
+                    "output": str(row.get("output", "")),
+                })
+            elif has_prompt and has_completion:
+                out.append({
+                    "instruction": str(row.get("prompt", "")),
+                    "input": "",
+                    "output": str(row.get("completion", "")),
+                })
+            elif has_text:
+                out.append({
+                    "instruction": "Continue the following text:",
+                    "input": "",
+                    "output": str(row.get("text", "")),
+                })
+        return out
+
+    async def prepare_data(self, request: PrepareDataRequest) -> PrepareDataResponse:
+        """
+        Prepare and clean data for fine-tuning.
+
+        Steps:
+          - Load CSV/JSON/Parquet
+          - Drop dups/nulls
+          - Clean object/text columns
+          - Optional: length filter, augmentation, balancing (supervised)
+          - Format into HF Datasets for task type
+          - Train/val split, save to disk + Parquet + metadata
+        """
+        try:
+            # --- Setup
+            output_path = Path(request.output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            # --- Load
+            src = Path(request.input_file)
+            if not src.exists():
+                raise FileNotFoundError(f"Input file not found: {request.input_file}")
+
+            suffix = src.suffix.lower()
+            if suffix == ".csv":
+                df = pd.read_csv(src)
+            elif suffix == ".json":
+                df = pd.read_json(src, lines=False)
+            elif suffix == ".parquet":
+                df = pd.read_parquet(src)
+            else:
+                raise ValueError(f"Unsupported file format: {suffix}")
+
+            logger.info(f"[DataPrep] Original rows: {len(df)}")
+
+            # --- Dedup / Nulls
+            df = df.drop_duplicates()
+            logger.info(f"[DataPrep] After dedup: {len(df)}")
+            df = df.dropna(how="all").dropna()
+            logger.info(f"[DataPrep] After dropna: {len(df)}")
+
+            if len(df) == 0:
+                raise ValueError("No data after cleaning (duplicates/nulls).")
+
+            # --- Identify text-like columns
+            text_cols = [c for c in df.columns if df[c].dtype == object]
+
+            # --- Clean text columns (vectorized apply can be memory-heavy; do chunked)
+            for col in text_cols:
+                df[col] = df[col].astype(str).apply(lambda x: self._clean_text(x))
+
+            # --- Optional max length filter (based on char length)
+            if request.max_length:
+                if "text" in df.columns:
+                    before = len(df)
+                    df = df[df["text"].str.len() <= request.max_length]
+                    logger.info(f"[DataPrep] Length filter on 'text': {before} -> {len(df)}")
+                elif "output" in df.columns:
+                    before = len(df)
+                    df = df[df["output"].str.len() <= request.max_length]
+                    logger.info(f"[DataPrep] Length filter on 'output': {before} -> {len(df)}")
+
+            if len(df) == 0:
+                raise ValueError("No data left after length filtering.")
+
+            # --- Optional balancing (supervised only, placeholder informative run)
+            if request.balance and request.task == "supervised":
+                if "label" in df.columns:
+                    try:
+                        if SMOTE is None:
+                            logger.warning("[DataPrep] imblearn not available. Skipping SMOTE balancing.")
+                        else:
+                            try:
+                                from sklearn.feature_extraction.text import TfidfVectorizer
+                            except ImportError:
+                                logger.warning("[DataPrep] sklearn not available. Skipping SMOTE balancing.")
+                                raise ValueError("sklearn not available for SMOTE balancing")
+
+                            # choose a text column (prefer 'text', else first object column)
+                            text_col = "text" if "text" in df.columns else (text_cols[0] if text_cols else None)
+                            if text_col is None:
+                                raise ValueError("No text column available for SMOTE vectorization.")
+
+                            vec = TfidfVectorizer(max_features=2000)
+                            X = vec.fit_transform(df[text_col].astype(str)).toarray()
+                            y = df["label"].values
+
+                            smote = SMOTE(random_state=42)
+                            X_bal, y_bal = smote.fit_resample(X, y)
+
+                            # Note: Mapping synthetic vectors back to natural text is non-trivial.
+                            # We log info and keep original df to avoid incoherent synthetic texts.
+                            logger.info(f"[DataPrep] SMOTE info (for reference): {len(X)} -> {len(X_bal)} vectors.")
+                            logger.warning("[DataPrep] WARNING: Retaining original texts (no inverse vector mapping).")
+                    except Exception as e:
+                        logger.warning(f"[DataPrep] SMOTE failed: {e}. Skipping balancing.")
+
+            # --- Optional augmentation on text columns
+            if request.augment and text_cols:
+                aug_rows: List[dict] = []
+                for _, row in df.iterrows():
+                    base = row.to_dict()
+                    aug_rows.append(base)
+                    for col in text_cols:
+                        txt = base.get(col)
+                        if isinstance(txt, str) and len(txt) > 50:
+                            for aug in self._augment_text(txt)[1:]:
+                                new_row = dict(base)
+                                new_row[col] = aug
+                                aug_rows.append(new_row)
+                df = pd.DataFrame(aug_rows)
+                logger.info(f"[DataPrep] After augmentation: {len(df)} rows")
+
+            if len(df) == 0:
+                raise ValueError("No data to format after augmentation/cleaning.")
+
+            # --- Task-specific formatting into datasets.Dataset
+            if request.task == "instruction":
+                # Create instruction triples
+                formatted = self._format_for_instruction_tuning(df)
+
+                # Try Unsloth ShareGPT path
+                dataset = None
+                try:
+                    from unsloth.chat_templates import standardize_sharegpt
+
+                    sharegpt_records = []
+                    for item in formatted:
+                        user_content = item["instruction"]
+                        if item.get("input", "").strip():
+                            user_content += f"\n\n{item['input']}"
+                        sharegpt_records.append({
+                            "conversations": [
+                                {"from": "human", "value": user_content},
+                                {"from": "gpt", "value": item["output"]},
+                            ]
+                        })
+
+                    dataset = Dataset.from_list(sharegpt_records)
+                    dataset = standardize_sharegpt(dataset)
+                    logger.info(f"[DataPrep] Unsloth ShareGPT formatting applied to {len(dataset)} samples")
+
+                except Exception as e:
+                    logger.warning(f"[DataPrep] Unsloth ShareGPT unavailable/failed ({e}); using fallback format.")
+                    enhanced = []
+                    for item in formatted:
+                        user_content = item["instruction"]
+                        if item.get("input", "").strip():
+                            user_content += f"\n\n{item['input']}"
+                        text = (
+                            "<|im_start|>user\n"
+                            f"{user_content}"
+                            "<|im_end|>\n"
+                            "<|im_start|>assistant\n"
+                            f"{item['output']}"
+                            "<|im_end|>"
+                        )
+                        enhanced.append({"text": text})
+                    dataset = Dataset.from_list(enhanced)
+
+            elif request.task == "supervised":
+                # Expect at least: text + label
+                if "text" not in df.columns:
+                    # if no explicit 'text', concatenate object columns
+                    if text_cols:
+                        df["text"] = df[text_cols].fillna("").astype(str).agg(" ".join, axis=1)
+                    else:
+                        raise ValueError("Supervised requires a 'text' column or textual columns to combine.")
+                dataset = Dataset.from_pandas(df.reset_index(drop=True))
+
+            else:
+                # Unsupervised
+                if "text" not in df.columns:
+                    if text_cols:
+                        df["text"] = df[text_cols].fillna("").astype(str).agg(" ".join, axis=1)
+                    else:
+                        raise ValueError("Unsupervised requires at least one textual column.")
+                dataset = Dataset.from_pandas(df[["text"]].reset_index(drop=True))
+
+            # --- Split (multiprocessing-enabled map example if needed later)
+            if len(dataset) > 100:
+                split = dataset.train_test_split(test_size=request.test_size, seed=42)
+                train_ds, val_ds = split["train"], split["test"]
+            else:
+                train_ds = dataset
+                val_ds = dataset.select(range(min(20, len(dataset))))
+
+            # --- Save (HF dataset + Parquet)
+            train_path = output_path / "train"
+            val_path = output_path / "val"
+            train_ds.save_to_disk(str(train_path))
+            val_ds.save_to_disk(str(val_path))
+
+            # Create dataset_dict.json for proper DatasetDict loading
+            dataset_dict_info = {
+                "splits": {
+                    "train": {
+                        "name": "train",
+                        "num_bytes": train_ds.data.nbytes if hasattr(train_ds.data, 'nbytes') else None,
+                        "num_examples": len(train_ds),
+                        "shard_lengths": None,
+                        "dataset_name": "prepared_dataset"
+                    },
+                    "val": {
+                        "name": "val", 
+                        "num_bytes": val_ds.data.nbytes if hasattr(val_ds.data, 'nbytes') else None,
+                        "num_examples": len(val_ds),
+                        "shard_lengths": None,
+                        "dataset_name": "prepared_dataset"
+                    }
+                }
+            }
+            with open(output_path / "dataset_dict.json", "w", encoding="utf-8") as f:
+                json.dump(dataset_dict_info, f, indent=2)
+            logger.info("[DataPrep] Created dataset_dict.json for DatasetDict loading")
+
+            # Save also as parquet for quick inspection (requires pyarrow, which datasets pulls in)
+            train_parquet = output_path / "train.parquet"
+            val_parquet = output_path / "val.parquet"
+            try:
+                train_ds.to_parquet(str(train_parquet))
+                val_ds.to_parquet(str(val_parquet))
+            except Exception as e:
+                logger.warning(f"[DataPrep] to_parquet failed ({e}); skipping parquet export.")
+
+            # --- Metadata
+            has_sharegpt = "conversations" in train_ds.column_names
+            fmt = "sharegpt" if has_sharegpt else ("instruction" if request.task == "instruction" else "text")
+            dataset_info = {
+                "task_type": request.task,
+                "train_samples": len(train_ds),
+                "val_samples": len(val_ds),
+                "format": fmt,
+                "has_unsloth_formatting": has_sharegpt,
+                "recommended_packing": True,
+                "estimated_tokens": (len(train_ds) * request.max_length) if request.max_length else "unknown",
+            }
+            with open(output_path / "dataset_info.json", "w", encoding="utf-8") as f:
+                json.dump(dataset_info, f, indent=2)
+
+            return PrepareDataResponse(
+                status="success",
+                message=f"Data prepared successfully. Train: {len(train_ds)}, Val: {len(val_ds)}",
+                train_path=str(train_path),
+                val_path=str(val_path),
+                optimization_info={
+                    "format_applied": fmt,
+                    "unsloth_optimized": has_sharegpt,
+                    "packing_recommended": True,
+                    "total_samples": len(train_ds) + len(val_ds),
+                },
+            )
+
+        except Exception as e:
+            logger.error(f"Data preparation failed: {str(e)}")
+            return PrepareDataResponse(
+                status="error",
+                message=f"Data preparation failed: {str(e)}",
+                train_path="",
+                val_path="",
+            )

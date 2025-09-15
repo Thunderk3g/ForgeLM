@@ -85,7 +85,7 @@ async def register_service():
             orchestrator_url=orchestrator_url,
             service_name="llmforge-chat-comparison",
             service_id=service_id,
-            host=os.getenv('SERVICE_HOST', 'localhost'),
+            host=os.getenv('SERVICE_ADVERTISED_HOST', 'llmforge-chat-comparison'),
             port=int(os.getenv('SERVICE_PORT', '8002')),
             health_endpoint="/health",
             metadata={

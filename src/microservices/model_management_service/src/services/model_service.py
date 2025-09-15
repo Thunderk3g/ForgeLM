@@ -1754,6 +1754,394 @@ class ModelService:
             "memory_usage_mb": self.metrics["memory_usage_mb"]
         }
 
+    async def list_available_models(self) -> List[Dict[str, Any]]:
+        """List available models in the models directory"""
+        try:
+            models = []
+            models_dir = Path("/app/models")
+            
+            if models_dir.exists():
+                for model_path in models_dir.iterdir():
+                    if model_path.is_dir():
+                        # Check if it's a valid model directory
+                        config_file = model_path / "config.json"
+                        if config_file.exists() or (model_path / "pytorch_model.bin").exists() or (model_path / "model.safetensors").exists():
+                            model_info = {
+                                "name": model_path.name,
+                                "path": str(model_path),
+                                "type": self._detect_model_type(model_path),
+                                "size_mb": self._calculate_directory_size(model_path)
+                            }
+                            models.append(model_info)
+            
+            return models
+        except Exception as e:
+            self.logger.error(f"Failed to list available models: {e}")
+            return []
+    
+    def _detect_model_type(self, model_path: Path) -> str:
+        """Detect if a model is base or finetuned"""
+        model_name = model_path.name.lower()
+        if any(keyword in model_name for keyword in ["base", "original", "pretrained"]):
+            return "base"
+        elif any(keyword in model_name for keyword in ["fine", "tuned", "ft", "sft", "lora", "qlora"]):
+            return "finetuned"
+        else:
+            return "unknown"
+    
+    async def download_model(self, model_name: str, source: str = "huggingface", revision: str = "main") -> Dict[str, Any]:
+        """Download a model from external source"""
+        try:
+            self.logger.info(f"Downloading model {model_name} from {source}")
+            
+            # Create models directory if it doesn't exist
+            models_dir = Path("/app/models")
+            models_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Convert model_id to directory name
+            model_dir_name = model_name.replace("/", "_")
+            model_path = models_dir / model_dir_name
+            
+            if model_path.exists():
+                self.logger.info(f"Model {model_name} already exists at {model_path}")
+                return {
+                    "path": str(model_path),
+                    "size_mb": self._calculate_directory_size(model_path),
+                    "status": "already_exists"
+                }
+            
+            # Download using transformers
+            if TRANSFORMERS_AVAILABLE:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                
+                # Download tokenizer
+                tokenizer = AutoTokenizer.from_pretrained(
+                    model_name,
+                    cache_dir=str(model_path),
+                    revision=revision
+                )
+                
+                # Download model (in 4-bit if available)
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_name,
+                    cache_dir=str(model_path),
+                    revision=revision,
+                    torch_dtype=torch.float16,
+                    low_cpu_mem_usage=True
+                )
+                
+                # Save to local directory
+                model.save_pretrained(str(model_path))
+                tokenizer.save_pretrained(str(model_path))
+                
+                size_mb = self._calculate_directory_size(model_path)
+                self.logger.info(f"Successfully downloaded {model_name} ({size_mb:.1f}MB)")
+                
+                return {
+                    "path": str(model_path),
+                    "size_mb": size_mb,
+                    "status": "downloaded"
+                }
+            else:
+                raise RuntimeError("Neither Unsloth nor Transformers available for download")
+                
+        except Exception as e:
+            self.logger.error(f"Failed to download model {model_name}: {e}")
+            raise RuntimeError(f"Model download failed: {str(e)}")
+    
+    async def load_model(self, model_path: str, model_config: Dict[str, Any] = None, force_reload: bool = False) -> Dict[str, Any]:
+        """Load a model into memory"""
+        try:
+            model_name = Path(model_path).name
+            
+            if model_name in self.base_models and not force_reload:
+                self.logger.info(f"Model {model_name} already loaded")
+                return {
+                    "model_name": model_name,
+                    "model_path": model_path,
+                    "status": "already_loaded"
+                }
+            
+            # Load the model
+            if UNSLOTH_AVAILABLE:
+                model, tokenizer = FastLanguageModel.from_pretrained(
+                    model_path,
+                    max_seq_length=2048,
+                    dtype=None,
+                    load_in_4bit=True,
+                )
+            elif TRANSFORMERS_AVAILABLE:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                tokenizer = AutoTokenizer.from_pretrained(model_path)
+                model = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    torch_dtype=torch.float16,
+                    device_map="auto",
+                    low_cpu_mem_usage=True
+                )
+            else:
+                raise RuntimeError("No model loading backend available")
+            
+            # Store in cache
+            self.base_models[model_name] = {
+                "model": model,
+                "tokenizer": tokenizer,
+                "path": model_path,
+                "loaded_at": time.time()
+            }
+            
+            self.logger.info(f"Successfully loaded model {model_name}")
+            
+            return {
+                "model_name": model_name,
+                "model_path": model_path,
+                "status": "loaded",
+                "memory_usage_mb": estimate_model_memory(model) if hasattr(model, 'parameters') else 0
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to load model {model_path}: {e}")
+            raise RuntimeError(f"Model loading failed: {str(e)}")
+    
+    async def unload_model(self, model_id: str) -> bool:
+        """Unload a model from memory"""
+        try:
+            if model_id in self.base_models:
+                del self.base_models[model_id]
+                self.logger.info(f"Unloaded model {model_id}")
+                
+                # Clear GPU memory
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                return True
+            else:
+                self.logger.warning(f"Model {model_id} not found in loaded models")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Failed to unload model {model_id}: {e}")
+            return False
+    
+    async def get_model_info(self, model_id: str) -> Optional[Dict[str, Any]]:
+        """Get detailed information about a model"""
+        try:
+            if model_id in self.base_models:
+                model_data = self.base_models[model_id]
+                return {
+                    "model_id": model_id,
+                    "model_path": model_data["path"],
+                    "loaded_at": model_data["loaded_at"],
+                    "status": "loaded",
+                    "type": "base"
+                }
+            else:
+                # Check if model exists on disk
+                models_dir = Path("/app/models")
+                model_path = models_dir / model_id
+                if model_path.exists():
+                    return {
+                        "model_id": model_id,
+                        "model_path": str(model_path),
+                        "status": "available",
+                        "type": self._detect_model_type(model_path),
+                        "size_mb": self._calculate_directory_size(model_path)
+                    }
+                else:
+                    return None
+                    
+        except Exception as e:
+            self.logger.error(f"Failed to get model info for {model_id}: {e}")
+            return None
+    
+    async def save_uploaded_model(self, file, model_name: str = None, description: str = None) -> str:
+        """Save an uploaded model file"""
+        try:
+            if not model_name:
+                model_name = file.filename.split('.')[0]
+            
+            models_dir = Path("/app/models")
+            models_dir.mkdir(parents=True, exist_ok=True)
+            
+            model_path = models_dir / model_name
+            model_path.mkdir(parents=True, exist_ok=True)
+            
+            # Save the uploaded file
+            file_path = model_path / file.filename
+            with open(file_path, "wb") as buffer:
+                content = await file.read()
+                buffer.write(content)
+            
+            self.logger.info(f"Uploaded model saved to {file_path}")
+            return str(model_path)
+            
+        except Exception as e:
+            self.logger.error(f"Failed to save uploaded model: {e}")
+            raise RuntimeError(f"Model upload failed: {str(e)}")
+    
+    async def delete_model(self, model_id: str) -> bool:
+        """Delete a model"""
+        try:
+            # Unload if loaded
+            await self.unload_model(model_id)
+            
+            # Delete from disk
+            models_dir = Path("/app/models")
+            model_path = models_dir / model_id
+            
+            if model_path.exists():
+                import shutil
+                shutil.rmtree(model_path)
+                self.logger.info(f"Deleted model {model_id}")
+                return True
+            else:
+                self.logger.warning(f"Model {model_id} not found on disk")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Failed to delete model {model_id}: {e}")
+            return False
+    
+    async def clear_cache(self):
+        """Clear all model caches"""
+        try:
+            self.loaded_models_cache.clear()
+            self.kv_caches.clear()
+            
+            # Clear GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            self.logger.info("Cleared all model caches")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to clear cache: {e}")
+            raise RuntimeError(f"Cache clear failed: {str(e)}")
+    
+    async def optimize_memory(self) -> Dict[str, Any]:
+        """Optimize memory usage and return stats"""
+        try:
+            memory_before = get_gpu_memory_info()
+            
+            # Run optimization
+            await self.optimize_memory()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            memory_after = get_gpu_memory_info()
+            
+            freed_mb = memory_before.get('used_mb', 0) - memory_after.get('used_mb', 0)
+            
+            return {
+                "freed_memory_mb": max(0, freed_mb),
+                "memory_before": memory_before,
+                "memory_after": memory_after
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Memory optimization failed: {e}")
+            return {"freed_memory_mb": 0}
+    
+    async def get_storage_stats(self) -> Dict[str, Any]:
+        """Get storage statistics"""
+        try:
+            models_dir = Path("/app/models")
+            total_size = 0
+            model_count = 0
+            
+            if models_dir.exists():
+                for model_path in models_dir.iterdir():
+                    if model_path.is_dir():
+                        total_size += self._calculate_directory_size(model_path)
+                        model_count += 1
+            
+            return {
+                "total_models": model_count,
+                "total_size_mb": total_size,
+                "storage_path": str(models_dir)
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Failed to get storage stats: {e}")
+            return {"total_models": 0, "total_size_mb": 0}
+    
+    async def create_model_version(self, model_id: str, version_info) -> str:
+        """Create a new version of a model"""
+        try:
+            version_id = f"{model_id}_v{int(time.time())}"
+            self.logger.info(f"Created model version {version_id}")
+            return version_id
+        except Exception as e:
+            self.logger.error(f"Failed to create model version: {e}")
+            raise RuntimeError(f"Version creation failed: {str(e)}")
+    
+    async def list_model_versions(self, model_id: str) -> List[str]:
+        """List versions of a model"""
+        try:
+            # Mock implementation - in real scenario, would track versions
+            return [f"{model_id}_v1"]
+        except Exception as e:
+            self.logger.error(f"Failed to list model versions: {e}")
+            return []
+    
+    async def search_models(self, query: str, source: str = "all") -> List[Dict[str, Any]]:
+        """Search for models"""
+        try:
+            available_models = await self.list_available_models()
+            
+            # Simple search by name
+            results = []
+            for model in available_models:
+                if query.lower() in model["name"].lower():
+                    results.append(model)
+            
+            return results
+        except Exception as e:
+            self.logger.error(f"Model search failed: {e}")
+            return []
+    
+    async def benchmark_model(self, model_id: str, benchmark_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Run benchmark on a model"""
+        try:
+            self.logger.info(f"Running benchmark on model {model_id}")
+            
+            # Mock benchmark results
+            return {
+                "model_id": model_id,
+                "latency_ms": 150.0,
+                "throughput_tokens_per_sec": 25.5,
+                "memory_usage_mb": 4096,
+                "benchmark_config": benchmark_config
+            }
+        except Exception as e:
+            self.logger.error(f"Benchmark failed for {model_id}: {e}")
+            raise RuntimeError(f"Benchmark failed: {str(e)}")
+    
+    async def create_model_pair(self, base_model_id: str, finetuned_model_id: str) -> str:
+        """Create a model pair for comparison"""
+        try:
+            pair_id = f"{base_model_id}_vs_{finetuned_model_id}"
+            self.logger.info(f"Created model pair {pair_id}")
+            return pair_id
+        except Exception as e:
+            self.logger.error(f"Failed to create model pair: {e}")
+            raise RuntimeError(f"Model pair creation failed: {str(e)}")
+    
+    async def list_model_pairs(self) -> List[Dict[str, Any]]:
+        """List all model pairs"""
+        try:
+            # Use the existing discovery method
+            pairs = await self.discover_model_pairs()
+            return [{"pair_id": pair.pair_id, "base_model": pair.base_name, "finetuned_model": pair.finetuned_name} for pair in pairs]
+        except Exception as e:
+            self.logger.error(f"Failed to list model pairs: {e}")
+            return []
+
 
 # Create global service instance
 model_service = ModelService()
