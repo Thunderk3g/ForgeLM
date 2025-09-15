@@ -10,7 +10,7 @@ import type {
   ActiveSessionsResponse
 } from '../types/api';
 
-const API_BASE = 'http://localhost:80';
+const API_BASE = (import.meta as any)?.env?.VITE_API_BASE || 'http://localhost:8000';
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -28,37 +28,37 @@ export const healthCheck = async (): Promise<HealthResponse> => {
 
 // Get available models
 export const getAvailableModels = async (): Promise<AvailableModelsResponse> => {
-  const response = await api.get('/models/available');
+  const response = await api.get('/api/v1/models/available');
   return response.data;
 };
 
 // Model selection
 export const selectModel = async (request: SelectModelRequest): Promise<ApiResponse> => {
-  const response = await api.post('/select-model', request);
+  const response = await api.post('/api/v1/select-model', request);
   return response.data;
 };
 
 // Data preparation
 export const prepareData = async (request: PrepareDataRequest): Promise<ApiResponse> => {
-  const response = await api.post('/prepare-data', request);
+  const response = await api.post('/api/v1/generate', request);
   return response.data;
 };
 
 // Fine-tuning
 export const startFineTuning = async (request: FineTuneRequest): Promise<ApiResponse> => {
-  const response = await api.post('/fine-tune', request);
+  const response = await api.post('/api/v1/fine-tune', request);
   return response.data;
 };
 
 // Training status
 export const getTrainingStatus = async (taskId: string): Promise<TrainingStatus> => {
-  const response = await api.get(`/fine-tune/status/${taskId}`);
+  const response = await api.get(`/api/v1/status/${taskId}`);
   return response.data;
 };
 
 // Cancel training
 export const cancelTraining = async (taskId: string): Promise<ApiResponse> => {
-  const response = await api.delete(`/fine-tune/cancel/${taskId}`);
+  const response = await api.post(`/api/v1/stop/${taskId}`);
   return response.data;
 };
 
@@ -88,7 +88,7 @@ export const streamTrainingLogs = (
   onError: (error: string) => void,
   onConnect: () => void
 ): { close: () => void } => {
-  const eventSource = new EventSource(`${API_BASE}/fine-tune/logs/${taskId}`);
+  const eventSource = new EventSource(`${API_BASE}/api/v1/logs/${taskId}`);
   
   // Handle different event types
   eventSource.addEventListener('connected', (event) => {
@@ -191,7 +191,7 @@ export const streamTrainingLogs = (
 
 // Get active training sessions
 export const getActiveTrainingSessions = async (): Promise<ActiveSessionsResponse> => {
-  const response = await api.get('/fine-tune/active');
+  const response = await api.get('/api/v1/fine-tune/active');
   return response.data;
 };
 
@@ -207,13 +207,13 @@ export const getApiInfo = async () => {
 
 // Training analytics/visualization
 export const getTrainingAnalytics = async (taskId: string, limit: number = 100) => {
-  const response = await api.get(`/visualization/training/${taskId}?limit=${limit}`);
+  const response = await api.get(`/api/v1/analytics/training/${taskId}?limit=${limit}`);
   return response.data;
 };
 
 // Enhanced training visualization data
 export const getTrainingVisualizationData = async (taskId: string, limit: number = 100) => {
-  const response = await api.get(`/fine-tune/visualization/${taskId}?limit=${limit}`);
+  const response = await api.get(`/api/v1/analytics/training/${taskId}?limit=${limit}`);
   return response.data;
 };
 
@@ -231,7 +231,7 @@ export const getComparisonAnalytics = async (timeRangeHours: number = 24) => {
 
 // System health metrics
 export const getSystemHealth = async () => {
-  const response = await api.get('/visualization/system/health');
+  const response = await api.get('/api/v1/status/overview');
   return response.data;
 };
 
