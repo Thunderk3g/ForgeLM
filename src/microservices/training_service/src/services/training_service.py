@@ -652,6 +652,44 @@ class TrainingService:
             }
         
         return sessions
+
+    async def list_training_jobs(self) -> List[Dict[str, Any]]:
+        """List training jobs with minimal status info.
+        Matches the API expectation used by the /jobs and /fine-tune/active endpoints.
+        """
+        jobs: List[Dict[str, Any]] = []
+        # Aggregate running jobs from active_trainings
+        for task_id, training_info in self.active_trainings.items():
+            jobs.append({
+                "task_id": task_id,
+                "status": "running",
+                "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(training_info.get("start_time", time.time()))),
+                "duration_seconds": time.time() - training_info.get("start_time", time.time()),
+            })
+        # Optionally, enrich from status files if present
+        try:
+            logs_dir = Path("logs")
+            if logs_dir.exists():
+                for status_file in logs_dir.glob("*_status.json"):
+                    try:
+                        with open(status_file, "r") as f:
+                            status_data = json.load(f)
+                        task_id = status_data.get("task_id")
+                        # Avoid duplicates for running tasks
+                        if task_id and not any(j.get("task_id") == task_id for j in jobs):
+                            jobs.append({
+                                "task_id": task_id,
+                                "status": status_data.get("status", "unknown"),
+                                "progress": status_data.get("progress"),
+                                "progress_percentage": status_data.get("progress_percentage"),
+                                "updated_at": status_data.get("updated_at"),
+                            })
+                    except Exception:
+                        # Ignore corrupt status files
+                        pass
+        except Exception:
+            pass
+        return jobs
     
     def get_gpu_status(self) -> Dict[str, Any]:
         """Get GPU status for health checks"""
