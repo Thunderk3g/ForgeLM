@@ -352,6 +352,19 @@ async def list_training_templates():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Frontend compatibility endpoints with /fine-tune prefix
+@app.get("/fine-tune/status/{task_id}")
+async def get_training_status_alt(task_id: str):
+    """Get status of a training job (frontend compatibility)"""
+    return await get_training_status(task_id)
+
+
+@app.get("/fine-tune/logs/{task_id}")
+async def get_training_logs_alt(task_id: str):
+    """Stream training logs for a job (frontend compatibility)"""
+    return await get_training_logs(task_id)
+
+
 # Background task for updating metrics
 async def update_metrics():
     """Background task to update system metrics"""

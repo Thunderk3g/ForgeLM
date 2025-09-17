@@ -365,6 +365,14 @@ class ComparisonService:
             self.logger.error(f"Error listing sessions: {e}")
             raise
     
+    async def list_sessions(self) -> List[SessionInfo]:
+        """Alias for list_active_sessions for frontend compatibility"""
+        return await self.list_active_sessions()
+    
+    async def list_model_pairs(self) -> List[Dict[str, Any]]:
+        """Alias for get_available_model_pairs for frontend compatibility"""
+        return await self.get_available_model_pairs()
+    
     async def delete_session(self, session_id: str) -> Dict[str, str]:
         """Delete a chat session and clean up resources"""
         try:

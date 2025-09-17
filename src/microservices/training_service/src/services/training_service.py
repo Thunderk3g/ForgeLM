@@ -120,127 +120,127 @@ if KUBERNETES_MODE:
 if TRANSFORMERS_AVAILABLE:
     class UnslothProgressCallback(TrainerCallback):
         """Custom callback for Unsloth training progress tracking"""
-    
-    def __init__(self, task_id: str, log_queue: queue.Queue):
-        self.task_id = task_id
-        self.log_queue = log_queue
-        self.start_time = time.time()
-        self.logger = get_logger(f"training.{task_id}")
         
-    def on_train_begin(self, args, state, control, **kwargs):
-        """Called at the beginning of training"""
-        try:
-            message = f"Starting training with {state.max_steps} total steps"
+        def __init__(self, task_id: str, log_queue: queue.Queue):
+            self.task_id = task_id
+            self.log_queue = log_queue
+            self.start_time = time.time()
+            self.logger = get_logger(f"training.{task_id}")
             
-            log_entry = {
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "type": "train_start",
-                "message": message,
-                "total_steps": state.max_steps,
-                "total_epochs": args.num_train_epochs
-            }
-            
-            self.log_queue.put(log_entry)
-            self.logger.info(message)
-        except Exception as e:
-            self.logger.error(f"Error in train begin callback: {e}")
-        
-    def on_epoch_begin(self, args, state, control, **kwargs):
-        """Called at the beginning of each epoch"""
-        try:
-            epoch = state.epoch
-            message = f"Starting epoch {epoch}/{args.num_train_epochs}"
-            
-            log_entry = {
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "type": "epoch_start",
-                "message": message,
-                "epoch": epoch,
-                "total_epochs": args.num_train_epochs
-            }
-            
-            self.log_queue.put(log_entry)
-            self.logger.info(message)
-        except Exception as e:
-            self.logger.error(f"Error in epoch begin callback: {e}")
-    
-    def on_step_begin(self, args, state, control, **kwargs):
-        """Called at the beginning of each training step"""
-        # We don't need to log every step begin to avoid spam
-        # This method exists just to satisfy the trainer callback interface
-        pass
-    
-    def on_step_end(self, args, state, control, **kwargs):
-        """Called at the end of each training step"""
-        try:
-            current_step = state.global_step
-            total_steps = state.max_steps
-            current_epoch = state.epoch
-            
-            # Get loss from logs if available
-            loss = None
-            learning_rate = None
-            if state.log_history:
-                last_log = state.log_history[-1]
-                loss = last_log.get('train_loss', last_log.get('loss'))
-                learning_rate = last_log.get('learning_rate')
-            
-            # Calculate progress
-            progress_pct = (current_step / total_steps * 100) if total_steps > 0 else 0
-            
-            # Log every 10 steps to avoid spam
-            if current_step % 10 == 0 or current_step == total_steps:
-                message = f"Step {current_step}/{total_steps} ({progress_pct:.1f}%) - Epoch: {current_epoch:.2f}"
-                if loss is not None:
-                    message += f" - Loss: {loss:.4f}"
-                if learning_rate is not None:
-                    message += f" - LR: {learning_rate:.2e}"
+        def on_train_begin(self, args, state, control, **kwargs):
+            """Called at the beginning of training"""
+            try:
+                message = f"Starting training with {state.max_steps} total steps"
                 
                 log_entry = {
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "type": "training",
+                    "type": "train_start",
                     "message": message,
-                    "step": current_step,
-                    "total_steps": total_steps,
-                    "epoch": current_epoch,
-                    "total_epochs": args.num_train_epochs,
-                    "loss": loss,
-                    "learning_rate": learning_rate,
-                    "progress_percentage": progress_pct
+                    "total_steps": state.max_steps,
+                    "total_epochs": args.num_train_epochs
                 }
                 
                 self.log_queue.put(log_entry)
+                self.logger.info(message)
+            except Exception as e:
+                self.logger.error(f"Error in train begin callback: {e}")
+        
+        def on_epoch_begin(self, args, state, control, **kwargs):
+            """Called at the beginning of each epoch"""
+            try:
+                epoch = state.epoch
+                message = f"Starting epoch {epoch}/{args.num_train_epochs}"
                 
-                # Also update status file
-                self._update_status_file(current_step, total_steps, current_epoch, args.num_train_epochs, loss, learning_rate, progress_pct)
+                log_entry = {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "type": "epoch_start",
+                    "message": message,
+                    "epoch": epoch,
+                    "total_epochs": args.num_train_epochs
+                }
                 
-        except Exception as e:
-            self.logger.error(f"Error in step end callback: {e}")
+                self.log_queue.put(log_entry)
+                self.logger.info(message)
+            except Exception as e:
+                self.logger.error(f"Error in epoch begin callback: {e}")
     
-    def _update_status_file(self, current_step, total_steps, current_epoch, total_epochs, loss, learning_rate, progress_pct):
-        """Update status file with current training progress"""
-        try:
-            status_file = Path("logs") / f"{self.task_id}_status.json"
-            status_data = {
-                "task_id": self.task_id,
-                "status": "running",
-                "progress": f"Step {current_step}/{total_steps} ({progress_pct:.1f}%)",
-                "current_step": current_step,
-                "total_steps": total_steps,
-                "current_epoch": float(current_epoch),
-                "total_epochs": total_epochs,
-                "loss": float(loss) if loss is not None else None,
-                "learning_rate": float(learning_rate) if learning_rate is not None else None,
-                "progress_percentage": progress_pct,
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.start_time))
-            }
-            
-            with open(status_file, "w") as f:
-                json.dump(status_data, f, indent=2)
+        def on_step_begin(self, args, state, control, **kwargs):
+            """Called at the beginning of each training step"""
+            # We don't need to log every step begin to avoid spam
+            # This method exists just to satisfy the trainer callback interface
+            pass
+    
+        def on_step_end(self, args, state, control, **kwargs):
+            """Called at the end of each training step"""
+            try:
+                current_step = state.global_step
+                total_steps = state.max_steps
+                current_epoch = state.epoch
                 
-        except Exception as e:
-            self.logger.error(f"Error updating status file: {e}")
+                # Get loss from logs if available
+                loss = None
+                learning_rate = None
+                if state.log_history:
+                    last_log = state.log_history[-1]
+                    loss = last_log.get('train_loss', last_log.get('loss'))
+                    learning_rate = last_log.get('learning_rate')
+                
+                # Calculate progress
+                progress_pct = (current_step / total_steps * 100) if total_steps > 0 else 0
+                
+                # Log every 10 steps to avoid spam
+                if current_step % 10 == 0 or current_step == total_steps:
+                    message = f"Step {current_step}/{total_steps} ({progress_pct:.1f}%) - Epoch: {current_epoch:.2f}"
+                    if loss is not None:
+                        message += f" - Loss: {loss:.4f}"
+                    if learning_rate is not None:
+                        message += f" - LR: {learning_rate:.2e}"
+                    
+                    log_entry = {
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "type": "training",
+                        "message": message,
+                        "step": current_step,
+                        "total_steps": total_steps,
+                        "epoch": current_epoch,
+                        "total_epochs": args.num_train_epochs,
+                        "loss": loss,
+                        "learning_rate": learning_rate,
+                        "progress_percentage": progress_pct
+                    }
+                    
+                    self.log_queue.put(log_entry)
+                    
+                    # Also update status file
+                    self._update_status_file(current_step, total_steps, current_epoch, args.num_train_epochs, loss, learning_rate, progress_pct)
+                    
+            except Exception as e:
+                self.logger.error(f"Error in step end callback: {e}")
+    
+        def _update_status_file(self, current_step, total_steps, current_epoch, total_epochs, loss, learning_rate, progress_pct):
+            """Update status file with current training progress"""
+            try:
+                status_file = Path("logs") / f"{self.task_id}_status.json"
+                status_data = {
+                    "task_id": self.task_id,
+                    "status": "running",
+                    "progress": f"Step {current_step}/{total_steps} ({progress_pct:.1f}%)",
+                    "current_step": current_step,
+                    "total_steps": total_steps,
+                    "current_epoch": float(current_epoch),
+                    "total_epochs": total_epochs,
+                    "loss": float(loss) if loss is not None else None,
+                    "learning_rate": float(learning_rate) if learning_rate is not None else None,
+                    "progress_percentage": progress_pct,
+                    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.start_time))
+                }
+                
+                with open(status_file, "w") as f:
+                    json.dump(status_data, f, indent=2)
+                    
+            except Exception as e:
+                self.logger.error(f"Error updating status file: {e}")
 
 else:
     # Dummy callback class when transformers is not available
@@ -653,6 +653,23 @@ class TrainingService:
         
         return sessions
 
+    async def start_fine_tuning(self, request: FineTuneRequest) -> str:
+        """Async wrapper for fine_tune method"""
+        import asyncio
+        import concurrent.futures
+        
+        # Generate task ID
+        task_id = str(uuid.uuid4())
+        
+        # Run the fine_tune method in a thread pool to avoid blocking
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Start training in background and return task_id immediately
+            future = executor.submit(self.fine_tune, request, task_id)
+            # Don't wait for completion, just return the task_id
+            
+        return task_id
+    
     async def list_training_jobs(self) -> List[Dict[str, Any]]:
         """List training jobs with minimal status info.
         Matches the API expectation used by the /jobs and /fine-tune/active endpoints.
@@ -759,6 +776,343 @@ class TrainingService:
                 return False
         
         return False
+
+    def estimate_training_time(self, request: FineTuneRequest) -> Dict[str, Any]:
+        """
+        Estimate training time based on dataset size, model parameters, and hardware
+        
+        Args:
+            request: Fine-tuning parameters
+            
+        Returns:
+            Dictionary with time estimates in various formats
+        """
+        try:
+            self.logger.info(f"Estimating training time for model: {request.base_model_dir}")
+            
+            # Default estimates (these are rough approximations)
+            base_time_per_epoch_minutes = 15  # Base estimate for small models
+            
+            # Adjust based on epochs
+            total_epochs = request.epochs
+            
+            # Adjust based on batch size (smaller batch = more steps = longer time)
+            batch_size_factor = max(1.0, 4.0 / request.batch_size)
+            
+            # Adjust based on sequence length (longer sequences = more computation)
+            seq_length_factor = max(1.0, request.max_seq_length / 512.0)
+            
+            # Adjust based on PEFT method
+            peft_factor = 0.7 if request.peft_method in ["lora", "qlora"] else 1.0
+            
+            # Adjust based on optimization backend
+            optimization_factor = 0.5 if UNSLOTH_AVAILABLE else 1.0
+            
+            # Calculate estimated time per epoch
+            estimated_time_per_epoch = (
+                base_time_per_epoch_minutes * 
+                batch_size_factor * 
+                seq_length_factor * 
+                peft_factor * 
+                optimization_factor
+            )
+            
+            # Total estimated time
+            total_estimated_minutes = estimated_time_per_epoch * total_epochs
+            
+            # Convert to various formats
+            total_hours = total_estimated_minutes / 60
+            total_seconds = total_estimated_minutes * 60
+            
+            # Format human readable
+            if total_estimated_minutes < 60:
+                human_readable = f"{int(total_estimated_minutes)} minutes"
+            elif total_hours < 24:
+                hours = int(total_hours)
+                minutes = int((total_hours - hours) * 60)
+                human_readable = f"{hours}h {minutes}m"
+            else:
+                days = int(total_hours / 24)
+                hours = int(total_hours % 24)
+                human_readable = f"{days}d {hours}h"
+            
+            result = {
+                "estimated_total_minutes": round(total_estimated_minutes, 1),
+                "estimated_total_hours": round(total_hours, 2),
+                "estimated_total_seconds": round(total_seconds, 1),
+                "estimated_time_per_epoch_minutes": round(estimated_time_per_epoch, 1),
+                "human_readable": human_readable,
+                "total_epochs": total_epochs,
+                "factors": {
+                    "batch_size_factor": round(batch_size_factor, 2),
+                    "sequence_length_factor": round(seq_length_factor, 2),
+                    "peft_factor": round(peft_factor, 2),
+                    "optimization_factor": round(optimization_factor, 2)
+                },
+                "optimization_backend": "unsloth" if UNSLOTH_AVAILABLE else "transformers",
+                "gpu_acceleration": torch.cuda.is_available(),
+                "note": "These are rough estimates and actual time may vary significantly based on dataset complexity, hardware, and system load"
+            }
+            
+            self.logger.info(f"Estimated training time: {human_readable}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error estimating training time: {e}")
+            return {
+                "error": str(e),
+                "estimated_total_minutes": None,
+                "human_readable": "Unable to estimate",
+                "note": "Error occurred during estimation"
+            }
+
+    async def get_training_status(self, task_id: str) -> Dict[str, Any]:
+        """Get training status for a specific task"""
+        try:
+            # Check if task is in active trainings
+            if task_id in self.active_trainings:
+                training_info = self.active_trainings[task_id]
+                return {
+                    "task_id": task_id,
+                    "status": "running",
+                    "start_time": training_info["start_time"],
+                    "duration_seconds": time.time() - training_info["start_time"]
+                }
+            
+            # Check status file if exists
+            status_file = Path("logs") / f"{task_id}_status.json"
+            if status_file.exists():
+                with open(status_file, "r") as f:
+                    status_data = json.load(f)
+                return status_data
+            
+            # Task not found
+            raise KeyError(f"Task {task_id} not found")
+            
+        except Exception as e:
+            self.logger.error(f"Error getting training status for {task_id}: {e}")
+            raise
+
+    async def stream_logs(self, task_id: str):
+        """Stream training logs for a task"""
+        try:
+            if task_id not in task_log_queues:
+                raise KeyError(f"Task {task_id} not found")
+            
+            log_queue = task_log_queues[task_id]
+            
+            # Stream existing logs first
+            logs = []
+            while not log_queue.empty():
+                try:
+                    log_entry = log_queue.get_nowait()
+                    logs.append(log_entry)
+                except queue.Empty:
+                    break
+            
+            # Yield existing logs
+            for log in logs:
+                yield json.dumps(log)
+            
+            # Stream new logs until task completion
+            while not task_completion_flags.get(task_id, False):
+                try:
+                    # Wait for new log with timeout
+                    log_entry = log_queue.get(timeout=1.0)
+                    yield json.dumps(log_entry)
+                except queue.Empty:
+                    # Yield heartbeat
+                    yield json.dumps({"type": "heartbeat", "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
+                    
+        except Exception as e:
+            self.logger.error(f"Error streaming logs for {task_id}: {e}")
+            yield json.dumps({"type": "error", "message": str(e)})
+
+    async def stop_training(self, task_id: str) -> bool:
+        """Stop a training job"""
+        return self.cancel_training(task_id)
+
+    async def list_available_models(self) -> List[Dict[str, Any]]:
+        """List available base models"""
+        try:
+            models = []
+            models_dir = Path("/app/models/base")
+            
+            if models_dir.exists():
+                for model_path in models_dir.iterdir():
+                    if model_path.is_dir():
+                        # Check if it's a valid model directory
+                        config_file = model_path / "config.json"
+                        if config_file.exists():
+                            try:
+                                with open(config_file, 'r') as f:
+                                    config = json.load(f)
+                                
+                                models.append({
+                                    "model_name": model_path.name,
+                                    "model_path": str(model_path),
+                                    "model_type": config.get("model_type", "unknown"),
+                                    "vocab_size": config.get("vocab_size", 0),
+                                    "hidden_size": config.get("hidden_size", 0),
+                                    "num_layers": config.get("num_hidden_layers", 0),
+                                    "status": "available"
+                                })
+                            except Exception as e:
+                                self.logger.warning(f"Error reading config for {model_path.name}: {e}")
+                                models.append({
+                                    "model_name": model_path.name,
+                                    "model_path": str(model_path),
+                                    "status": "available",
+                                    "note": "Config file could not be read"
+                                })
+            
+            if not models:
+                # Return fallback if no models found
+                models.append({
+                    "model_name": "No models found",
+                    "model_path": "/app/models/base",
+                    "status": "unavailable",
+                    "note": "Please add models to /app/models/base directory"
+                })
+            
+            return models
+            
+        except Exception as e:
+            self.logger.error(f"Error listing available models: {e}")
+            return [{"error": str(e)}]
+
+    async def list_available_datasets(self) -> List[Dict[str, Any]]:
+        """List available datasets"""
+        try:
+            datasets = []
+            datasets_dir = Path("/app/datasets")
+            
+            if datasets_dir.exists():
+                for dataset_path in datasets_dir.iterdir():
+                    if dataset_path.is_dir():
+                        # Check for dataset files
+                        train_files = list(dataset_path.glob("train.*"))
+                        val_files = list(dataset_path.glob("val.*")) or list(dataset_path.glob("validation.*"))
+                        
+                        datasets.append({
+                            "dataset_name": dataset_path.name,
+                            "dataset_path": str(dataset_path),
+                            "has_train": len(train_files) > 0,
+                            "has_validation": len(val_files) > 0,
+                            "train_files": [str(f) for f in train_files],
+                            "validation_files": [str(f) for f in val_files],
+                            "status": "available"
+                        })
+            
+            if not datasets:
+                # Return fallback if no datasets found
+                datasets.append({
+                    "dataset_name": "No datasets found",
+                    "dataset_path": "/app/datasets",
+                    "status": "unavailable",
+                    "note": "Please add datasets to /app/datasets directory"
+                })
+            
+            return datasets
+            
+        except Exception as e:
+            self.logger.error(f"Error listing available datasets: {e}")
+            return [{"error": str(e)}]
+
+    async def list_training_templates(self) -> List[Dict[str, Any]]:
+        """List available training configuration templates"""
+        try:
+            # Return predefined templates for common scenarios
+            templates = [
+                {
+                    "template_name": "quick_test",
+                    "description": "Quick test training with minimal resources",
+                    "config": {
+                        "epochs": 1,
+                        "batch_size": 1,
+                        "learning_rate": 5e-5,
+                        "max_seq_length": 512,
+                        "peft_method": "lora",
+                        "gradient_accumulation_steps": 4
+                    }
+                },
+                {
+                    "template_name": "standard_lora",
+                    "description": "Standard LoRA fine-tuning configuration",
+                    "config": {
+                        "epochs": 3,
+                        "batch_size": 2,
+                        "learning_rate": 2e-4,
+                        "max_seq_length": 1024,
+                        "peft_method": "lora",
+                        "gradient_accumulation_steps": 8
+                    }
+                },
+                {
+                    "template_name": "high_quality",
+                    "description": "High quality training with more epochs",
+                    "config": {
+                        "epochs": 5,
+                        "batch_size": 4,
+                        "learning_rate": 1e-4,
+                        "max_seq_length": 2048,
+                        "peft_method": "lora",
+                        "gradient_accumulation_steps": 4
+                    }
+                },
+                {
+                    "template_name": "qlora_efficient",
+                    "description": "Memory-efficient QLoRA configuration",
+                    "config": {
+                        "epochs": 3,
+                        "batch_size": 1,
+                        "learning_rate": 1e-4,
+                        "max_seq_length": 1024,
+                        "peft_method": "qlora",
+                        "gradient_accumulation_steps": 16
+                    }
+                }
+            ]
+            
+            return templates
+            
+        except Exception as e:
+            self.logger.error(f"Error listing training templates: {e}")
+            return [{"error": str(e)}]
+
+    async def optimize_memory(self):
+        """Optimize memory usage"""
+        try:
+            # Force garbage collection
+            gc.collect()
+            
+            # Clear CUDA cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                self.logger.info("CUDA cache cleared")
+            
+            # Clean up completed training resources
+            completed_tasks = []
+            for task_id in list(self.active_trainings.keys()):
+                if task_completion_flags.get(task_id, False):
+                    completed_tasks.append(task_id)
+            
+            for task_id in completed_tasks:
+                self._cleanup_training_resources(task_id)
+            
+            self.logger.info(f"Memory optimization completed. Cleaned up {len(completed_tasks)} completed tasks")
+            
+        except Exception as e:
+            self.logger.error(f"Error during memory optimization: {e}")
+            raise
+
+    async def cleanup(self):
+        """Cleanup service on shutdown"""
+        try:
+            self.cleanup_all_trainings()
+            self.logger.info("Training service cleanup completed")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
 
 
 # Create global service instance

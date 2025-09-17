@@ -77,6 +77,9 @@ SERVICE_ROUTES = {
     # Agent routes (part of chat comparison service)
     '/api/v1/agents': 'llmforge-chat-comparison',
     '/agents': 'llmforge-chat-comparison',  # Backward compatibility
+    
+    # Chat comparison service routes
+    '/chat': 'llmforge-chat-comparison',
 }
 
 # Service port mappings for direct container access

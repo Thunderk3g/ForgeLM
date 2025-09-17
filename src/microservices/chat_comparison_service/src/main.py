@@ -350,6 +350,25 @@ async def list_model_pairs():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Chat-prefixed endpoints for frontend compatibility
+@app.get("/chat/model-pairs")
+async def get_chat_model_pairs():
+    """Get all available base model + LoRA adapter pairs for comparison (frontend compatibility)"""
+    return await list_model_pairs()
+
+
+@app.get("/chat/sessions", response_model=List[SessionInfo])
+async def list_chat_sessions():
+    """List all active comparison chat sessions (frontend compatibility)"""
+    return await list_sessions()
+
+
+@app.post("/chat/sessions")
+async def create_chat_session(request: SessionCreateRequest):
+    """Create a new comparison chat session (frontend compatibility)"""
+    return await create_session(request)
+
+
 @app.post("/models/pairs")
 async def create_model_pair(config: DualModelConfig):
     """Create a new model pair"""

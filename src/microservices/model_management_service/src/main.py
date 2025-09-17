@@ -262,6 +262,10 @@ async def select_model(request: dict):
         model_name = request.get('model_id')
         model_path = request.get('model_path')
         
+        # If model_name contains a full URL, extract just the repo name
+        if model_name and model_name.startswith('https://huggingface.co/'):
+            model_name = model_name.replace('https://huggingface.co/', '')
+        
         if not model_name and not model_path:
             raise HTTPException(status_code=400, detail="Either model_name or model_path must be provided")
         
