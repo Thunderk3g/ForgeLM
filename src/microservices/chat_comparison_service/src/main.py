@@ -196,12 +196,7 @@ async def create_session(request: SessionCreateRequest):
         raise HTTPException(status_code=503, detail="Comparison service not initialized")
     
     try:
-        session = await comparison_service.create_session(
-            pair_id=request.pair_id,
-            session_name=request.session_name,
-            custom_system_prompt=request.custom_system_prompt,
-            use_agent_orchestrator=request.use_agent_orchestrator
-        )
+        session = await comparison_service.create_session(request)
         
         active_sessions.inc()
         
@@ -354,13 +349,35 @@ async def list_model_pairs():
 @app.get("/chat/model-pairs")
 async def get_chat_model_pairs():
     """Get all available base model + LoRA adapter pairs for comparison (frontend compatibility)"""
-    return await list_model_pairs()
+    try:
+        pairs_response = await list_model_pairs()
+        return {
+            "status": "success",
+            "model_pairs": pairs_response["pairs"]
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "model_pairs": [],
+            "message": str(e)
+        }
 
 
-@app.get("/chat/sessions", response_model=List[SessionInfo])
+@app.get("/chat/sessions")
 async def list_chat_sessions():
     """List all active comparison chat sessions (frontend compatibility)"""
-    return await list_sessions()
+    try:
+        sessions = await list_sessions()
+        return {
+            "status": "success",
+            "sessions": sessions
+        }
+    except Exception as e:
+        return {
+            "status": "error", 
+            "sessions": [],
+            "message": str(e)
+        }
 
 
 @app.post("/chat/sessions")

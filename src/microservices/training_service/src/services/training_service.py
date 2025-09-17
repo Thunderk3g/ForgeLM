@@ -350,7 +350,6 @@ class TrainingService:
             # Create trainer with Unsloth optimization
             trainer = SFTTrainer(
                 model=model,
-                tokenizer=tokenizer,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
                 eval_dataset=dataset.get("val"),
                 dataset_text_field="text",  # Assuming text field
@@ -451,7 +450,6 @@ class TrainingService:
             # Create trainer
             trainer = SFTTrainer(
                 model=model,
-                tokenizer=tokenizer,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
                 eval_dataset=dataset.get("val"),
                 dataset_text_field="text",

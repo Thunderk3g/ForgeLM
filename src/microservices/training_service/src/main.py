@@ -149,6 +149,19 @@ async def fine_tune(request: FineTuneRequest, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=503, detail="Training service not initialized")
     
     try:
+        # Fix model path if it's pointing to base directory instead of specific model
+        if request.base_model_dir == "/app/models/base":
+            # Look for the actual model directory
+            base_models_dir = "/app/models/base"
+            if os.path.exists(base_models_dir):
+                model_subdirs = [d for d in os.listdir(base_models_dir) 
+                               if os.path.isdir(os.path.join(base_models_dir, d)) and 
+                               os.path.exists(os.path.join(base_models_dir, d, "config.json"))]
+                if model_subdirs:
+                    # Use the first available model (or could implement selection logic)
+                    request.base_model_dir = os.path.join(base_models_dir, model_subdirs[0])
+                    logger.info(f"Corrected model path from /app/models/base to {request.base_model_dir}")
+        
         # Validate request
         if not os.path.exists(request.base_model_dir):
             training_errors_total.inc()
