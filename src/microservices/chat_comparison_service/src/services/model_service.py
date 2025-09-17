@@ -60,6 +60,15 @@ except ImportError:
     FALLBACK_AVAILABLE = False
     print("Fallback generation service not available")
 
+# Import PEFT for LoRA adapter support
+try:
+    from peft import PeftModel, PeftConfig
+    PEFT_AVAILABLE = True
+    print("PEFT available for LoRA adapter support")
+except ImportError:
+    PEFT_AVAILABLE = False
+    print("Warning: PEFT not available - LoRA adapters will use fallback mode")
+
 
 class DependencyGraph:
     """Tree-based dependency tracking for LoRAs and KV caches (FastLibra approach)"""
@@ -1120,21 +1129,52 @@ class ModelService:
                         gpu_info = get_gpu_memory_info()
                         gpu_free_gb = gpu_info.get('free_mb', 0) / 1024
                         
-                        # Configure adapter loading with same memory management
-                        adapter_kwargs = {
-                            'model_name': adapter_path,
-                            'max_seq_length': settings.default_max_seq_length,
-                            'dtype': None,
-                            'load_in_4bit': True,
-                            'trust_remote_code': True,  # Required for Qwen2.5
-                        }
-                        
-                        # Add CPU offload support if GPU memory is limited
-                        if gpu_free_gb < 4.0:  # Lower threshold for adapter
-                            self.logger.warning(f"Limited GPU memory ({gpu_free_gb:.1f}GB free), enabling CPU offload for adapter")
-                            adapter_kwargs['device_map'] = "auto"
-                        
-                        finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(**adapter_kwargs)
+                        # CRITICAL FIX: Detect if this is a LoRA adapter vs a complete model
+                        adapter_config_path = Path(adapter_path) / "adapter_config.json"
+                        if adapter_config_path.exists():
+                            # This is a LoRA adapter - apply it to the base model
+                            self.logger.info(f"Detected LoRA adapter at {adapter_path}")
+                            if PEFT_AVAILABLE:
+                                try:
+                                    # Load adapter config
+                                    adapter_config = PeftConfig.from_pretrained(adapter_path)
+                                    self.logger.info(f"LoRA adapter config: {adapter_config}")
+                                    
+                                    # Apply LoRA adapter to the already loaded base model
+                                    finetuned_model = PeftModel.from_pretrained(base_model, adapter_path)
+                                    adapter_tokenizer = tokenizer  # Use same tokenizer as base model
+                                    
+                                    self.logger.info("Successfully loaded LoRA adapter using PEFT")
+                                    
+                                except Exception as lora_error:
+                                    self.logger.error(f"Failed to load LoRA adapter with PEFT: {lora_error}")
+                                    # Fallback: use base model
+                                    finetuned_model = base_model
+                                    adapter_tokenizer = tokenizer
+                                    self.logger.warning("LoRA loading failed, falling back to base model")
+                            else:
+                                self.logger.warning("PEFT not available, using base model for adapter simulation")
+                                # Fallback: use base model but log that this is simulation mode
+                                finetuned_model = base_model
+                                adapter_tokenizer = tokenizer
+                                self.logger.warning("LoRA adapter integration requires PEFT, using base model")
+                        else:
+                            # This is a complete model, not a LoRA adapter - load it normally
+                            self.logger.info(f"Loading complete fine-tuned model from {adapter_path}")
+                            adapter_kwargs = {
+                                'model_name': adapter_path,
+                                'max_seq_length': settings.default_max_seq_length,
+                                'dtype': None,
+                                'load_in_4bit': True,
+                                'trust_remote_code': True,  # Required for Qwen2.5
+                            }
+                            
+                            # Add CPU offload support if GPU memory is limited
+                            if gpu_free_gb < 4.0:  # Lower threshold for adapter
+                                self.logger.warning(f"Limited GPU memory ({gpu_free_gb:.1f}GB free), enabling CPU offload for adapter")
+                                adapter_kwargs['device_map'] = "auto"
+                            
+                            finetuned_model, adapter_tokenizer = FastLanguageModel.from_pretrained(**adapter_kwargs)
                         
                         # Validate models were loaded successfully
                         if finetuned_model is None:
@@ -1189,12 +1229,35 @@ class ModelService:
                         self.logger.info(f"Base model loaded successfully!")
                         self.logger.info(f"Model device: {next(base_model.parameters()).device}")
                         
-                        # For now, use the same base model for "fine-tuned" comparison
-                        # This will show the difference in responses based on different prompting
-                        finetuned_model = base_model  
-                        adapter_tokenizer = tokenizer
-                        
-                        self.logger.info("Note: Using base model for both comparisons (LoRA adapter loading not available)")
+                        # Handle LoRA adapter loading with Transformers + PEFT
+                        adapter_config_path = Path(adapter_path) / "adapter_config.json"
+                        if adapter_config_path.exists() and PEFT_AVAILABLE:
+                            # This is a LoRA adapter - apply it to the base model
+                            self.logger.info(f"Detected LoRA adapter at {adapter_path} (Transformers mode)")
+                            try:
+                                # Load adapter config and apply to base model
+                                adapter_config = PeftConfig.from_pretrained(adapter_path)
+                                finetuned_model = PeftModel.from_pretrained(base_model, adapter_path)
+                                adapter_tokenizer = tokenizer
+                                
+                                self.logger.info("Successfully loaded LoRA adapter using Transformers + PEFT")
+                                
+                            except Exception as lora_error:
+                                self.logger.error(f"Failed to load LoRA adapter with Transformers + PEFT: {lora_error}")
+                                # Fallback: use base model
+                                finetuned_model = base_model
+                                adapter_tokenizer = tokenizer
+                                self.logger.warning("LoRA loading failed in Transformers mode, using base model")
+                        else:
+                            # Either not a LoRA adapter or PEFT not available
+                            if adapter_config_path.exists():
+                                self.logger.warning("LoRA adapter detected but PEFT not available, using base model")
+                            else:
+                                self.logger.info("Complete fine-tuned model would be loaded here (not supported in Transformers fallback)")
+                            
+                            finetuned_model = base_model  
+                            adapter_tokenizer = tokenizer
+                            self.logger.info("Note: Using base model for both comparisons")
                         
                     except Exception as transformers_error:
                         self.logger.error(f"Error loading with Transformers: {transformers_error}")
