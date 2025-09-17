@@ -1385,17 +1385,27 @@ class ModelService:
                             if attention_mask is None:
                                 attention_mask = torch.ones_like(inputs['input_ids'])
                             
+                            # Extract generation parameters with fallbacks
+                            max_new_tokens = generation_params.get('max_new_tokens', 256)
+                            temperature = generation_params.get('temperature', 0.7)
+                            top_p = generation_params.get('top_p', 0.9)
+                            top_k = generation_params.get('top_k', 50)
+                            do_sample = generation_params.get('do_sample', True)
+                            repetition_penalty = generation_params.get('repetition_penalty', 1.1)
+                            
+                            self.logger.info(f"Using generation params: max_new_tokens={max_new_tokens}, temp={temperature}, top_p={top_p}, top_k={top_k}, do_sample={do_sample}, rep_penalty={repetition_penalty}")
+                            
                             outputs = generation_model.generate(
                                 input_ids=inputs['input_ids'],
                                 attention_mask=attention_mask,
-                                max_new_tokens=50,  # Increased for better responses
-                                temperature=0.6,    # Qwen2 optimized
-                                top_p=0.95,        # Qwen2 optimized
-                                top_k=20,          # Add top_k
-                                do_sample=True,    # Always sample for Qwen
+                                max_new_tokens=max_new_tokens,
+                                temperature=temperature,
+                                top_p=top_p,
+                                top_k=top_k,
+                                do_sample=do_sample,
                                 pad_token_id=tokenizer.pad_token_id,
                                 eos_token_id=tokenizer.eos_token_id,
-                                repetition_penalty=1.2,  # Higher to reduce repetition
+                                repetition_penalty=repetition_penalty,
                             )
                             self.logger.info(f"Generate() completed successfully")
                         except Exception as gen_ex:
@@ -1414,11 +1424,15 @@ class ModelService:
                                 self.logger.info("PEFT fallback: trying base model only")
                                 try:
                                     base_model = model.get_base_model()
+                                    # Use minimal params from request for fallback
+                                    fallback_max_tokens = min(generation_params.get('max_new_tokens', 50), 50)  # Cap at 50 for stability
+                                    fallback_temp = max(0.1, min(generation_params.get('temperature', 0.7), 1.0))  # Safe range
+                                    
                                     outputs = base_model.generate(
                                         inputs['input_ids'],
-                                        max_new_tokens=15,  # Only use max_new_tokens
-                                        temperature=0.7,
-                                        do_sample=True,
+                                        max_new_tokens=fallback_max_tokens,
+                                        temperature=fallback_temp,
+                                        do_sample=generation_params.get('do_sample', True),
                                         pad_token_id=tokenizer.pad_token_id,
                                     )
                                 except:
@@ -1433,11 +1447,15 @@ class ModelService:
                                     
                                     outputs = torch.cat([inputs['input_ids'], response_ids], dim=1)
                             else:
+                                # Use basic params from request for non-PEFT fallback  
+                                simple_max_tokens = min(generation_params.get('max_new_tokens', 15), 30)  # Cap for stability
+                                simple_temp = max(0.1, min(generation_params.get('temperature', 0.7), 1.0))  # Safe range
+                                
                                 outputs = model.generate(
                                     inputs['input_ids'],
-                                    max_new_tokens=15,
-                                    temperature=0.7,
-                                    do_sample=True,
+                                    max_new_tokens=simple_max_tokens,
+                                    temperature=simple_temp,
+                                    do_sample=generation_params.get('do_sample', True),
                                     pad_token_id=tokenizer.pad_token_id,
                                 )
                             self.logger.info(f"Fallback generation successful, output shape: {outputs.shape if outputs is not None else 'None'}")
@@ -1487,31 +1505,45 @@ class ModelService:
                     self.logger.info(f"Attempting Transformers generation with {model_type} model")
                     
                     try:
+                        # Extract generation parameters with fallbacks for transformers
+                        max_new_tokens = generation_params.get('max_new_tokens', 256)
+                        temperature = generation_params.get('temperature', 0.7)
+                        top_p = generation_params.get('top_p', 0.9)
+                        top_k = generation_params.get('top_k', 50)
+                        do_sample = generation_params.get('do_sample', True)
+                        repetition_penalty = generation_params.get('repetition_penalty', 1.1)
+                        
                         outputs = model.generate(
                             input_ids=inputs['input_ids'],
                             attention_mask=inputs['attention_mask'],
-                            max_new_tokens=50,  # Increased for better responses
-                            temperature=0.6,    # Qwen2 optimized
-                            top_p=0.95,        # Qwen2 optimized
-                            top_k=20,          # Add top_k
-                            do_sample=True,    # Always sample for Qwen
+                            max_new_tokens=max_new_tokens,
+                            temperature=temperature,
+                            top_p=top_p,
+                            top_k=top_k,
+                            do_sample=do_sample,
                             pad_token_id=tokenizer.pad_token_id,
                             eos_token_id=tokenizer.eos_token_id,
-                            repetition_penalty=1.2,
+                            repetition_penalty=repetition_penalty,
                         )
                         self.logger.info(f"Transformers generation successful, output shape: {outputs.shape if outputs is not None else 'None'}")
                     except Exception as gen_error:
                         self.logger.error(f"Transformers generation failed: {gen_error}")
                         # Simple fallback attempt
                         try:
+                            # Use simplified params from request for transformers fallback
+                            fallback_max_tokens = min(generation_params.get('max_new_tokens', 30), 50)  # Cap for stability
+                            fallback_temp = max(0.1, min(generation_params.get('temperature', 0.7), 1.0))  # Safe range
+                            fallback_top_p = max(0.1, min(generation_params.get('top_p', 0.9), 1.0))
+                            fallback_rep_penalty = max(1.0, min(generation_params.get('repetition_penalty', 1.1), 2.0))
+                            
                             outputs = model.generate(
                                 inputs['input_ids'],
-                                max_new_tokens=30,
-                                temperature=0.6,
-                                top_p=0.95,
-                                do_sample=True,
+                                max_new_tokens=fallback_max_tokens,
+                                temperature=fallback_temp,
+                                top_p=fallback_top_p,
+                                do_sample=generation_params.get('do_sample', True),
                                 pad_token_id=tokenizer.pad_token_id,
-                                repetition_penalty=1.2,
+                                repetition_penalty=fallback_rep_penalty,
                             )
                             self.logger.info(f"Transformers fallback generation successful")
                         except Exception as fallback_error:

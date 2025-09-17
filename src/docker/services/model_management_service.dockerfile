@@ -13,8 +13,11 @@ RUN pip install -r requirements.txt
 # Create required directories
 RUN mkdir -p /app/logs /app/models
 
+# Create triton and cache directories for Unsloth
+RUN mkdir -p /home/llmforge/.triton /home/llmforge/.cache
+
 # Set ownership
-RUN chown -R llmforge:llmforge /app
+RUN chown -R llmforge:llmforge /app /home/llmforge/.triton /home/llmforge/.cache
 
 # Switch to non-root user
 USER llmforge

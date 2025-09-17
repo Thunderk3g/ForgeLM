@@ -386,6 +386,32 @@ async def create_chat_session(request: SessionCreateRequest):
     return await create_session(request)
 
 
+@app.post("/chat/generate")
+async def chat_generate(request: ComparisonRequest):
+    """Generate chat responses using comparison models (frontend compatibility)"""
+    if not comparison_service:
+        comparison_errors_total.inc()
+        raise HTTPException(status_code=503, detail="Comparison service not initialized")
+    
+    try:
+        # Use the comparison service directly
+        response = await comparison_service.compare_models(request)
+        
+        # Broadcast comparison result if session_id is provided
+        if hasattr(request, 'session_id') and request.session_id:
+            await connection_manager.broadcast({
+                "type": "comparison_result",
+                "session_id": request.session_id,
+                "response": response.model_dump()
+            })
+        
+        return response
+    except Exception as e:
+        comparison_errors_total.inc()
+        logger.error(f"Chat generate failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/models/pairs")
 async def create_model_pair(config: DualModelConfig):
     """Create a new model pair"""
