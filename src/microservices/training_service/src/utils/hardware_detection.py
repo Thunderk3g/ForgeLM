@@ -342,6 +342,155 @@ class AdaptiveTrainingConfig:
         self.logger.info(f"Generated adaptive config for {self.profile.gpu_name} with {effective_memory_gb:.1f}GB memory")
         self.logger.info(f"Model precision: {config['gpu_optimizations']['torch_dtype']} (optimized for {model_name or 'generic'})")
         return config
+
+    def generate_enhanced_adaptive_config(
+        self, 
+        request, 
+        training_type: str = "instruction"
+    ) -> Dict[str, Any]:
+        """Generate enhanced adaptive configuration with training type support"""
+        
+        # Get base config
+        base_config = self.generate_optimal_config(request)
+        
+        # Add training type specific enhancements
+        training_config = self._get_training_type_config(training_type)
+        chat_config = self._get_chat_configuration(training_type)
+        grpo_config = self._get_grpo_configuration(training_type)
+        
+        # Enhanced configuration structure
+        enhanced_config = {
+            **base_config,
+            "training_type": training_type,
+            "training_type_config": training_config,
+            "chat_config": chat_config,
+            "grpo_config": grpo_config,
+            "advanced_optimizations": self._get_advanced_optimizations(training_type),
+            "unsloth_enhancements": self._get_unsloth_enhancements(training_type),
+        }
+        
+        return enhanced_config
+    
+    def _get_training_type_config(self, training_type: str) -> Dict[str, Any]:
+        """Get training type specific configuration"""
+        configs = {
+            "instruction": {
+                "description": "Standard instruction tuning",
+                "batch_size_multiplier": 1.0,
+                "gradient_accumulation_multiplier": 1.0,
+                "learning_rate_multiplier": 1.0,
+                "max_seq_length": 2048,
+                "scheduler_type": "linear",
+                "weight_decay": 0.01,
+                "warmup_ratio": 0.1,
+            },
+            "chat": {
+                "description": "Chat completion training",
+                "batch_size_multiplier": 0.5,
+                "gradient_accumulation_multiplier": 2.0,
+                "learning_rate_multiplier": 0.8,
+                "max_seq_length": 4096,
+                "scheduler_type": "cosine",
+                "weight_decay": 0.005,
+                "warmup_ratio": 0.15,
+            },
+            "reasoning": {
+                "description": "GRPO reasoning training",
+                "batch_size_multiplier": 0.25,
+                "gradient_accumulation_multiplier": 4.0,
+                "learning_rate_multiplier": 0.5,
+                "max_seq_length": 8192,
+                "scheduler_type": "cosine",
+                "weight_decay": 0.001,
+                "warmup_ratio": 0.2,
+            }
+        }
+        
+        return configs.get(training_type, configs["instruction"])
+    
+    def _get_chat_configuration(self, training_type: str) -> Dict[str, Any]:
+        """Get chat-specific configuration"""
+        if training_type not in ["chat", "reasoning"]:
+            return {}
+        
+        return {
+            "template_type": "chatml",
+            "system_message": "You are a helpful assistant.",
+            "max_turns": 10,
+            "truncate_method": "keep_recent",
+            "assistant_only_loss": True,
+            "add_special_tokens": False,
+            "enable_packing": True,
+            "use_unsloth_template": UNSLOTH_AVAILABLE,
+        }
+    
+    def _get_grpo_configuration(self, training_type: str) -> Dict[str, Any]:
+        """Get GRPO-specific configuration"""
+        if training_type != "reasoning":
+            return {}
+        
+        return {
+            "enable_reasoning": True,
+            "process_supervision": True,
+            "reasoning_chain_format": "step_by_step",
+            "reward_threshold": 0.7,
+            "step_evaluation": True,
+            "chain_of_thought": True,
+            "process_reward_weight": 0.3,
+            "outcome_reward_weight": 0.7,
+        }
+    
+    def _get_advanced_optimizations(self, training_type: str) -> Dict[str, Any]:
+        """Get advanced optimizations based on training type"""
+        base_optimizations = {
+            "use_flash_attention": True,
+            "gradient_checkpointing_ratio": 0.5,
+            "memory_efficient_attention": True,
+            "compile_model": False,  # Can cause issues with some models
+        }
+        
+        if training_type == "chat":
+            base_optimizations.update({
+                "sequence_packing": True,
+                "dynamic_padding": True,
+                "attention_dropout": 0.0,
+            })
+        elif training_type == "reasoning":
+            base_optimizations.update({
+                "sequence_packing": False,  # Don't pack reasoning chains
+                "dynamic_padding": False,
+                "attention_dropout": 0.0,
+                "reasoning_memory_optimization": True,
+            })
+        
+        return base_optimizations
+    
+    def _get_unsloth_enhancements(self, training_type: str) -> Dict[str, Any]:
+        """Get Unsloth-specific enhancements"""
+        if not UNSLOTH_AVAILABLE:
+            return {}
+        
+        base_enhancements = {
+            "use_unsloth_optimizer": True,
+            "unsloth_attention_implementation": "flash_attention_2",
+            "gradient_checkpointing_method": "unsloth",
+            "memory_optimization_level": "aggressive",
+        }
+        
+        if training_type == "chat":
+            base_enhancements.update({
+                "unsloth_chat_template": True,
+                "conversation_packing": True,
+                "multi_turn_optimization": True,
+            })
+        elif training_type == "reasoning":
+            base_enhancements.update({
+                "reasoning_chain_optimization": True,
+                "process_supervision_support": True,
+                "step_wise_gradients": True,
+            })
+        
+        return base_enhancements
     
     def _get_gpu_optimizations(self, model_name: Optional[str] = None) -> Dict[str, Any]:
         """Get GPU-specific optimizations with model-aware precision selection"""

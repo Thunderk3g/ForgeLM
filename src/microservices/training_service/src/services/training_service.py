@@ -28,8 +28,10 @@ from models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
 from config.settings import settings
+
 # Setup proper Triton cache directory with correct permissions
 import tempfile
+
 triton_cache_dir = tempfile.mkdtemp(prefix="triton_cache_")
 os.environ["TRITON_CACHE_DIR"] = triton_cache_dir
 try:
@@ -300,19 +302,26 @@ class TrainingService:
 
         # Initialize hardware detection and adaptive configuration
         from utils.hardware_detection import hardware_detector, AdaptiveTrainingConfig
+
         self.hardware_profile = hardware_detector.detect_full_profile()
         self.adaptive_config = AdaptiveTrainingConfig(self.hardware_profile)
-        
+
         # Register cleanup
         register_cleanup(self.cleanup_all_trainings)
 
         # Log hardware profile and optimizations
         hardware_summary = self.adaptive_config.get_hardware_summary()
-        self.logger.info(f"TrainingService initialized with adaptive hardware optimization")
-        self.logger.info(f"Hardware Profile: GPU={hardware_summary['gpu']}, RAM={hardware_summary['memory']}, CPU={hardware_summary['cpu']}")
-        self.logger.info(f"Environment: {hardware_summary['environment']}, Storage={hardware_summary['storage']}")
+        self.logger.info(
+            f"TrainingService initialized with adaptive hardware optimization"
+        )
+        self.logger.info(
+            f"Hardware Profile: GPU={hardware_summary['gpu']}, RAM={hardware_summary['memory']}, CPU={hardware_summary['cpu']}"
+        )
+        self.logger.info(
+            f"Environment: {hardware_summary['environment']}, Storage={hardware_summary['storage']}"
+        )
         self.logger.info(f"Unsloth available: {UNSLOTH_AVAILABLE}")
-        
+
         # Apply system-level optimizations
         system_opts = self.adaptive_config._get_system_optimizations()
         for env_var, value in system_opts.items():
@@ -372,16 +381,18 @@ class TrainingService:
                 self.logger.warning("Fixing bos_token_id for Qwen2.5 compatibility")
                 tokenizer.bos_token_id = tokenizer.eos_token_id
                 tokenizer.bos_token = tokenizer.eos_token
-                
+
             # Ensure padding token is properly set
             if tokenizer.pad_token_id is None:
                 tokenizer.pad_token_id = tokenizer.eos_token_id
                 tokenizer.pad_token = tokenizer.eos_token
-                
+
             # Log final tokenizer state
-            self.logger.info(f"Tokenizer config: bos={tokenizer.bos_token_id}, eos={tokenizer.eos_token_id}, pad={tokenizer.pad_token_id}")
+            self.logger.info(
+                f"Tokenizer config: bos={tokenizer.bos_token_id}, eos={tokenizer.eos_token_id}, pad={tokenizer.pad_token_id}"
+            )
             return tokenizer
-            
+
         except Exception as e:
             self.logger.error(f"Error fixing tokenizer: {e}")
             return tokenizer
@@ -394,31 +405,37 @@ class TrainingService:
         self.logger.info("Using Unsloth optimization for fine-tuning")
 
         try:
-            # Generate adaptive configuration for this hardware
-            adaptive_config = self.adaptive_config.generate_optimal_config(request)
-            self.logger.info(f"Using adaptive config: {adaptive_config['effective_memory_gb']:.1f}GB effective memory")
-            
+            # Generate enhanced adaptive configuration for this hardware and training type
+            adaptive_config = self.adaptive_config.generate_enhanced_adaptive_config(request, training_type)
+            self.logger.info(
+                f"Using adaptive config: {adaptive_config['effective_memory_gb']:.1f}GB effective memory"
+            )
+
             # Get hardware-optimized model loading parameters
             gpu_opts = adaptive_config["gpu_optimizations"]
             model_config = adaptive_config["model_loading"]
             lora_config = adaptive_config["lora_config"]
-            
+
             # Load model and tokenizer with adaptive optimization
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=request.base_model_dir,
-                max_seq_length=min(request.max_seq_length, model_config["max_seq_length"]),
+                max_seq_length=min(
+                    request.max_seq_length, model_config["max_seq_length"]
+                ),
                 dtype=None,  # Auto-detect optimal dtype
                 load_in_4bit=gpu_opts["load_in_4bit"],
                 load_in_8bit=gpu_opts.get("load_in_8bit", False),
                 device_map=gpu_opts["device_map"],
                 trust_remote_code=model_config["trust_remote_code"],
             )
-            
+
             # CRITICAL FIX: Fix Qwen2.5 tokenizer configuration
             tokenizer = self.fix_qwen_tokenizer(tokenizer)
 
             # Apply adaptive LoRA configuration
-            self.logger.info(f"Applying LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, targets={len(lora_config['target_modules'])}")
+            self.logger.info(
+                f"Applying LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, targets={len(lora_config['target_modules'])}"
+            )
             model = FastLanguageModel.get_peft_model(
                 model,
                 r=lora_config["r"],
@@ -426,7 +443,9 @@ class TrainingService:
                 lora_alpha=lora_config["lora_alpha"],
                 lora_dropout=lora_config["lora_dropout"],
                 bias="none",
-                use_gradient_checkpointing="unsloth" if gpu_opts.get("gradient_checkpointing", True) else "no",
+                use_gradient_checkpointing=(
+                    "unsloth" if gpu_opts.get("gradient_checkpointing", True) else "no"
+                ),
                 random_state=3407,
                 use_rslora=False,
                 loftq_config=None,
@@ -435,22 +454,43 @@ class TrainingService:
             # Load dataset
             dataset = load_from_disk(request.dataset_dir)
 
-            # Setup adaptive training arguments
-            training_args = self._create_adaptive_training_args(request, task_id, adaptive_config)
+            # Setup adaptive training arguments with training type
+            training_type = getattr(request, 'ft_type', 'instruction')
+            if training_type == 'instruction':
+                training_type = 'instruction'
+            elif training_type in ['chat', 'conversation']:
+                training_type = 'chat'
+            elif training_type in ['reasoning', 'grpo']:
+                training_type = 'reasoning'
+            
+            training_args = self._create_adaptive_training_args(
+                request, task_id, adaptive_config, training_type
+            )
 
             # Create progress callback
             progress_callback = UnslothProgressCallback(task_id, log_queue)
 
             # Create trainer with adaptive SFT configuration
             adaptive_training_args = adaptive_config["training_args"]
-            effective_seq_length = min(request.max_seq_length, model_config["max_seq_length"])
-            
-            sft_config = SFTConfig(
-                dataset_text_field="text",
-                max_seq_length=effective_seq_length,
-                dataset_num_proc=adaptive_training_args.get("dataloader_num_workers", 1),
-                packing=True,  # Enable packing for efficiency
+            effective_seq_length = min(
+                request.max_seq_length, model_config["max_seq_length"]
             )
+
+            # Get training type specific SFT configuration
+            if training_type == "chat":
+                sft_config_dict = self.get_chat_sft_config(request, adaptive_config)
+                sft_config = SFTConfig(
+                    **sft_config_dict
+                )
+            else:
+                sft_config = SFTConfig(
+                    dataset_text_field="text",
+                    max_seq_length=effective_seq_length,
+                    dataset_num_proc=adaptive_training_args.get(
+                        "dataloader_num_workers", 1
+                    ),
+                    packing=True,  # Enable packing for efficiency
+                )
 
             trainer = SFTTrainer(
                 model=model,
@@ -482,18 +522,22 @@ class TrainingService:
                 # Emergency memory cleanup
                 torch.cuda.empty_cache()
                 gc.collect()
-                
+
                 # Reduce batch size and try again
                 if training_args.per_device_train_batch_size > 1:
                     self.logger.info("Attempting recovery with reduced batch size")
                     training_args.per_device_train_batch_size = 1
-                    training_args.gradient_accumulation_steps = min(32, training_args.gradient_accumulation_steps * 2)
-                    
+                    training_args.gradient_accumulation_steps = min(
+                        32, training_args.gradient_accumulation_steps * 2
+                    )
+
                     # Create new trainer with reduced memory settings
                     trainer = SFTTrainer(
                         model=model,
                         tokenizer=tokenizer,
-                        train_dataset=dataset["train"] if "train" in dataset else dataset,
+                        train_dataset=(
+                            dataset["train"] if "train" in dataset else dataset
+                        ),
                         eval_dataset=None,  # Disable eval for recovery
                         args=training_args,
                         data_collator=None,
@@ -506,7 +550,10 @@ class TrainingService:
             except Exception as training_error:
                 # Check for tokenizer-related errors
                 error_msg = str(training_error).lower()
-                if any(keyword in error_msg for keyword in ["bos_token", "eos_token", "tokenizer", "nan"]):
+                if any(
+                    keyword in error_msg
+                    for keyword in ["bos_token", "eos_token", "tokenizer", "nan"]
+                ):
                     self.logger.error(f"Tokenizer error detected: {training_error}")
                     # Apply emergency tokenizer fixes and retry
                     if tokenizer.bos_token_id is None:
@@ -590,9 +637,23 @@ class TrainingService:
 
             # Load dataset
             dataset = load_from_disk(request.dataset_dir)
+            adaptive_config = self.adaptive_config.generate_enhanced_adaptive_config(request, training_type)
+            self.logger.info(
+                f"Using adaptive config: {adaptive_config['effective_memory_gb']:.1f}GB effective memory"
+            )
 
-            # Setup training arguments
-            training_args = self._create_training_args(request, task_id)
+            # Setup training arguments with training type
+            training_type = getattr(request, 'ft_type', 'instruction')
+            if training_type == 'instruction':
+                training_type = 'instruction'
+            elif training_type in ['chat', 'conversation']:
+                training_type = 'chat'
+            elif training_type in ['reasoning', 'grpo']:
+                training_type = 'reasoning'
+            
+            training_args = self._create_adaptive_training_args(
+                request, task_id, adaptive_config, training_type
+            )
             sft_config = SFTConfig(
                 dataset_text_field="text",
                 max_seq_length=request.max_seq_length,
@@ -647,131 +708,244 @@ class TrainingService:
             self.logger.error(f"Standard training failed: {e}")
             raise
 
-    def _create_adaptive_training_args(self, request: FineTuneRequest, task_id: str, adaptive_config: Dict[str, Any]):
-        """Create adaptive training arguments based on hardware profile"""
+    def _create_adaptive_training_args(
+        self, request: FineTuneRequest, task_id: str, adaptive_config: Dict[str, Any], training_type: str = "instruction"
+    ):
+        """Create adaptive training arguments based on hardware profile and training type
         
+        Args:
+            request: Fine-tuning parameters
+            task_id: Unique task identifier
+            adaptive_config: Hardware-optimized configuration
+            training_type: Type of training ("instruction", "chat", "reasoning")
+        """
+
         output_dir = Path(request.output_dir) / "checkpoints"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Get adaptive configuration
+        # Get training type specific configuration
+        if training_type == "chat":
+            base_args = self._get_chat_completion_args(adaptive_config, request)
+        elif training_type == "reasoning":
+            base_args = self._get_reasoning_training_args(adaptive_config, request)
+        else:
+            base_args = self._get_instruction_training_args(adaptive_config, request)
+
         adaptive_args = adaptive_config["training_args"]
         gpu_opts = adaptive_config["gpu_optimizations"]
-        
-        # Base training arguments with adaptive parameters
+        has_cuda = torch.cuda.is_available()
+        model_dtype = None
+        try:
+            model_dtype = next(self.model.parameters()).dtype
+        except Exception:
+            pass
+
+        # 🔑 Precision detection: default from model dtype
+        fp16 = False
+        bf16 = False
+        if has_cuda:
+            if model_dtype == torch.bfloat16:
+                bf16 = True
+            elif model_dtype == torch.float16:
+                fp16 = True
+            else:
+                # fallback based on GPU opts
+                dtype_opt = gpu_opts.get("torch_dtype", "float16")
+                bf16 = dtype_opt == "bfloat16"
+                fp16 = dtype_opt == "float16"
+
+        # ✅ Allow adaptive_config to explicitly override precision
+        if "precision" in adaptive_config:
+            if adaptive_config["precision"] == "bf16":
+                bf16, fp16 = True, False
+            elif adaptive_config["precision"] == "fp16":
+                fp16, bf16 = True, False
+        # Merge base args with adaptive configuration
         args = {
-            "per_device_train_batch_size": adaptive_args["per_device_train_batch_size"],
-            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"],
-            "warmup_steps": 5,
+            "per_device_train_batch_size": base_args.get("per_device_train_batch_size", adaptive_args["per_device_train_batch_size"]),
+            "gradient_accumulation_steps": base_args.get("gradient_accumulation_steps", adaptive_args["gradient_accumulation_steps"]),
+            "warmup_steps": base_args.get("warmup_steps", 5),
             "num_train_epochs": request.epochs,
-            "learning_rate": request.learning_rate,
-            
-            # Adaptive precision settings with fallback handling
-            "fp16": gpu_opts.get("torch_dtype") == "float16" and torch.cuda.is_available(),
-            "bf16": gpu_opts.get("torch_dtype") == "bfloat16" and torch.cuda.is_available(),
-            
-            # Adaptive optimization
-            "logging_steps": adaptive_args.get("logging_steps", 10),
-            "optim": "adamw_8bit" if UNSLOTH_AVAILABLE and gpu_opts["enabled"] else "adamw_hf",
-            "weight_decay": 0.01,
-            "lr_scheduler_type": "linear",
+            "learning_rate": base_args.get("learning_rate", request.learning_rate),
+            "fp16": fp16 and torch.cuda.is_available(),
+            "bf16": bf16 and torch.cuda.is_available(),
+            "logging_steps": base_args.get("logging_steps", adaptive_args.get("logging_steps", 10)),
+            "optim": (
+                "adamw_8bit"
+                if UNSLOTH_AVAILABLE and gpu_opts["enabled"]
+                else "adamw_hf"
+            ),
+            "weight_decay": base_args.get("weight_decay", 0.01),
+            "lr_scheduler_type": base_args.get("lr_scheduler_type", "linear"),
             "seed": 3407,
             "output_dir": str(output_dir),
-            
-            # Adaptive checkpoint and evaluation settings
-            "save_steps": adaptive_args.get("save_steps", 100),
+            "save_steps": base_args.get("save_steps", adaptive_args.get("save_steps", 100)),
             "save_total_limit": adaptive_args.get("save_total_limit", 2),
             "eval_strategy": adaptive_args.get("eval_strategy", "no"),
-            
-            # Adaptive data loading
-            "dataloader_num_workers": adaptive_args.get("dataloader_num_workers", 0),
-            "dataloader_pin_memory": adaptive_args.get("dataloader_pin_memory", False),
-            
-            # System settings
-            "remove_unused_columns": False,
-            "run_name": f"llmforge_adaptive_{task_id[:8]}",
+            "dataloader_num_workers": base_args.get("dataloader_num_workers", adaptive_args.get("dataloader_num_workers", 0)),
+            "dataloader_pin_memory": base_args.get("dataloader_pin_memory", adaptive_args.get("dataloader_pin_memory", False)),
+            "remove_unused_columns": base_args.get("remove_unused_columns", False),
+            "run_name": f"llmforge_{training_type}_{task_id[:8]}",
             "report_to": adaptive_args.get("report_to", []),
         }
-        
-        # Enhanced precision validation and adjustment
+
+        # Apply missing Unsloth optimizations
+        if UNSLOTH_AVAILABLE:
+            unsloth_optimizations = {
+                "use_gradient_checkpointing": "unsloth",
+                "max_grad_norm": 0.3,
+                "adam_beta1": 0.9,
+                "adam_beta2": 0.95,
+                "adam_epsilon": 1e-5,
+                "dataloader_persistent_workers": False,
+                "auto_find_batch_size": False,
+            }
+            args.update(unsloth_optimizations)
+
+        # Apply training type specific Unsloth optimizations
+        args = self._apply_training_type_optimizations(args, training_type, gpu_opts, adaptive_config)
+
+        # Precision logging
         precision_info = adaptive_config.get("precision_info", {})
         detected_precision = gpu_opts.get("torch_dtype", "float16")
-        
-        # Log precision information
-        self.logger.info(f"Precision analysis - Model: {precision_info.get('model_family', 'unknown')}, "
-                        f"Optimal: {precision_info.get('optimal_precision', 'unknown')}, "
-                        f"Hardware supports bfloat16: {precision_info.get('hardware_support', {}).get('bfloat16', False)}")
-        
-        # Dynamic precision adjustment if there's a mismatch risk
+        self.logger.info(
+            f"Precision analysis - Model: {precision_info.get('model_family', 'unknown')}, "
+            f"Optimal: {precision_info.get('optimal_precision', 'unknown')}, "
+            f"Hardware supports bfloat16: {precision_info.get('hardware_support', {}).get('bfloat16', False)}"
+        )
+
         if UNSLOTH_AVAILABLE and detected_precision == "bfloat16":
             self.logger.info("Using bfloat16 precision optimized for Unsloth")
         elif UNSLOTH_AVAILABLE and detected_precision == "float16":
-            # Check if we should warn about potential Unsloth precision mismatch
-            model_family = precision_info.get('model_family', '')
-            if model_family in ['qwen', 'llama', 'mistral', 'gemma']:
-                self.logger.warning(f"Model family '{model_family}' typically prefers bfloat16 with Unsloth, "
-                                  f"but using float16 due to hardware constraints")
-        
-        # Log final configuration details
-        self.logger.info(f"Adaptive training config: batch_size={args['per_device_train_batch_size']}, "
-                        f"grad_accum={args['gradient_accumulation_steps']}, "
-                        f"precision={'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}")
+            model_family = precision_info.get("model_family", "")
+            if model_family in ["qwen", "llama", "mistral", "gemma"]:
+                self.logger.warning(
+                    f"Model family '{model_family}' typically prefers bfloat16 with Unsloth, "
+                    f"but using float16 due to hardware constraints"
+                )
+
+        self.logger.info(
+            f"Adaptive training config: batch_size={args['per_device_train_batch_size']}, "
+            f"grad_accum={args['gradient_accumulation_steps']}, "
+            f"precision={'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}"
+        )
 
         return TrainingArguments(**args)
 
-    def _create_training_args(self, request: FineTuneRequest, task_id: str):
-        """Create training arguments"""
-
-        output_dir = Path(request.output_dir) / "checkpoints"
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        args = {
-            "per_device_train_batch_size": request.batch_size,
-            "gradient_accumulation_steps": request.gradient_accumulation_steps,
+    def _get_instruction_training_args(self, adaptive_config: Dict[str, Any], request: FineTuneRequest) -> Dict[str, Any]:
+        """Get training arguments optimized for instruction tuning"""
+        adaptive_args = adaptive_config["training_args"]
+        return {
+            "per_device_train_batch_size": adaptive_args["per_device_train_batch_size"],
+            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"],
             "warmup_steps": 5,
-            "num_train_epochs": request.epochs,
             "learning_rate": request.learning_rate,
-            "fp16": torch.cuda.is_available() and not is_bfloat16_supported(),
-            "bf16": (
-                torch.cuda.is_available() and is_bfloat16_supported()
-                if UNSLOTH_AVAILABLE
-                else False
-            ),
-            "logging_steps": 10,
-            "optim": "adamw_8bit" if UNSLOTH_AVAILABLE else "adamw_hf",
             "weight_decay": 0.01,
             "lr_scheduler_type": "linear",
-            "seed": 3407,
-            "output_dir": str(output_dir),
-            "save_steps": 100,
-            "save_total_limit": 2,
-            "dataloader_num_workers": 0,  # Avoid multiprocessing issues
+            "logging_steps": adaptive_args.get("logging_steps", 10),
+            "save_steps": adaptive_args.get("save_steps", 100),
+            "dataloader_num_workers": adaptive_args.get("dataloader_num_workers", 0),
+            "dataloader_pin_memory": adaptive_args.get("dataloader_pin_memory", False),
             "remove_unused_columns": False,
-            "run_name": f"llmforge_{task_id[:8]}",
         }
 
-        # Memory optimization for containers - CRITICAL FIX for 8GB limit
-        if KUBERNETES_MODE or CONTAINER_MEMORY_LIMIT_GB <= 8:
-            self.logger.info(f"Applying 8GB container memory optimizations")
-            args.update(
-                {
-                    "per_device_train_batch_size": 1,  # CRITICAL: Always use batch size 1
-                    "gradient_accumulation_steps": max(request.gradient_accumulation_steps, 16),
-                    "dataloader_pin_memory": False,
-                    "eval_strategy": "no",  # Disable evaluation to save memory
-                    "save_steps": 25,  # More frequent saves for recovery
-                    "report_to": [],  # Disable wandb/tensorboard
-                    "save_total_limit": 1,  # Keep only one checkpoint
-                }
-            )
+    def _get_chat_completion_args(self, adaptive_config: Dict[str, Any], request: FineTuneRequest) -> Dict[str, Any]:
+        """Get training arguments optimized for chat completion"""
+        adaptive_args = adaptive_config["training_args"]
+        return {
+            "per_device_train_batch_size": max(1, adaptive_args["per_device_train_batch_size"] // 2),
+            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"] * 2,
+            "warmup_steps": 10,
+            "learning_rate": request.learning_rate * 0.8,
+            "weight_decay": 0.005,
+            "lr_scheduler_type": "cosine",
+            "logging_steps": adaptive_args.get("logging_steps", 5),
+            "save_steps": adaptive_args.get("save_steps", 200),
+            "dataloader_num_workers": min(2, adaptive_args.get("dataloader_num_workers", 1)),
+            "dataloader_pin_memory": False,
+            "remove_unused_columns": False,
+            "group_by_length": True,
+            "prediction_loss_only": False,
+        }
 
+    def _get_reasoning_training_args(self, adaptive_config: Dict[str, Any], request: FineTuneRequest) -> Dict[str, Any]:
+        """Get training arguments optimized for reasoning/GRPO training"""
+        adaptive_args = adaptive_config["training_args"]
+        return {
+            "per_device_train_batch_size": 1,
+            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"] * 4,
+            "warmup_steps": 20,
+            "learning_rate": request.learning_rate * 0.5,
+            "weight_decay": 0.001,
+            "lr_scheduler_type": "cosine",
+            "logging_steps": adaptive_args.get("logging_steps", 5),
+            "save_steps": adaptive_args.get("save_steps", 500),
+            "dataloader_num_workers": 1,
+            "dataloader_pin_memory": False,
+            "remove_unused_columns": False,
+            "group_by_length": False,
+            "prediction_loss_only": False,
+        }
+
+    def _apply_training_type_optimizations(
+        self, args: Dict[str, Any], training_type: str, gpu_opts: Dict[str, Any], adaptive_config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Apply training type specific Unsloth optimizations"""
+        
+        if not UNSLOTH_AVAILABLE:
+            return args
+        
+        if training_type == "chat":
+            chat_optimizations = {
+                "gradient_checkpointing": True,
+                "eval_accumulation_steps": 4,
+            }
+            
+            # GRPO specific settings if reasoning is enabled
+            if adaptive_config.get("enable_reasoning", False):
+                chat_optimizations.update({
+                    "group_by_length": False,
+                    "prediction_loss_only": False,
+                })
+            
+            args.update(chat_optimizations)
+            
+        elif training_type == "reasoning":
+            reasoning_optimizations = {
+                "gradient_checkpointing": True,
+                "eval_accumulation_steps": 8,
+                "group_by_length": False,
+                "prediction_loss_only": False,
+            }
+            args.update(reasoning_optimizations)
+            
+        return args
+
+    def get_chat_sft_config(self, request: FineTuneRequest, adaptive_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Get SFTConfig optimized for chat completion"""
+        
+        chat_config = adaptive_config.get("chat_config", {})
+        
+        sft_config = {
+            "dataset_text_field": "text",
+            "max_seq_length": min(request.max_seq_length, 4096),
+            "packing": True,
+            "dataset_num_proc": 2,
+            "chars_per_token": 3.5,
+        }
+        
+        # Chat specific configurations
         if UNSLOTH_AVAILABLE:
-            from transformers import TrainingArguments
-
-            return TrainingArguments(**args)
-        else:
-            from transformers import TrainingArguments
-
-            return TrainingArguments(**args)
+            sft_config.update({
+                "dataset_kwargs": {
+                    "add_special_tokens": False,
+                    "chat_template": chat_config.get("template_type", "chatml"),
+                },
+                "use_unsloth_template": True,
+                "assistant_only_loss": chat_config.get("assistant_only_loss", True),
+            })
+        
+        return sft_config
 
     def _initialize_status_file(self, task_id: str, request: FineTuneRequest):
         """Initialize status file for tracking"""
@@ -1406,15 +1580,21 @@ class TrainingService:
         """Get detailed hardware profile for debugging and optimization"""
         try:
             hardware_summary = self.adaptive_config.get_hardware_summary()
-            sample_config = self.adaptive_config.generate_optimal_config(type('MockRequest', (), {
-                'batch_size': 2,
-                'gradient_accumulation_steps': 4,
-                'epochs': 1,
-                'learning_rate': 2e-4,
-                'max_seq_length': 1024,
-                'peft_method': 'lora'
-            })())
-            
+            sample_config = self.adaptive_config.generate_optimal_config(
+                type(
+                    "MockRequest",
+                    (),
+                    {
+                        "batch_size": 2,
+                        "gradient_accumulation_steps": 4,
+                        "epochs": 1,
+                        "learning_rate": 2e-4,
+                        "max_seq_length": 1024,
+                        "peft_method": "lora",
+                    },
+                )()
+            )
+
             return {
                 "hardware_summary": hardware_summary,
                 "detected_profile": {
@@ -1439,12 +1619,15 @@ class TrainingService:
         except Exception as e:
             self.logger.error(f"Error getting hardware profile: {e}")
             return {"error": str(e)}
-    
+
     def _get_optimization_tier(self) -> str:
         """Get human-readable optimization tier"""
-        memory_gb = self.hardware_profile.container_memory_gb or self.hardware_profile.available_memory_gb
+        memory_gb = (
+            self.hardware_profile.container_memory_gb
+            or self.hardware_profile.available_memory_gb
+        )
         gpu_memory = self.hardware_profile.gpu_memory_gb
-        
+
         if not self.hardware_profile.cuda_available:
             return "CPU_ONLY"
         elif gpu_memory <= 4:
