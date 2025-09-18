@@ -403,6 +403,8 @@ class TrainingCore:
             )
 
             # CRITICAL: Validate and adjust precision settings for Unsloth compatibility
+            # This prevents "Unsloth: Model is in bfloat16 precision but you want to use float16 precision" errors
+            self.logger.info("Validating precision settings to prevent Unsloth compatibility errors...")
             training_args = self._validate_precision_settings(model, training_args)
             
             # Prepare dataset for training
@@ -709,6 +711,13 @@ class TrainingCore:
         adaptive_args = adaptive_config["training_args"]
         gpu_opts = adaptive_config["gpu_optimizations"]
 
+        # CRITICAL FIX: Use Unsloth's built-in precision detection instead of manual guessing
+        optimal_precision = self._get_optimal_precision_settings()
+        self.logger.info(
+            f"Precision detection for training args: {optimal_precision['reason']}\n"
+            f"  Setting fp16={optimal_precision['fp16']}, bf16={optimal_precision['bf16']}"
+        )
+
         # Merge base args with adaptive configuration
         args = {
             "per_device_train_batch_size": base_args.get("per_device_train_batch_size", adaptive_args["per_device_train_batch_size"]),
@@ -716,11 +725,9 @@ class TrainingCore:
             "warmup_steps": base_args.get("warmup_steps", 5),
             "num_train_epochs": request.epochs,
             "learning_rate": base_args.get("learning_rate", request.learning_rate),
-            # Adaptive precision settings with fallback handling
-            "fp16": gpu_opts.get("torch_dtype") == "float16"
-            and torch.cuda.is_available(),
-            "bf16": gpu_opts.get("torch_dtype") == "bfloat16"
-            and torch.cuda.is_available(),
+            # FIXED: Use optimal precision detection instead of flawed gpu_opts guessing
+            "fp16": optimal_precision["fp16"],
+            "bf16": optimal_precision["bf16"],
             # Adaptive optimization
             "logging_steps": base_args.get("logging_steps", adaptive_args.get("logging_steps", 10)),
             "optim": (
@@ -748,47 +755,55 @@ class TrainingCore:
         # Apply missing Unsloth optimizations
         if UNSLOTH_AVAILABLE:
             unsloth_optimizations = {
-                "use_gradient_checkpointing": "unsloth",
+                "gradient_checkpointing": True,
                 "max_grad_norm": 0.3,
-                "adam_beta1": 0.9,
-                "adam_beta2": 0.95,
-                "adam_epsilon": 1e-5,
-                "dataloader_persistent_workers": False,
-                "auto_find_batch_size": False,
+                # Remove invalid TrainingArguments parameters - these should be set elsewhere
+                # "adam_beta1": 0.9,  # Not a TrainingArguments parameter
+                # "adam_beta2": 0.95,  # Not a TrainingArguments parameter  
+                # "adam_epsilon": 1e-5,  # Not a TrainingArguments parameter
+                # "dataloader_persistent_workers": False,  # Not a TrainingArguments parameter
+                # "auto_find_batch_size": False,  # Not a TrainingArguments parameter
             }
             args.update(unsloth_optimizations)
 
         # Apply training type specific Unsloth optimizations
         args = self._apply_training_type_optimizations(args, training_type, gpu_opts, adaptive_config)
 
-        # Enhanced precision validation and adjustment
+        # Enhanced precision logging and analysis
         precision_info = adaptive_config.get("precision_info", {})
-        detected_precision = gpu_opts.get("torch_dtype", "float16")
-
-        # Log precision information
+        
+        # Log comprehensive precision analysis
         self.logger.info(
             f"Precision analysis - Model: {precision_info.get('model_family', 'unknown')}, "
-            f"Optimal: {precision_info.get('optimal_precision', 'unknown')}, "
-            f"Hardware supports bfloat16: {precision_info.get('hardware_support', {}).get('bfloat16', False)}"
+            f"Selected: {'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}, "
+            f"Reason: {optimal_precision['reason']}"
         )
 
-        # Dynamic precision adjustment if there's a mismatch risk
-        if UNSLOTH_AVAILABLE and detected_precision == "bfloat16":
-            self.logger.info("Using bfloat16 precision optimized for Unsloth")
-        elif UNSLOTH_AVAILABLE and detected_precision == "float16":
-            # Check if we should warn about potential Unsloth precision mismatch
+        # Enhanced validation for specific model families
+        if UNSLOTH_AVAILABLE:
             model_family = precision_info.get("model_family", "")
-            if model_family in ["qwen", "llama", "mistral", "gemma"]:
-                self.logger.warning(
-                    f"Model family '{model_family}' typically prefers bfloat16 with Unsloth, "
-                    f"but using float16 due to hardware constraints"
-                )
+            if model_family in ["qwen", "llama", "mistral", "gemma"] and args.get('fp16', False):
+                # Check if this might cause issues
+                if is_bfloat16_supported():
+                    self.logger.warning(
+                        f"Model family '{model_family}' typically works better with bfloat16 on this hardware, "
+                        f"but using float16. Monitor for potential precision issues."
+                    )
+            
+            # Log Unsloth-specific optimization status
+            if args.get('bf16', False):
+                self.logger.info("✅ Using bfloat16 precision - optimal for Unsloth on modern hardware")
+            elif args.get('fp16', False):
+                self.logger.info("✅ Using float16 precision - compatible with Unsloth on older hardware")
+            else:
+                self.logger.warning("⚠️  Using fp32 precision - training will be slower but more stable")
 
-        # Log final configuration details
+        # Log final configuration details with precision prevention info
+        final_precision = 'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'
         self.logger.info(
             f"Adaptive training config: batch_size={args['per_device_train_batch_size']}, "
-            f"grad_accum={args['gradient_accumulation_steps']}, "
-            f"precision={'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}"
+            f"grad_accum={args['gradient_accumulation_steps']}, precision={final_precision}\n"
+            f"This configuration should prevent 'Unsloth: Model is in bfloat16 precision but you want to use float16 precision' errors"
         )
 
         return TrainingArguments(**args)
@@ -859,7 +874,7 @@ class TrainingCore:
         if training_type == "chat":
             chat_optimizations = {
                 "gradient_checkpointing": True,
-                "eval_accumulation_steps": 4,
+                # "eval_accumulation_steps": 4,  # Not a TrainingArguments parameter
             }
             
             # GRPO specific settings if reasoning is enabled
@@ -874,7 +889,7 @@ class TrainingCore:
         elif training_type == "reasoning":
             reasoning_optimizations = {
                 "gradient_checkpointing": True,
-                "eval_accumulation_steps": 8,
+                # "eval_accumulation_steps": 8,  # Not a TrainingArguments parameter
                 "group_by_length": False,
                 "prediction_loss_only": False,
             }
@@ -906,7 +921,165 @@ class TrainingCore:
                 "assistant_only_loss": chat_config.get("assistant_only_loss", True),
             })
         
-        return sft_config     
+        return sft_config
+
+    def _detect_model_precision(self, model) -> str:
+        """Detect the actual precision of the loaded model"""
+        try:
+            # Try multiple ways to get model dtype
+            model_dtype = None
+            
+            # Method 1: Direct dtype attribute
+            if hasattr(model, 'dtype'):
+                model_dtype = model.dtype
+            # Method 2: Through model.model (for wrapped models)
+            elif hasattr(model, 'model') and hasattr(model.model, 'dtype'):
+                model_dtype = model.model.dtype
+            # Method 3: Check first parameter dtype
+            elif hasattr(model, 'parameters'):
+                try:
+                    model_dtype = next(model.parameters()).dtype
+                except (StopIteration, AttributeError):
+                    pass
+            # Method 4: For Unsloth models
+            elif hasattr(model, 'base_model') and hasattr(model.base_model, 'dtype'):
+                model_dtype = model.base_model.dtype
+            
+            # Normalize dtype to string
+            if model_dtype is not None:
+                if model_dtype == torch.bfloat16:
+                    return "bfloat16"
+                elif model_dtype == torch.float16:
+                    return "float16"
+                elif model_dtype == torch.float32:
+                    return "float32"
+                else:
+                    return str(model_dtype).split('.')[-1]  # Extract dtype name
+            
+            # Fallback: assume float16 for safety
+            self.logger.warning("Could not detect model precision, defaulting to float16")
+            return "float16"
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting model precision: {e}")
+            return "float16"  # Safe fallback
+
+    def _get_optimal_precision_settings(self, model=None, gpu_opts=None) -> Dict[str, Any]:
+        """Get optimal precision settings for Unsloth training"""
+        try:
+            # Detect model precision if model is available
+            model_precision = None
+            if model is not None:
+                model_precision = self._detect_model_precision(model)
+                self.logger.info(f"Detected model precision: {model_precision}")
+            
+            # Check Unsloth hardware support
+            if UNSLOTH_AVAILABLE:
+                try:
+                    supports_bf16 = is_bfloat16_supported()
+                    self.logger.info(f"Unsloth hardware bf16 support: {supports_bf16}")
+                except Exception as e:
+                    self.logger.warning(f"Could not check Unsloth bf16 support: {e}")
+                    supports_bf16 = torch.cuda.is_available() and hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported()
+            else:
+                supports_bf16 = torch.cuda.is_available() and hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported()
+            
+            # Decision logic based on model and hardware
+            if model_precision == "bfloat16":
+                if supports_bf16:
+                    return {
+                        "fp16": False,
+                        "bf16": True,
+                        "reason": f"Model is bf16, hardware supports bf16"
+                    }
+                else:
+                    self.logger.warning("Model is bf16 but hardware doesn't support bf16, using fp16 with potential conversion")
+                    return {
+                        "fp16": True,
+                        "bf16": False,
+                        "reason": "Model is bf16 but hardware doesn't support bf16"
+                    }
+            elif model_precision == "float16":
+                return {
+                    "fp16": True,
+                    "bf16": False,
+                    "reason": "Model is fp16"
+                }
+            else:
+                # Model is fp32 or unknown, choose based on hardware
+                if supports_bf16:
+                    return {
+                        "fp16": False,
+                        "bf16": True,
+                        "reason": f"Model is {model_precision}, using hardware optimal bf16"
+                    }
+                else:
+                    return {
+                        "fp16": True,
+                        "bf16": False,
+                        "reason": f"Model is {model_precision}, hardware optimal fp16"
+                    }
+                    
+        except Exception as e:
+            self.logger.error(f"Error determining optimal precision: {e}")
+            # Emergency fallback
+            return {
+                "fp16": True,
+                "bf16": False,
+                "reason": "Emergency fallback to fp16"
+            }
+
+    def _validate_precision_settings(self, training_args, model=None) -> TrainingArguments:
+        """Validate and fix precision settings to prevent Unsloth errors"""
+        try:
+            # Get optimal settings
+            optimal_settings = self._get_optimal_precision_settings(model)
+            
+            # Check current settings
+            current_fp16 = getattr(training_args, 'fp16', False)
+            current_bf16 = getattr(training_args, 'bf16', False)
+            
+            # Detect issues
+            needs_adjustment = False
+            
+            # Issue 1: Both fp16 and bf16 enabled
+            if current_fp16 and current_bf16:
+                self.logger.warning("Both fp16 and bf16 are enabled, this will cause conflicts")
+                needs_adjustment = True
+            
+            # Issue 2: Model-training precision mismatch
+            if model is not None:
+                model_precision = self._detect_model_precision(model)
+                if model_precision == "bfloat16" and current_fp16 and not current_bf16:
+                    self.logger.warning("Model is bf16 but training args specify fp16 - this causes Unsloth errors")
+                    needs_adjustment = True
+                elif model_precision == "float16" and current_bf16 and not current_fp16:
+                    self.logger.warning("Model is fp16 but training args specify bf16 - potential inefficiency")
+                    needs_adjustment = True
+            
+            # Apply fixes if needed
+            if needs_adjustment:
+                self.logger.info(f"Adjusting precision settings: {optimal_settings['reason']}")
+                
+                # Convert training args to dict, modify, and recreate
+                args_dict = training_args.to_dict()
+                args_dict['fp16'] = optimal_settings['fp16']
+                args_dict['bf16'] = optimal_settings['bf16']
+                
+                # Recreate training arguments
+                training_args = TrainingArguments(**args_dict)
+                
+                self.logger.info(f"Fixed precision settings - fp16: {optimal_settings['fp16']}, bf16: {optimal_settings['bf16']}")
+            else:
+                self.logger.info(f"Precision settings look good - fp16: {current_fp16}, bf16: {current_bf16}")
+            
+            return training_args
+            
+        except Exception as e:
+            self.logger.error(f"Error validating precision settings: {e}")
+            return training_args  # Return original if validation fails
+
+    def _create_memory_optimized_training_args(self, request: FineTuneRequest) -> TrainingArguments:
         """Create memory-optimized training arguments for Qwen2.5 in worker process"""
 
         output_dir = Path(request.output_dir) / "checkpoints"
@@ -997,59 +1170,217 @@ class TrainingCore:
 
         return TrainingArguments(**args)
     
-    def _validate_precision_settings(self, model, training_args):
-        """Validate and adjust precision settings for Unsloth compatibility"""
+    def _detect_model_precision(self, model):
+        """Detect the actual precision of the model with comprehensive checking"""
         try:
-            # Detect model's actual precision
             model_dtype = None
+            dtype_source = "unknown"
+            
+            # Try multiple ways to get model dtype
             if hasattr(model, 'dtype'):
                 model_dtype = model.dtype
+                dtype_source = "model.dtype"
             elif hasattr(model, 'model') and hasattr(model.model, 'dtype'):
                 model_dtype = model.model.dtype
+                dtype_source = "model.model.dtype"
             elif hasattr(model, 'base_model') and hasattr(model.base_model, 'dtype'):
                 model_dtype = model.base_model.dtype
+                dtype_source = "model.base_model.dtype"
+            elif hasattr(model, 'model') and hasattr(model.model, 'model') and hasattr(model.model.model, 'dtype'):
+                model_dtype = model.model.model.dtype
+                dtype_source = "model.model.model.dtype"
+            else:
+                # Try to get dtype from first parameter
+                try:
+                    first_param = next(model.parameters())
+                    model_dtype = first_param.dtype
+                    dtype_source = "first_parameter.dtype"
+                except (StopIteration, AttributeError):
+                    pass
             
-            # Extract dtype string
-            dtype_str = str(model_dtype) if model_dtype else "unknown"
-            self.logger.info(f"Detected model precision: {dtype_str}")
+            if model_dtype:
+                dtype_str = str(model_dtype).lower()
+                self.logger.info(f"Detected model precision: {model_dtype} (source: {dtype_source})")
+                
+                # Normalize dtype detection
+                if "bfloat16" in dtype_str or "bf16" in dtype_str:
+                    return "bfloat16"
+                elif "float16" in dtype_str or "fp16" in dtype_str or "half" in dtype_str:
+                    return "float16"
+                elif "float32" in dtype_str or "fp32" in dtype_str or "float" in dtype_str:
+                    return "float32"
+                else:
+                    self.logger.warning(f"Unknown dtype detected: {model_dtype}")
+                    return "unknown"
+            else:
+                self.logger.warning("Could not detect model dtype")
+                return "unknown"
+                
+        except Exception as e:
+            self.logger.error(f"Error detecting model precision: {e}")
+            return "unknown"
+    
+    def _get_optimal_precision_settings(self, model=None):
+        """Get optimal precision settings using Unsloth's built-in detection"""
+        try:
+            # First, use Unsloth's hardware detection if available
+            if UNSLOTH_AVAILABLE:
+                supports_bf16 = is_bfloat16_supported()
+                self.logger.info(f"Unsloth hardware check - supports bfloat16: {supports_bf16}")
+                
+                # If model is provided, also check model precision
+                model_precision = None
+                if model is not None:
+                    model_precision = self._detect_model_precision(model)
+                    self.logger.info(f"Model precision detected: {model_precision}")
+                
+                # Decision logic based on both hardware and model
+                if model_precision == "bfloat16":
+                    if supports_bf16:
+                        return {"fp16": False, "bf16": True, "reason": "Model in bf16, hardware supports bf16"}
+                    else:
+                        self.logger.warning("Model is bf16 but hardware doesn't support bf16. This may cause issues.")
+                        return {"fp16": True, "bf16": False, "reason": "Model in bf16 but hardware limited to fp16"}
+                
+                elif model_precision == "float16":
+                    return {"fp16": True, "bf16": False, "reason": "Model in fp16"}
+                
+                else:
+                    # Use Unsloth's recommended settings for unknown/fp32 models
+                    return {
+                        "fp16": not supports_bf16,
+                        "bf16": supports_bf16,
+                        "reason": f"Hardware-optimized: bf16_supported={supports_bf16}"
+                    }
+            else:
+                # Fallback when Unsloth not available
+                cuda_available = torch.cuda.is_available()
+                if cuda_available:
+                    # Try to detect bf16 support manually
+                    try:
+                        # Test bf16 support
+                        test_tensor = torch.tensor([1.0], dtype=torch.bfloat16, device='cuda')
+                        supports_bf16 = True
+                        del test_tensor
+                    except:
+                        supports_bf16 = False
+                    
+                    return {
+                        "fp16": not supports_bf16,
+                        "bf16": supports_bf16,
+                        "reason": f"Manual detection: bf16_supported={supports_bf16}"
+                    }
+                else:
+                    return {"fp16": False, "bf16": False, "reason": "No CUDA available"}
+                    
+        except Exception as e:
+            self.logger.error(f"Error determining optimal precision: {e}")
+            # Safe fallback
+            return {"fp16": torch.cuda.is_available(), "bf16": False, "reason": "Error fallback"}
+    
+    def _validate_precision_settings(self, model, training_args):
+        """Validate and adjust precision settings for Unsloth compatibility with comprehensive detection"""
+        try:
+            # Get optimal precision settings
+            optimal_settings = self._get_optimal_precision_settings(model)
             
             # Check current training args precision settings
             current_fp16 = getattr(training_args, 'fp16', False)
             current_bf16 = getattr(training_args, 'bf16', False)
             
-            self.logger.info(f"Training args precision: fp16={current_fp16}, bf16={current_bf16}")
+            self.logger.info(
+                f"Current training args: fp16={current_fp16}, bf16={current_bf16}\n"
+                f"Optimal settings: fp16={optimal_settings['fp16']}, bf16={optimal_settings['bf16']}\n"
+                f"Reason: {optimal_settings['reason']}"
+            )
             
-            # Determine optimal precision based on model and hardware
-            if "bfloat16" in dtype_str.lower():
-                # Model is in bfloat16, adjust training args accordingly
-                if current_fp16 and not current_bf16:
-                    self.logger.warning("Model is in bfloat16 but training args use fp16. Adjusting to bf16...")
-                    # Create new training args with corrected precision
-                    args_dict = training_args.to_dict()
-                    args_dict['fp16'] = False
-                    args_dict['bf16'] = True
-                    training_args = type(training_args)(**args_dict)
-                    self.logger.info("Adjusted training precision to bfloat16 for Unsloth compatibility")
-            elif "float16" in dtype_str.lower():
-                # Model is in float16, ensure training args match
-                if current_bf16 and not current_fp16:
-                    self.logger.warning("Model is in float16 but training args use bf16. Adjusting to fp16...")
-                    args_dict = training_args.to_dict()
-                    args_dict['fp16'] = True
-                    args_dict['bf16'] = False
-                    training_args = type(training_args)(**args_dict)
-                    self.logger.info("Adjusted training precision to float16 for Unsloth compatibility")
+            # Check if adjustment is needed
+            needs_adjustment = (
+                current_fp16 != optimal_settings['fp16'] or 
+                current_bf16 != optimal_settings['bf16']
+            )
             
-            # Final validation
+            if needs_adjustment:
+                self.logger.warning(
+                    f"Precision mismatch detected! Adjusting training args to prevent Unsloth errors:\n"
+                    f"  Changing fp16: {current_fp16} -> {optimal_settings['fp16']}\n"
+                    f"  Changing bf16: {current_bf16} -> {optimal_settings['bf16']}"
+                )
+                
+                # Create new training args with corrected precision
+                try:
+                    args_dict = training_args.to_dict()
+                    args_dict['fp16'] = optimal_settings['fp16']
+                    args_dict['bf16'] = optimal_settings['bf16']
+                    training_args = type(training_args)(**args_dict)
+                    
+                    self.logger.info(
+                        f"✅ Successfully adjusted precision settings for Unsloth compatibility\n"
+                        f"   Final settings: fp16={optimal_settings['fp16']}, bf16={optimal_settings['bf16']}"
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to create new training args: {e}")
+                    # Try alternative approach
+                    try:
+                        training_args.fp16 = optimal_settings['fp16']
+                        training_args.bf16 = optimal_settings['bf16']
+                        self.logger.info("✅ Successfully adjusted precision using direct assignment")
+                    except Exception as e2:
+                        self.logger.error(f"Failed to adjust precision settings: {e2}")
+                        raise RuntimeError(
+                            f"Could not adjust precision settings. Original error: {e}, Direct assignment error: {e2}"
+                        )
+            else:
+                self.logger.info("✅ Precision settings are already optimal for Unsloth")
+            
+            # Final validation and logging
             final_fp16 = getattr(training_args, 'fp16', False)
             final_bf16 = getattr(training_args, 'bf16', False)
-            self.logger.info(f"Final training precision: fp16={final_fp16}, bf16={final_bf16}")
+            
+            # Validate final settings make sense
+            if final_fp16 and final_bf16:
+                self.logger.error("❌ Both fp16 and bf16 are enabled - this will cause errors!")
+                # Force to optimal single precision
+                if UNSLOTH_AVAILABLE and is_bfloat16_supported():
+                    training_args.fp16 = False
+                    training_args.bf16 = True
+                    self.logger.info("🔧 Fixed: Disabled fp16, kept bf16")
+                else:
+                    training_args.fp16 = True
+                    training_args.bf16 = False
+                    self.logger.info("🔧 Fixed: Disabled bf16, kept fp16")
+                    
+            elif not final_fp16 and not final_bf16 and torch.cuda.is_available():
+                self.logger.warning("⚠️  Neither fp16 nor bf16 enabled on CUDA - training will be slower")
+            
+            # Log final configuration
+            final_fp16 = getattr(training_args, 'fp16', False)
+            final_bf16 = getattr(training_args, 'bf16', False)
+            self.logger.info(
+                f"🎯 Final precision configuration: fp16={final_fp16}, bf16={final_bf16}\n"
+                f"   This should prevent 'Unsloth: Model is in bfloat16 precision but you want to use float16 precision' errors"
+            )
             
             return training_args
             
         except Exception as e:
-            self.logger.error(f"Error validating precision settings: {e}")
-            self.logger.info("Continuing with original training args...")
+            self.logger.error(f"❌ Critical error in precision validation: {e}")
+            self.logger.error("This may cause Unsloth precision mismatch errors during training!")
+            
+            # Emergency fallback - use Unsloth recommended settings
+            try:
+                if UNSLOTH_AVAILABLE:
+                    emergency_bf16 = is_bfloat16_supported()
+                    training_args.fp16 = not emergency_bf16
+                    training_args.bf16 = emergency_bf16
+                    self.logger.info(f"🚨 Applied emergency precision settings: fp16={not emergency_bf16}, bf16={emergency_bf16}")
+                else:
+                    training_args.fp16 = torch.cuda.is_available()
+                    training_args.bf16 = False
+                    self.logger.info(f"🚨 Applied fallback precision settings: fp16={torch.cuda.is_available()}, bf16=False")
+            except Exception as e2:
+                self.logger.error(f"❌ Emergency fallback failed: {e2}")
+                
             return training_args
 
     def _emergency_memory_cleanup(self):

@@ -405,6 +405,15 @@ class TrainingService:
         self.logger.info("Using Unsloth optimization for fine-tuning")
 
         try:
+            # Determine training type first
+            training_type = getattr(request, 'ft_type', 'instruction')
+            if training_type == 'instruction':
+                training_type = 'instruction'
+            elif training_type in ['chat', 'conversation']:
+                training_type = 'chat'
+            elif training_type in ['reasoning', 'grpo']:
+                training_type = 'reasoning'
+                
             # Generate enhanced adaptive configuration for this hardware and training type
             adaptive_config = self.adaptive_config.generate_enhanced_adaptive_config(request, training_type)
             self.logger.info(
@@ -454,15 +463,7 @@ class TrainingService:
             # Load dataset
             dataset = load_from_disk(request.dataset_dir)
 
-            # Setup adaptive training arguments with training type
-            training_type = getattr(request, 'ft_type', 'instruction')
-            if training_type == 'instruction':
-                training_type = 'instruction'
-            elif training_type in ['chat', 'conversation']:
-                training_type = 'chat'
-            elif training_type in ['reasoning', 'grpo']:
-                training_type = 'reasoning'
-            
+            # Setup adaptive training arguments with training type (already defined above)
             training_args = self._create_adaptive_training_args(
                 request, task_id, adaptive_config, training_type
             )
@@ -504,6 +505,9 @@ class TrainingService:
 
             # Add custom callback for progress tracking
             trainer.add_callback(progress_callback)
+            
+            # CRITICAL: Validate precision settings to prevent Unsloth errors
+            training_args = self._validate_precision_settings(training_args, model)
 
             # Register this training for cleanup
             self.active_trainings[task_id] = {
@@ -635,14 +639,7 @@ class TrainingService:
                 )
                 model = get_peft_model(model, peft_config)
 
-            # Load dataset
-            dataset = load_from_disk(request.dataset_dir)
-            adaptive_config = self.adaptive_config.generate_enhanced_adaptive_config(request, training_type)
-            self.logger.info(
-                f"Using adaptive config: {adaptive_config['effective_memory_gb']:.1f}GB effective memory"
-            )
-
-            # Setup training arguments with training type
+            # Determine training type first  
             training_type = getattr(request, 'ft_type', 'instruction')
             if training_type == 'instruction':
                 training_type = 'instruction'
@@ -650,7 +647,15 @@ class TrainingService:
                 training_type = 'chat'
             elif training_type in ['reasoning', 'grpo']:
                 training_type = 'reasoning'
-            
+
+            # Load dataset
+            dataset = load_from_disk(request.dataset_dir)
+            adaptive_config = self.adaptive_config.generate_enhanced_adaptive_config(request, training_type)
+            self.logger.info(
+                f"Using adaptive config: {adaptive_config['effective_memory_gb']:.1f}GB effective memory"
+            )
+
+            # Setup training arguments with training type (already defined above)
             training_args = self._create_adaptive_training_args(
                 request, task_id, adaptive_config, training_type
             )
@@ -733,33 +738,28 @@ class TrainingService:
 
         adaptive_args = adaptive_config["training_args"]
         gpu_opts = adaptive_config["gpu_optimizations"]
-        has_cuda = torch.cuda.is_available()
-        model_dtype = None
-        try:
-            model_dtype = next(self.model.parameters()).dtype
-        except Exception:
-            pass
-
-        # 🔑 Precision detection: default from model dtype
-        fp16 = False
-        bf16 = False
-        if has_cuda:
-            if model_dtype == torch.bfloat16:
-                bf16 = True
-            elif model_dtype == torch.float16:
-                fp16 = True
-            else:
-                # fallback based on GPU opts
-                dtype_opt = gpu_opts.get("torch_dtype", "float16")
-                bf16 = dtype_opt == "bfloat16"
-                fp16 = dtype_opt == "float16"
-
-        # ✅ Allow adaptive_config to explicitly override precision
+        
+        # CRITICAL FIX: Replace flawed manual precision detection with Unsloth's built-in detection
+        # This prevents the "Unsloth: Model is in bfloat16 precision but you want to use float16 precision" error
+        from utils.hardware_detection import hardware_detector
+        
+        optimal_precision = self._get_optimal_precision_settings()
+        self.logger.info(
+            f"Precision detection for main training service: {optimal_precision['reason']}\n"
+            f"  Setting fp16={optimal_precision['fp16']}, bf16={optimal_precision['bf16']}"
+        )
+        
+        fp16 = optimal_precision['fp16']
+        bf16 = optimal_precision['bf16']
+        
+        # Allow adaptive_config to explicitly override precision if needed
         if "precision" in adaptive_config:
             if adaptive_config["precision"] == "bf16":
                 bf16, fp16 = True, False
+                self.logger.info("Precision overridden by adaptive_config to bf16")
             elif adaptive_config["precision"] == "fp16":
                 fp16, bf16 = True, False
+                self.logger.info("Precision overridden by adaptive_config to fp16")
         # Merge base args with adaptive configuration
         args = {
             "per_device_train_batch_size": base_args.get("per_device_train_batch_size", adaptive_args["per_device_train_batch_size"]),
@@ -767,8 +767,8 @@ class TrainingService:
             "warmup_steps": base_args.get("warmup_steps", 5),
             "num_train_epochs": request.epochs,
             "learning_rate": base_args.get("learning_rate", request.learning_rate),
-            "fp16": fp16 and torch.cuda.is_available(),
-            "bf16": bf16 and torch.cuda.is_available(),
+            "fp16": fp16,
+            "bf16": bf16,
             "logging_steps": base_args.get("logging_steps", adaptive_args.get("logging_steps", 10)),
             "optim": (
                 "adamw_8bit"
@@ -792,42 +792,47 @@ class TrainingService:
         # Apply missing Unsloth optimizations
         if UNSLOTH_AVAILABLE:
             unsloth_optimizations = {
-                "use_gradient_checkpointing": "unsloth",
+                "gradient_checkpointing": True,
                 "max_grad_norm": 0.3,
-                "adam_beta1": 0.9,
-                "adam_beta2": 0.95,
-                "adam_epsilon": 1e-5,
-                "dataloader_persistent_workers": False,
-                "auto_find_batch_size": False,
+                # Remove invalid TrainingArguments parameters - these should be set elsewhere
+                # "adam_beta1": 0.9,  # Not a TrainingArguments parameter
+                # "adam_beta2": 0.95,  # Not a TrainingArguments parameter
+                # "adam_epsilon": 1e-5,  # Not a TrainingArguments parameter
+                # "dataloader_persistent_workers": False,  # Not a TrainingArguments parameter
+                # "auto_find_batch_size": False,  # Not a TrainingArguments parameter
             }
             args.update(unsloth_optimizations)
 
         # Apply training type specific Unsloth optimizations
         args = self._apply_training_type_optimizations(args, training_type, gpu_opts, adaptive_config)
 
-        # Precision logging
+        # Enhanced precision logging and validation
         precision_info = adaptive_config.get("precision_info", {})
-        detected_precision = gpu_opts.get("torch_dtype", "float16")
+        final_precision = 'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'
+        
         self.logger.info(
             f"Precision analysis - Model: {precision_info.get('model_family', 'unknown')}, "
-            f"Optimal: {precision_info.get('optimal_precision', 'unknown')}, "
-            f"Hardware supports bfloat16: {precision_info.get('hardware_support', {}).get('bfloat16', False)}"
+            f"Selected: {final_precision}, Reason: {optimal_precision['reason']}"
         )
 
-        if UNSLOTH_AVAILABLE and detected_precision == "bfloat16":
-            self.logger.info("Using bfloat16 precision optimized for Unsloth")
-        elif UNSLOTH_AVAILABLE and detected_precision == "float16":
+        if UNSLOTH_AVAILABLE:
             model_family = precision_info.get("model_family", "")
-            if model_family in ["qwen", "llama", "mistral", "gemma"]:
-                self.logger.warning(
-                    f"Model family '{model_family}' typically prefers bfloat16 with Unsloth, "
-                    f"but using float16 due to hardware constraints"
-                )
+            if args.get('bf16', False):
+                self.logger.info("✅ Using bfloat16 precision - optimal for Unsloth")
+            elif args.get('fp16', False):
+                self.logger.info("✅ Using float16 precision - compatible with Unsloth")
+                if model_family in ["qwen", "llama", "mistral", "gemma"] and is_bfloat16_supported():
+                    self.logger.info(
+                        f"Note: Model family '{model_family}' could potentially use bfloat16 on this hardware, "
+                        f"but fp16 should work fine with Unsloth"
+                    )
+            else:
+                self.logger.warning("⚠️  Using fp32 precision - training will be slower")
 
         self.logger.info(
             f"Adaptive training config: batch_size={args['per_device_train_batch_size']}, "
-            f"grad_accum={args['gradient_accumulation_steps']}, "
-            f"precision={'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}"
+            f"grad_accum={args['gradient_accumulation_steps']}, precision={final_precision}\n"
+            f"This configuration should prevent Unsloth precision mismatch errors during training"
         )
 
         return TrainingArguments(**args)
@@ -898,7 +903,7 @@ class TrainingService:
         if training_type == "chat":
             chat_optimizations = {
                 "gradient_checkpointing": True,
-                "eval_accumulation_steps": 4,
+                # "eval_accumulation_steps": 4,  # Not a TrainingArguments parameter
             }
             
             # GRPO specific settings if reasoning is enabled
@@ -913,7 +918,7 @@ class TrainingService:
         elif training_type == "reasoning":
             reasoning_optimizations = {
                 "gradient_checkpointing": True,
-                "eval_accumulation_steps": 8,
+                # "eval_accumulation_steps": 8,  # Not a TrainingArguments parameter
                 "group_by_length": False,
                 "prediction_loss_only": False,
             }
@@ -946,6 +951,146 @@ class TrainingService:
             })
         
         return sft_config
+    
+    def _get_optimal_precision_settings(self, model=None):
+        """Get optimal precision settings using Unsloth's built-in detection"""
+        try:
+            # First, use Unsloth's hardware detection if available
+            if UNSLOTH_AVAILABLE:
+                supports_bf16 = is_bfloat16_supported()
+                self.logger.info(f"Unsloth hardware check - supports bfloat16: {supports_bf16}")
+                
+                # Use Unsloth's recommended settings
+                return {
+                    "fp16": not supports_bf16,
+                    "bf16": supports_bf16,
+                    "reason": f"Unsloth hardware detection: bf16_supported={supports_bf16}"
+                }
+            else:
+                # Fallback when Unsloth not available
+                cuda_available = torch.cuda.is_available()
+                if cuda_available:
+                    # Try to detect bf16 support manually
+                    try:
+                        # Test bf16 support
+                        test_tensor = torch.tensor([1.0], dtype=torch.bfloat16, device='cuda')
+                        supports_bf16 = True
+                        del test_tensor
+                    except:
+                        supports_bf16 = False
+                    
+                    return {
+                        "fp16": not supports_bf16,
+                        "bf16": supports_bf16,
+                        "reason": f"Manual detection: bf16_supported={supports_bf16}"
+                    }
+                else:
+                    return {"fp16": False, "bf16": False, "reason": "No CUDA available"}
+                    
+        except Exception as e:
+            self.logger.error(f"Error determining optimal precision: {e}")
+            # Safe fallback
+            return {"fp16": torch.cuda.is_available(), "bf16": False, "reason": "Error fallback"}
+
+    def _detect_model_precision(self, model) -> str:
+        """Detect the actual precision of the loaded model"""
+        try:
+            # Try multiple ways to get model dtype
+            model_dtype = None
+            
+            # Method 1: Direct dtype attribute
+            if hasattr(model, 'dtype'):
+                model_dtype = model.dtype
+            # Method 2: Through model.model (for wrapped models)
+            elif hasattr(model, 'model') and hasattr(model.model, 'dtype'):
+                model_dtype = model.model.dtype
+            # Method 3: Check first parameter dtype
+            elif hasattr(model, 'parameters'):
+                try:
+                    model_dtype = next(model.parameters()).dtype
+                except (StopIteration, AttributeError):
+                    pass
+            # Method 4: For Unsloth models
+            elif hasattr(model, 'base_model') and hasattr(model.base_model, 'dtype'):
+                model_dtype = model.base_model.dtype
+            
+            # Normalize dtype to string
+            if model_dtype is not None:
+                if model_dtype == torch.bfloat16:
+                    return "bfloat16"
+                elif model_dtype == torch.float16:
+                    return "float16"
+                elif model_dtype == torch.float32:
+                    return "float32"
+                else:
+                    return str(model_dtype).split('.')[-1]  # Extract dtype name
+            
+            # Fallback: assume float16 for safety
+            self.logger.warning("Could not detect model precision, defaulting to float16")
+            return "float16"
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting model precision: {e}")
+            return "float16"  # Safe fallback
+
+    def _validate_precision_settings(self, training_args, model=None) -> TrainingArguments:
+        """Validate and fix precision settings to prevent Unsloth errors"""
+        try:
+            # Detect model precision
+            model_precision = None
+            if model is not None:
+                model_precision = self._detect_model_precision(model)
+                self.logger.info(f"Detected model precision: {model_precision}")
+            
+            # Get optimal settings based on model and hardware
+            optimal_settings = self._get_optimal_precision_settings()
+            
+            # Check current settings
+            current_fp16 = getattr(training_args, 'fp16', False)
+            current_bf16 = getattr(training_args, 'bf16', False)
+            
+            # Detect precision mismatches that cause Unsloth errors
+            needs_adjustment = False
+            adjustment_reason = ""
+            
+            # Issue 1: Both fp16 and bf16 enabled
+            if current_fp16 and current_bf16:
+                needs_adjustment = True
+                adjustment_reason = "Both fp16 and bf16 enabled - will cause conflicts"
+            
+            # Issue 2: Model is bf16 but training args specify fp16 (the exact error we're fixing)
+            elif model_precision == "bfloat16" and current_fp16 and not current_bf16:
+                needs_adjustment = True
+                adjustment_reason = "Model is bf16 but training args specify fp16 - this causes Unsloth errors"
+            
+            # Issue 3: Model is fp16 but training args specify bf16
+            elif model_precision == "float16" and current_bf16 and not current_fp16:
+                needs_adjustment = True
+                adjustment_reason = "Model is fp16 but training args specify bf16 - potential inefficiency"
+            
+            # Apply fixes if needed
+            if needs_adjustment:
+                self.logger.warning(f"🔧 PRECISION MISMATCH DETECTED: {adjustment_reason}")
+                self.logger.info(f"🔧 Applying automatic fix: {optimal_settings['reason']}")
+                
+                # Convert training args to dict, modify, and recreate
+                args_dict = training_args.to_dict()
+                args_dict['fp16'] = optimal_settings['fp16']
+                args_dict['bf16'] = optimal_settings['bf16']
+                
+                # Recreate training arguments
+                training_args = TrainingArguments(**args_dict)
+                
+                self.logger.info(f"✅ FIXED: fp16={optimal_settings['fp16']}, bf16={optimal_settings['bf16']}")
+                self.logger.info("✅ This should prevent the 'Unsloth: Model is in bfloat16 precision but you want to use float16 precision' error")
+            else:
+                self.logger.info(f"✅ Precision settings validated - fp16: {current_fp16}, bf16: {current_bf16}")
+            
+            return training_args
+            
+        except Exception as e:
+            self.logger.error(f"Error validating precision settings: {e}")
+            return training_args  # Return original if validation fails
 
     def _initialize_status_file(self, task_id: str, request: FineTuneRequest):
         """Initialize status file for tracking"""

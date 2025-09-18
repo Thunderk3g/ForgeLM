@@ -227,7 +227,7 @@ async def compare_models(session_id: str, request: ComparisonRequest):
         # Update request with session_id
         request.session_id = session_id
         
-        response = await comparison_service.compare_models(request)
+        response = await comparison_service.generate_comparison(request)
         
         # Broadcast comparison result
         await connection_manager.broadcast({
@@ -257,7 +257,7 @@ async def stream_comparison(session_id: str, request: ComparisonRequest):
         request.session_id = session_id
         
         async def response_generator():
-            async for chunk in comparison_service.stream_comparison(request):
+            async for chunk in comparison_service.generate_comparison_stream(request):
                 yield f"data: {chunk}\n\n"
         
         return StreamingResponse(
@@ -395,7 +395,7 @@ async def chat_generate(request: ComparisonRequest):
     
     try:
         # Use the comparison service directly
-        response = await comparison_service.compare_models(request)
+        response = await comparison_service.generate_comparison(request)
         
         # Broadcast comparison result if session_id is provided
         if hasattr(request, 'session_id') and request.session_id:

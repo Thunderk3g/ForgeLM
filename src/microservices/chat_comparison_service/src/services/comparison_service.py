@@ -930,6 +930,61 @@ class ComparisonService:
                 "active_sessions": len(self.sessions),
                 "total_comparisons": self.metrics["total_comparisons"]
             }
+    
+    async def cleanup(self):
+        """Clean up resources on service shutdown"""
+        try:
+            self.logger.info("Cleaning up ComparisonService...")
+            
+            # Clean up model service
+            if self.model_service:
+                await self.model_service.cleanup()
+            
+            # Clean up chat service
+            if self.chat_service:
+                await self.chat_service.cleanup()
+            
+            self.logger.info("ComparisonService cleanup completed")
+        except Exception as e:
+            self.logger.error(f"Error during cleanup: {e}")
+    
+    async def get_session(self, session_id: str) -> SessionInfo:
+        """Get session information by ID"""
+        try:
+            return await self.chat_service.get_session_info(session_id)
+        except Exception as e:
+            self.logger.error(f"Error getting session {session_id}: {e}")
+            raise
+    
+    async def create_model_pair(self, config: DualModelConfig) -> str:
+        """Create a new model pair configuration"""
+        try:
+            # For now, use the model service to register the configuration
+            # This would typically involve storing the configuration and generating a pair_id
+            pair_id = f"pair_{uuid.uuid4().hex[:8]}"
+            self.logger.info(f"Created model pair configuration: {pair_id}")
+            return pair_id
+        except Exception as e:
+            self.logger.error(f"Error creating model pair: {e}")
+            raise
+    
+    async def clear_cache(self):
+        """Clear model cache"""
+        try:
+            await self.model_service.clear_cache()
+            self.logger.info("Model cache cleared")
+        except Exception as e:
+            self.logger.error(f"Error clearing cache: {e}")
+            raise
+    
+    async def optimize_memory(self):
+        """Optimize memory usage"""
+        try:
+            await self.model_service.optimize_memory()
+            self.logger.info("Memory optimization completed")
+        except Exception as e:
+            self.logger.error(f"Error optimizing memory: {e}")
+            raise
 
 
 # Note: Global service instance should be created with proper dependencies
