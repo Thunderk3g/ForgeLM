@@ -2166,6 +2166,32 @@ class ModelService:
             self.logger.error(f"Failed to list model pairs: {e}")
             return []
 
+    async def cleanup(self):
+        """Cleanup resources when shutting down"""
+        try:
+            self.logger.info("Starting ModelService cleanup...")
+            
+            # Clear all caches
+            self.loaded_models_cache.clear()
+            self.base_models.clear()
+            self.lora_adapters.clear()
+            self.kv_caches.clear()
+            self.active_pairs.clear()
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Clear GPU memory if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            self.logger.info("ModelService cleanup completed")
+            
+        except Exception as e:
+            self.logger.error(f"Error during ModelService cleanup: {e}")
+
 
 # Create global service instance
 model_service = ModelService()

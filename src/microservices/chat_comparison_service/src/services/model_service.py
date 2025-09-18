@@ -236,7 +236,10 @@ class ModelService:
             for base_dir in base_models_dir.iterdir():
                 if base_dir.is_dir():
                     base_model_name = base_dir.name
-                    base_model_path = str(base_dir)
+                    
+                    # Handle nested Hugging Face cache structures
+                    actual_model_path = self._resolve_model_path(base_dir)
+                    base_model_path = str(actual_model_path)
                     self.logger.info(f"Found base model: {base_model_name} at {base_model_path}")
                     
                     # Calculate base model size
@@ -643,6 +646,34 @@ class ModelService:
                 return model_name[:len(model_name) - len(suffix)]
         
         return model_name
+    
+    def _resolve_model_path(self, model_dir: Path) -> Path:
+        """Resolve the actual model path, handling nested Hugging Face cache structures"""
+        # Check if there's a config.json directly in the directory
+        if (model_dir / "config.json").exists():
+            return model_dir
+        
+        # Check for nested Hugging Face cache structure: models--org--model/snapshots/hash/
+        models_dir = None
+        for item in model_dir.iterdir():
+            if item.is_dir() and item.name.startswith("models--"):
+                models_dir = item
+                break
+        
+        if models_dir:
+            snapshots_dir = models_dir / "snapshots"
+            if snapshots_dir.exists():
+                # Find the latest snapshot (usually the only one)
+                snapshot_dirs = [d for d in snapshots_dir.iterdir() if d.is_dir()]
+                if snapshot_dirs:
+                    # Use the first (and typically only) snapshot
+                    snapshot_dir = snapshot_dirs[0]
+                    if (snapshot_dir / "config.json").exists():
+                        self.logger.info(f"Resolved nested model path: {model_dir} -> {snapshot_dir}")
+                        return snapshot_dir
+        
+        # If no nested structure found, return original path
+        return model_dir
     
     def _create_mock_pairs(self) -> List[ModelPair]:
         """Create mock pairs for development/demo"""

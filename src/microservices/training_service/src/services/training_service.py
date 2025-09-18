@@ -28,7 +28,14 @@ from models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
 from config.settings import settings
-os.environ["TRITON_CACHE_DIR"] = "/tmp/.triton_cache"  # or any path you know is writable
+# Setup proper Triton cache directory with correct permissions
+import tempfile
+triton_cache_dir = tempfile.mkdtemp(prefix="triton_cache_")
+os.environ["TRITON_CACHE_DIR"] = triton_cache_dir
+try:
+    os.chmod(triton_cache_dir, 0o777)
+except Exception as e:
+    print(f"Warning: Could not set Triton cache permissions: {e}")
 
 # Environment optimization
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -284,19 +291,34 @@ else:
 
 
 class TrainingService:
-    """Advanced training service with Unsloth optimization"""
+    """Advanced training service with adaptive hardware optimization"""
 
     def __init__(self):
         self.logger = get_logger(__name__)
         self.active_trainings: Dict[str, Dict[str, Any]] = {}
         self.cleanup_lock = threading.Lock()
 
+        # Initialize hardware detection and adaptive configuration
+        from utils.hardware_detection import hardware_detector, AdaptiveTrainingConfig
+        self.hardware_profile = hardware_detector.detect_full_profile()
+        self.adaptive_config = AdaptiveTrainingConfig(self.hardware_profile)
+        
         # Register cleanup
         register_cleanup(self.cleanup_all_trainings)
 
-        self.logger.info(f"TrainingService initialized")
+        # Log hardware profile and optimizations
+        hardware_summary = self.adaptive_config.get_hardware_summary()
+        self.logger.info(f"TrainingService initialized with adaptive hardware optimization")
+        self.logger.info(f"Hardware Profile: GPU={hardware_summary['gpu']}, RAM={hardware_summary['memory']}, CPU={hardware_summary['cpu']}")
+        self.logger.info(f"Environment: {hardware_summary['environment']}, Storage={hardware_summary['storage']}")
         self.logger.info(f"Unsloth available: {UNSLOTH_AVAILABLE}")
-        self.logger.info(f"Container memory limit: {CONTAINER_MEMORY_LIMIT_GB}GB")
+        
+        # Apply system-level optimizations
+        system_opts = self.adaptive_config._get_system_optimizations()
+        for env_var, value in system_opts.items():
+            if env_var.startswith(("OMP_", "MKL_", "PYTORCH_")):
+                os.environ[env_var] = value
+                self.logger.info(f"Applied system optimization: {env_var}={value}")
 
     @timed("fine_tune")
     def fine_tune(
@@ -342,6 +364,28 @@ class TrainingService:
             # Cleanup
             self._cleanup_training_resources(task_id)
 
+    def fix_qwen_tokenizer(self, tokenizer):
+        """Fix Qwen2.5 tokenizer configuration for training compatibility"""
+        try:
+            # Qwen2.5 has bos_token=None by design, but training frameworks need it
+            if tokenizer.bos_token_id is None:
+                self.logger.warning("Fixing bos_token_id for Qwen2.5 compatibility")
+                tokenizer.bos_token_id = tokenizer.eos_token_id
+                tokenizer.bos_token = tokenizer.eos_token
+                
+            # Ensure padding token is properly set
+            if tokenizer.pad_token_id is None:
+                tokenizer.pad_token_id = tokenizer.eos_token_id
+                tokenizer.pad_token = tokenizer.eos_token
+                
+            # Log final tokenizer state
+            self.logger.info(f"Tokenizer config: bos={tokenizer.bos_token_id}, eos={tokenizer.eos_token_id}, pad={tokenizer.pad_token_id}")
+            return tokenizer
+            
+        except Exception as e:
+            self.logger.error(f"Error fixing tokenizer: {e}")
+            return tokenizer
+
     def _fine_tune_with_unsloth(
         self, request: FineTuneRequest, task_id: str, log_queue: queue.Queue
     ) -> Dict[str, Any]:
@@ -350,52 +394,62 @@ class TrainingService:
         self.logger.info("Using Unsloth optimization for fine-tuning")
 
         try:
-            # Load model and tokenizer with Unsloth
+            # Generate adaptive configuration for this hardware
+            adaptive_config = self.adaptive_config.generate_optimal_config(request)
+            self.logger.info(f"Using adaptive config: {adaptive_config['effective_memory_gb']:.1f}GB effective memory")
+            
+            # Get hardware-optimized model loading parameters
+            gpu_opts = adaptive_config["gpu_optimizations"]
+            model_config = adaptive_config["model_loading"]
+            lora_config = adaptive_config["lora_config"]
+            
+            # Load model and tokenizer with adaptive optimization
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=request.base_model_dir,
-                max_seq_length=request.max_seq_length,
-                dtype=None,  # Auto-detect
-                load_in_4bit=True,  # Use 4-bit quantization for memory efficiency
+                max_seq_length=min(request.max_seq_length, model_config["max_seq_length"]),
+                dtype=None,  # Auto-detect optimal dtype
+                load_in_4bit=gpu_opts["load_in_4bit"],
+                load_in_8bit=gpu_opts.get("load_in_8bit", False),
+                device_map=gpu_opts["device_map"],
+                trust_remote_code=model_config["trust_remote_code"],
             )
+            
+            # CRITICAL FIX: Fix Qwen2.5 tokenizer configuration
+            tokenizer = self.fix_qwen_tokenizer(tokenizer)
 
-            # Apply LoRA adapter for parameter-efficient fine-tuning
+            # Apply adaptive LoRA configuration
+            self.logger.info(f"Applying LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, targets={len(lora_config['target_modules'])}")
             model = FastLanguageModel.get_peft_model(
                 model,
-                r=16 if request.peft_method == "lora" else 64,  # Rank
-                target_modules=[
-                    "q_proj",
-                    "k_proj",
-                    "v_proj",
-                    "o_proj",
-                    "gate_proj",
-                    "up_proj",
-                    "down_proj",
-                ],
-                lora_alpha=16,
-                lora_dropout=0.0,  # Supports any, but = 0 is optimized
-                bias="none",  # Supports any, but = "none" is optimized
-                use_gradient_checkpointing="unsloth",  # Unsloth's optimized checkpointing
+                r=lora_config["r"],
+                target_modules=lora_config["target_modules"],
+                lora_alpha=lora_config["lora_alpha"],
+                lora_dropout=lora_config["lora_dropout"],
+                bias="none",
+                use_gradient_checkpointing="unsloth" if gpu_opts.get("gradient_checkpointing", True) else "no",
                 random_state=3407,
-                use_rslora=False,  # We support rank stabilized LoRA
-                loftq_config=None,  # And LoftQ
+                use_rslora=False,
+                loftq_config=None,
             )
 
             # Load dataset
             dataset = load_from_disk(request.dataset_dir)
 
-            # Setup training arguments
-            training_args = self._create_training_args(request, task_id)
+            # Setup adaptive training arguments
+            training_args = self._create_adaptive_training_args(request, task_id, adaptive_config)
 
             # Create progress callback
             progress_callback = UnslothProgressCallback(task_id, log_queue)
 
-            # Create trainer with Unsloth optimization
-
+            # Create trainer with adaptive SFT configuration
+            adaptive_training_args = adaptive_config["training_args"]
+            effective_seq_length = min(request.max_seq_length, model_config["max_seq_length"])
+            
             sft_config = SFTConfig(
                 dataset_text_field="text",
-                max_seq_length=request.max_seq_length,
-                dataset_num_proc=2,
-                packing=False,
+                max_seq_length=effective_seq_length,
+                dataset_num_proc=adaptive_training_args.get("dataloader_num_workers", 1),
+                packing=True,  # Enable packing for efficiency
             )
 
             trainer = SFTTrainer(
@@ -419,9 +473,48 @@ class TrainingService:
                 "start_time": time.time(),
             }
 
-            # Start training
+            # Start training with error recovery
             self.logger.info(f"Starting Unsloth-optimized training for task {task_id}")
-            trainer.train()
+            try:
+                trainer.train()
+            except torch.cuda.OutOfMemoryError as oom_error:
+                self.logger.error(f"OOM Error during training: {oom_error}")
+                # Emergency memory cleanup
+                torch.cuda.empty_cache()
+                gc.collect()
+                
+                # Reduce batch size and try again
+                if training_args.per_device_train_batch_size > 1:
+                    self.logger.info("Attempting recovery with reduced batch size")
+                    training_args.per_device_train_batch_size = 1
+                    training_args.gradient_accumulation_steps = min(32, training_args.gradient_accumulation_steps * 2)
+                    
+                    # Create new trainer with reduced memory settings
+                    trainer = SFTTrainer(
+                        model=model,
+                        tokenizer=tokenizer,
+                        train_dataset=dataset["train"] if "train" in dataset else dataset,
+                        eval_dataset=None,  # Disable eval for recovery
+                        args=training_args,
+                        data_collator=None,
+                        **sft_config.to_dict(),
+                    )
+                    trainer.add_callback(progress_callback)
+                    trainer.train()
+                else:
+                    raise
+            except Exception as training_error:
+                # Check for tokenizer-related errors
+                error_msg = str(training_error).lower()
+                if any(keyword in error_msg for keyword in ["bos_token", "eos_token", "tokenizer", "nan"]):
+                    self.logger.error(f"Tokenizer error detected: {training_error}")
+                    # Apply emergency tokenizer fixes and retry
+                    if tokenizer.bos_token_id is None:
+                        tokenizer.bos_token_id = tokenizer.eos_token_id
+                        tokenizer.bos_token = tokenizer.eos_token
+                    trainer.train()  # Retry with fixed tokenizer
+                else:
+                    raise
 
             # Save the fine-tuned model
             output_dir = Path(request.output_dir)
@@ -554,6 +647,77 @@ class TrainingService:
             self.logger.error(f"Standard training failed: {e}")
             raise
 
+    def _create_adaptive_training_args(self, request: FineTuneRequest, task_id: str, adaptive_config: Dict[str, Any]):
+        """Create adaptive training arguments based on hardware profile"""
+        
+        output_dir = Path(request.output_dir) / "checkpoints"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get adaptive configuration
+        adaptive_args = adaptive_config["training_args"]
+        gpu_opts = adaptive_config["gpu_optimizations"]
+        
+        # Base training arguments with adaptive parameters
+        args = {
+            "per_device_train_batch_size": adaptive_args["per_device_train_batch_size"],
+            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"],
+            "warmup_steps": 5,
+            "num_train_epochs": request.epochs,
+            "learning_rate": request.learning_rate,
+            
+            # Adaptive precision settings with fallback handling
+            "fp16": gpu_opts.get("torch_dtype") == "float16" and torch.cuda.is_available(),
+            "bf16": gpu_opts.get("torch_dtype") == "bfloat16" and torch.cuda.is_available(),
+            
+            # Adaptive optimization
+            "logging_steps": adaptive_args.get("logging_steps", 10),
+            "optim": "adamw_8bit" if UNSLOTH_AVAILABLE and gpu_opts["enabled"] else "adamw_hf",
+            "weight_decay": 0.01,
+            "lr_scheduler_type": "linear",
+            "seed": 3407,
+            "output_dir": str(output_dir),
+            
+            # Adaptive checkpoint and evaluation settings
+            "save_steps": adaptive_args.get("save_steps", 100),
+            "save_total_limit": adaptive_args.get("save_total_limit", 2),
+            "eval_strategy": adaptive_args.get("eval_strategy", "no"),
+            
+            # Adaptive data loading
+            "dataloader_num_workers": adaptive_args.get("dataloader_num_workers", 0),
+            "dataloader_pin_memory": adaptive_args.get("dataloader_pin_memory", False),
+            
+            # System settings
+            "remove_unused_columns": False,
+            "run_name": f"llmforge_adaptive_{task_id[:8]}",
+            "report_to": adaptive_args.get("report_to", []),
+        }
+        
+        # Enhanced precision validation and adjustment
+        precision_info = adaptive_config.get("precision_info", {})
+        detected_precision = gpu_opts.get("torch_dtype", "float16")
+        
+        # Log precision information
+        self.logger.info(f"Precision analysis - Model: {precision_info.get('model_family', 'unknown')}, "
+                        f"Optimal: {precision_info.get('optimal_precision', 'unknown')}, "
+                        f"Hardware supports bfloat16: {precision_info.get('hardware_support', {}).get('bfloat16', False)}")
+        
+        # Dynamic precision adjustment if there's a mismatch risk
+        if UNSLOTH_AVAILABLE and detected_precision == "bfloat16":
+            self.logger.info("Using bfloat16 precision optimized for Unsloth")
+        elif UNSLOTH_AVAILABLE and detected_precision == "float16":
+            # Check if we should warn about potential Unsloth precision mismatch
+            model_family = precision_info.get('model_family', '')
+            if model_family in ['qwen', 'llama', 'mistral', 'gemma']:
+                self.logger.warning(f"Model family '{model_family}' typically prefers bfloat16 with Unsloth, "
+                                  f"but using float16 due to hardware constraints")
+        
+        # Log final configuration details
+        self.logger.info(f"Adaptive training config: batch_size={args['per_device_train_batch_size']}, "
+                        f"grad_accum={args['gradient_accumulation_steps']}, "
+                        f"precision={'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}")
+
+        return TrainingArguments(**args)
+
     def _create_training_args(self, request: FineTuneRequest, task_id: str):
         """Create training arguments"""
 
@@ -585,15 +749,18 @@ class TrainingService:
             "run_name": f"llmforge_{task_id[:8]}",
         }
 
-        # Memory optimization for containers
-        if KUBERNETES_MODE or MAX_MEMORY_USAGE_GB < 8:
+        # Memory optimization for containers - CRITICAL FIX for 8GB limit
+        if KUBERNETES_MODE or CONTAINER_MEMORY_LIMIT_GB <= 8:
+            self.logger.info(f"Applying 8GB container memory optimizations")
             args.update(
                 {
-                    "per_device_train_batch_size": min(request.batch_size, 2),
-                    "gradient_accumulation_steps": max(
-                        request.gradient_accumulation_steps, 8
-                    ),
+                    "per_device_train_batch_size": 1,  # CRITICAL: Always use batch size 1
+                    "gradient_accumulation_steps": max(request.gradient_accumulation_steps, 16),
                     "dataloader_pin_memory": False,
+                    "eval_strategy": "no",  # Disable evaluation to save memory
+                    "save_steps": 25,  # More frequent saves for recovery
+                    "report_to": [],  # Disable wandb/tensorboard
+                    "save_total_limit": 1,  # Keep only one checkpoint
                 }
             )
 
@@ -1234,6 +1401,60 @@ class TrainingService:
             self.logger.info("Training service cleanup completed")
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
+
+    async def get_hardware_profile(self) -> Dict[str, Any]:
+        """Get detailed hardware profile for debugging and optimization"""
+        try:
+            hardware_summary = self.adaptive_config.get_hardware_summary()
+            sample_config = self.adaptive_config.generate_optimal_config(type('MockRequest', (), {
+                'batch_size': 2,
+                'gradient_accumulation_steps': 4,
+                'epochs': 1,
+                'learning_rate': 2e-4,
+                'max_seq_length': 1024,
+                'peft_method': 'lora'
+            })())
+            
+            return {
+                "hardware_summary": hardware_summary,
+                "detected_profile": {
+                    "gpu_name": self.hardware_profile.gpu_name,
+                    "gpu_memory_gb": self.hardware_profile.gpu_memory_gb,
+                    "system_memory_gb": self.hardware_profile.system_memory_gb,
+                    "container_memory_gb": self.hardware_profile.container_memory_gb,
+                    "cpu_cores": self.hardware_profile.cpu_cores,
+                    "cpu_threads": self.hardware_profile.cpu_threads,
+                    "storage_type": self.hardware_profile.storage_type,
+                    "is_container": self.hardware_profile.is_container,
+                    "cuda_available": self.hardware_profile.cuda_available,
+                },
+                "sample_adaptive_config": {
+                    "effective_memory_gb": sample_config["effective_memory_gb"],
+                    "gpu_optimizations": sample_config["gpu_optimizations"],
+                    "training_args": sample_config["training_args"],
+                    "lora_config": sample_config["lora_config"],
+                },
+                "optimization_tier": self._get_optimization_tier(),
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting hardware profile: {e}")
+            return {"error": str(e)}
+    
+    def _get_optimization_tier(self) -> str:
+        """Get human-readable optimization tier"""
+        memory_gb = self.hardware_profile.container_memory_gb or self.hardware_profile.available_memory_gb
+        gpu_memory = self.hardware_profile.gpu_memory_gb
+        
+        if not self.hardware_profile.cuda_available:
+            return "CPU_ONLY"
+        elif gpu_memory <= 4:
+            return "LOW_VRAM"  # GTX 1650, RTX 3050 4GB
+        elif gpu_memory <= 8:
+            return "MID_VRAM"  # RTX 4060, RTX 3070
+        elif gpu_memory <= 16:
+            return "HIGH_VRAM"  # RTX 4080, RTX 3080 Ti
+        else:
+            return "ENTHUSIAST"  # RTX 4090, A100
 
 
 # Create global service instance

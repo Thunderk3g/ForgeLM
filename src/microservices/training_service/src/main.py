@@ -365,6 +365,20 @@ async def list_training_templates():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/system/hardware")
+async def get_hardware_profile():
+    """Get detailed hardware profile and adaptive configuration"""
+    if not training_service:
+        raise HTTPException(status_code=503, detail="Training service not initialized")
+    
+    try:
+        profile = await training_service.get_hardware_profile()
+        return profile
+    except Exception as e:
+        logger.error(f"Hardware profile failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Frontend compatibility endpoints with /fine-tune prefix
 @app.get("/fine-tune/status/{task_id}")
 async def get_training_status_alt(task_id: str):

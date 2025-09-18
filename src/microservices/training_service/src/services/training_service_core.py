@@ -236,47 +236,106 @@ class TrainingCore:
             raise
 
     def _train_with_unsloth(self, request: FineTuneRequest) -> Dict[str, Any]:
-        """Execute training using Unsloth optimization"""
+        """Execute training using Unsloth optimization with Qwen2.5 optimizations"""
 
-        self.logger.info("Using Unsloth optimization for training")
+        self.logger.info("Using Unsloth optimization for training with Qwen2.5 optimizations")
         self._update_status("loading", "Loading model with Unsloth optimization...")
 
         try:
-            # Load model and tokenizer with Unsloth
+            # Load model and tokenizer with Unsloth and Qwen2.5-specific configurations
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=request.base_model_dir,
                 max_seq_length=request.max_seq_length,
-                dtype=None,  # Auto-detect
-                load_in_4bit=True,  # Use 4-bit quantization
+                dtype=None,  # Auto-detect optimal dtype
+                load_in_4bit=True,  # Critical for memory efficiency
+                trust_remote_code=True,  # Required for Qwen2.5
+                # Qwen2.5-specific optimizations
+                device_map="balanced",  # Better than "auto" for Qwen2.5
+                attn_implementation="flash_attention_2",  # Enable if available
             )
+            
+            # CRITICAL FIX: Proper Qwen2.5 tokenizer configuration
+            self.logger.info("Applying Qwen2.5 tokenizer fixes...")
+            
+            # Fix tokenizer special tokens for Qwen2.5
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+                self.logger.info(f"Set pad_token to eos_token: {tokenizer.eos_token}")
+            
+            # Ensure BOS token is properly configured for Qwen2.5
+            if tokenizer.bos_token_id is None:
+                if hasattr(tokenizer, 'im_start_id') and tokenizer.im_start_id is not None:
+                    tokenizer.bos_token_id = tokenizer.im_start_id
+                    self.logger.info(f"Set bos_token_id to im_start_id: {tokenizer.bos_token_id}")
+                else:
+                    # Fallback for Qwen2.5 - use the actual BOS token ID from vocab
+                    if '<|im_start|>' in tokenizer.get_vocab():
+                        tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids('<|im_start|>')
+                        tokenizer.bos_token = '<|im_start|>'
+                        self.logger.info(f"Set bos_token_id to <|im_start|>: {tokenizer.bos_token_id}")
+                    else:
+                        # Ultimate fallback - use eos_token_id
+                        tokenizer.bos_token_id = tokenizer.eos_token_id
+                        tokenizer.bos_token = tokenizer.eos_token
+                        self.logger.warning(f"Fallback: Set bos_token_id to eos_token_id: {tokenizer.bos_token_id}")
+            
+            # Verify tokenizer configuration
+            self.logger.info(f"Final tokenizer config - BOS: {tokenizer.bos_token_id}, EOS: {tokenizer.eos_token_id}, PAD: {tokenizer.pad_token_id}")
+            
+            # Resize token embeddings if needed (for safety)
+            model.resize_token_embeddings(len(tokenizer))
+            
+            # Set up chat template for Qwen2.5 if not present
+            if not hasattr(tokenizer, 'chat_template') or tokenizer.chat_template is None:
+                qwen_chat_template = """{% for message in messages %}{% if loop.first and messages[0]['role'] != 'system' %}{{ '<|im_start|>system\nYou are a helpful assistant.<|im_end|>\n' }}{% endif %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}"""
+                tokenizer.chat_template = qwen_chat_template
+                self.logger.info("Applied Qwen2.5 chat template")
 
             # Check for cancellation after model loading
             if self._should_cancel():
                 raise InterruptedError("Training cancelled during model loading")
 
-            self._update_status("configuring", "Applying LoRA configuration...")
+            self._update_status("configuring", "Applying optimized LoRA configuration for Qwen2.5...")
 
-            # Apply LoRA adapter
+            # Memory-optimized LoRA configuration for Qwen2.5
+            # Adjust rank based on available memory and model size
+            worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
+            if worker_memory_gb <= 8:
+                # Conservative settings for limited memory
+                lora_rank = 8 if request.peft_method == "lora" else 16
+                lora_alpha = 16
+                self.logger.info(f"Using memory-optimized LoRA config: r={lora_rank}, alpha={lora_alpha}")
+            else:
+                # Standard settings for higher memory
+                lora_rank = 16 if request.peft_method == "lora" else 32
+                lora_alpha = 32
+                self.logger.info(f"Using standard LoRA config: r={lora_rank}, alpha={lora_alpha}")
+
+            # Qwen2.5-optimized target modules (includes all attention and MLP layers)
+            qwen_target_modules = [
+                "q_proj", "k_proj", "v_proj", "o_proj",  # Attention layers
+                "gate_proj", "up_proj", "down_proj",      # MLP layers
+                # Add output projection for better performance
+                "lm_head",
+            ]
+            
+            # Apply LoRA adapter with Qwen2.5 optimizations
             model = FastLanguageModel.get_peft_model(
                 model,
-                r=16 if request.peft_method == "lora" else 64,
-                target_modules=[
-                    "q_proj",
-                    "k_proj",
-                    "v_proj",
-                    "o_proj",
-                    "gate_proj",
-                    "up_proj",
-                    "down_proj",
-                ],
-                lora_alpha=16,
-                lora_dropout=0.0,
+                r=lora_rank,
+                target_modules=qwen_target_modules,
+                lora_alpha=lora_alpha,
+                lora_dropout=0.1,  # Slight dropout for regularization
                 bias="none",
-                use_gradient_checkpointing="unsloth",
+                use_gradient_checkpointing="unsloth",  # Critical for memory efficiency
                 random_state=3407,
-                use_rslora=False,
+                use_rslora=False,  # Keep disabled for stability
                 loftq_config=None,
+                # Qwen2.5-specific optimizations
+                modules_to_save=None,  # Don't save embedding layers to save memory
             )
+            
+            self.logger.info(f"Applied LoRA with rank {lora_rank}, targeting {len(qwen_target_modules)} module types")
 
             # Check for cancellation
             if self._should_cancel():
@@ -301,37 +360,146 @@ class TrainingCore:
                 self.task_id, self._update_status, self._should_cancel
             )
 
-            # Create trainer
+            # Create memory-optimized SFT trainer for Qwen2.5
+            self._update_status("configuring_trainer", "Setting up optimized SFT trainer...")
 
+            # Memory-optimized SFT configuration
+            worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
+            
             sft_config = SFTConfig(
                 dataset_text_field="text",
-                max_seq_length=request.max_seq_length,
-                packing=False,
-                dataset_num_proc=2,
+                max_seq_length=min(request.max_seq_length, 2048 if worker_memory_gb <= 8 else request.max_seq_length),
+                packing=True,  # Enable packing for 30% faster training
+                dataset_num_proc=1 if worker_memory_gb <= 8 else 2,  # Reduce for memory
+                # Qwen2.5-specific optimizations
+                chars_per_token=3.5,  # Qwen2.5 average
+                dataset_kwargs={
+                    "add_special_tokens": True,
+                    "split": "train"
+                },
+                # Memory optimizations
+                dataset_batch_size=1000 if worker_memory_gb <= 8 else 2000,
+                neftune_noise_alpha=None,  # Disable NEFTune to save memory
             )
+
+            # CRITICAL: Validate and adjust precision settings for Unsloth compatibility
+            training_args = self._validate_precision_settings(model, training_args)
+            
+            # Prepare dataset for training
+            train_dataset = dataset["train"] if "train" in dataset else dataset
+            eval_dataset = dataset.get("val") if worker_memory_gb > 8 else None  # Disable eval for memory
+            
+            # Log dataset info
+            self.logger.info(f"Training dataset size: {len(train_dataset)}")
+            if eval_dataset:
+                self.logger.info(f"Evaluation dataset size: {len(eval_dataset)}")
+            else:
+                self.logger.info("Evaluation disabled for memory optimization")
 
             trainer = SFTTrainer(
                 model=model,
                 tokenizer=tokenizer,
-                train_dataset=dataset["train"] if "train" in dataset else dataset,
-                eval_dataset=dataset.get("val"),
+                train_dataset=train_dataset,
+                eval_dataset=eval_dataset,
                 data_collator=None,
                 args=training_args,
                 **sft_config.to_dict(),
             )
+            
+            self.logger.info(f"SFT trainer configured with max_seq_length={sft_config.max_seq_length}, packing={sft_config.packing}")
 
             # Add progress callback
             trainer.add_callback(progress_callback)
 
-            # Start training
-            self.logger.info("Starting Unsloth training...")
-            self._update_status("training", "Training started...")
+            # Start training with enhanced error handling
+            self.logger.info("Starting Unsloth training with enhanced monitoring...")
+            self._update_status("training", "Training started with memory monitoring...")
 
             # Check for cancellation one more time before training
             if self._should_cancel():
                 raise InterruptedError("Training cancelled before start")
 
-            trainer.train()
+            # Enhanced training with memory monitoring and recovery
+            try:
+                # Log initial GPU memory state
+                if torch.cuda.is_available():
+                    gpu_mem_before = torch.cuda.memory_allocated() / 1024**3
+                    gpu_mem_reserved = torch.cuda.memory_reserved() / 1024**3
+                    self.logger.info(f"GPU memory before training: {gpu_mem_before:.2f}GB allocated, {gpu_mem_reserved:.2f}GB reserved")
+                
+                # Training with automatic recovery
+                trainer.train()
+                
+                # Log GPU memory after training
+                if torch.cuda.is_available():
+                    gpu_mem_after = torch.cuda.memory_allocated() / 1024**3
+                    self.logger.info(f"GPU memory after training: {gpu_mem_after:.2f}GB allocated")
+                
+            except torch.cuda.OutOfMemoryError as oom_error:
+                self.logger.error(f"GPU Out of Memory during training: {oom_error}")
+                
+                # Emergency memory cleanup
+                self._emergency_memory_cleanup()
+                
+                # Try to resume with even smaller batch size
+                if training_args.per_device_train_batch_size > 1:
+                    self.logger.info("Attempting recovery with smaller batch size...")
+                    
+                    # Update training args for recovery
+                    recovery_args = training_args
+                    recovery_args.per_device_train_batch_size = 1
+                    recovery_args.gradient_accumulation_steps = min(32, recovery_args.gradient_accumulation_steps * 2)
+                    recovery_args.dataloader_pin_memory = False
+                    
+                    # Recreate trainer with recovery settings
+                    trainer = SFTTrainer(
+                        model=model,
+                        tokenizer=tokenizer,
+                        train_dataset=train_dataset,
+                        eval_dataset=None,  # Disable eval for recovery
+                        data_collator=None,
+                        args=recovery_args,
+                        **sft_config.to_dict(),
+                    )
+                    trainer.add_callback(progress_callback)
+                    
+                    self._update_status("recovering", "Recovering training with reduced memory settings...")
+                    trainer.train()
+                    self.logger.info("Successfully recovered from OOM error")
+                else:
+                    # Cannot reduce batch size further
+                    raise RuntimeError("Cannot recover from OOM - batch size already at minimum") from oom_error
+                    
+            except Exception as training_error:
+                self.logger.error(f"Training failed with error: {training_error}")
+                
+                # Check if it's a tokenizer-related error
+                if any(keyword in str(training_error).lower() for keyword in 
+                       ["bos_token", "eos_token", "pad_token", "tokenizer", "token_id"]):
+                    self.logger.error("Detected tokenizer configuration error - applying emergency fixes")
+                    
+                    # Emergency tokenizer fixes
+                    if tokenizer.bos_token_id is None:
+                        tokenizer.bos_token_id = tokenizer.eos_token_id
+                        tokenizer.bos_token = tokenizer.eos_token
+                        self.logger.info("Emergency fix: Set bos_token_id to eos_token_id")
+                    
+                    if tokenizer.pad_token_id is None:
+                        tokenizer.pad_token_id = tokenizer.eos_token_id
+                        tokenizer.pad_token = tokenizer.eos_token
+                        self.logger.info("Emergency fix: Set pad_token_id to eos_token_id")
+                    
+                    # Resize embeddings again
+                    model.resize_token_embeddings(len(tokenizer))
+                    self.logger.info("Emergency fix: Resized token embeddings")
+                    
+                    # Try training again with fixed tokenizer
+                    self._update_status("retrying", "Retrying training with fixed tokenizer...")
+                    trainer.train()
+                    self.logger.info("Successfully recovered from tokenizer error")
+                else:
+                    # Re-raise non-tokenizer errors
+                    raise
 
             # Check if training was cancelled
             if self._should_cancel():
@@ -496,49 +664,177 @@ class TrainingCore:
             raise
 
     def _create_training_args(self, request: FineTuneRequest):
-        """Create training arguments optimized for worker process"""
+        """Create memory-optimized training arguments for Qwen2.5 in worker process"""
 
         output_dir = Path(request.output_dir) / "checkpoints"
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Base configuration optimized for Qwen2.5
         args = {
             "per_device_train_batch_size": request.batch_size,
             "gradient_accumulation_steps": request.gradient_accumulation_steps,
-            "warmup_steps": 5,
+            "warmup_steps": max(5, min(50, request.epochs * 10)),  # Dynamic warmup
             "num_train_epochs": request.epochs,
             "learning_rate": request.learning_rate,
-            "fp16": torch.cuda.is_available()
-            and not (UNSLOTH_AVAILABLE and is_bfloat16_supported()),
-            "bf16": torch.cuda.is_available()
-            and UNSLOTH_AVAILABLE
-            and is_bfloat16_supported(),
-            "logging_steps": 10,
+            # Optimized precision for Qwen2.5
+            "fp16": torch.cuda.is_available() and not (UNSLOTH_AVAILABLE and is_bfloat16_supported()),
+            "bf16": torch.cuda.is_available() and UNSLOTH_AVAILABLE and is_bfloat16_supported(),
+            "logging_steps": 5,  # More frequent logging for better monitoring
             "optim": "adamw_8bit" if UNSLOTH_AVAILABLE else "adamw_hf",
             "weight_decay": 0.01,
-            "lr_scheduler_type": "linear",
+            "lr_scheduler_type": "cosine",  # Better for Qwen2.5
             "seed": 3407,
             "output_dir": str(output_dir),
-            "save_steps": 100,
-            "save_total_limit": 2,
-            "dataloader_num_workers": 0,  # Avoid multiprocessing issues in worker
+            "save_steps": 50,  # More frequent saves for recovery
+            "save_total_limit": 3,  # Keep more checkpoints
+            "dataloader_num_workers": 0,  # Avoid multiprocessing issues
             "remove_unused_columns": False,
-            "run_name": f"llmforge_worker_{self.task_id[:8]}",
+            "run_name": f"llmforge_qwen25_{self.task_id[:8]}",
+            # Memory optimization settings
+            "dataloader_pin_memory": False,
+            "torch_compile": False,  # Disable for stability
+            "group_by_length": False,  # Disabled for memory consistency
+            # Gradient optimization
+            "max_grad_norm": 1.0,
+            "prediction_loss_only": True,
+            # Evaluation settings
+            "eval_strategy": "no",  # Disable evaluation to save memory
+            "save_safetensors": True,  # Use safetensors format
         }
 
-        # Worker-specific optimizations
+        # Memory-specific optimizations based on container constraints
         worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
-        if worker_memory_gb < 8:
-            args.update(
-                {
-                    "per_device_train_batch_size": min(request.batch_size, 2),
-                    "gradient_accumulation_steps": max(
-                        request.gradient_accumulation_steps, 8
-                    ),
-                    "dataloader_pin_memory": False,
-                }
-            )
+        container_memory_gb = 8.0  # Your container limit
+        
+        if worker_memory_gb <= container_memory_gb:
+            # Aggressive memory optimization for 8GB container
+            memory_optimized_args = {
+                "per_device_train_batch_size": min(request.batch_size, 1),  # Ultra-small batch
+                "gradient_accumulation_steps": max(request.gradient_accumulation_steps, 16),  # Compensate with accumulation
+                "dataloader_pin_memory": False,
+                "save_steps": 25,  # More frequent saves
+                "logging_steps": 5,
+                # Additional memory optimizations
+                "report_to": [],  # Disable wandb/tensorboard
+                "load_best_model_at_end": False,  # Don't keep best model in memory
+                "metric_for_best_model": None,
+                "greater_is_better": None,
+                "label_smoothing_factor": 0.0,  # Disable label smoothing to save memory
+            }
+            args.update(memory_optimized_args)
+            self.logger.info(f"Applied aggressive memory optimization for {worker_memory_gb}GB limit")
+            
+        elif worker_memory_gb < 12:
+            # Moderate optimization for medium memory
+            moderate_args = {
+                "per_device_train_batch_size": min(request.batch_size, 2),
+                "gradient_accumulation_steps": max(request.gradient_accumulation_steps, 8),
+                "dataloader_pin_memory": False,
+            }
+            args.update(moderate_args)
+            self.logger.info(f"Applied moderate memory optimization for {worker_memory_gb}GB")
+        
+        # Qwen2.5-specific training optimizations
+        qwen_optimizations = {
+            # Learning rate optimization for Qwen2.5
+            "warmup_ratio": 0.05,  # 5% warmup
+            # Stability improvements
+            "ddp_find_unused_parameters": False,
+            "ddp_bucket_cap_mb": 25,  # Smaller buckets for memory
+        }
+        args.update(qwen_optimizations)
+        
+        # Log final configuration
+        effective_batch_size = args["per_device_train_batch_size"] * args["gradient_accumulation_steps"]
+        self.logger.info(f"Training config: batch_size={args['per_device_train_batch_size']}, "
+                        f"grad_accum={args['gradient_accumulation_steps']}, "
+                        f"effective_batch={effective_batch_size}, "
+                        f"lr={args['learning_rate']}, "
+                        f"precision={'bf16' if args.get('bf16') else 'fp16' if args.get('fp16') else 'fp32'}")
 
         return TrainingArguments(**args)
+    
+    def _validate_precision_settings(self, model, training_args):
+        """Validate and adjust precision settings for Unsloth compatibility"""
+        try:
+            # Detect model's actual precision
+            model_dtype = None
+            if hasattr(model, 'dtype'):
+                model_dtype = model.dtype
+            elif hasattr(model, 'model') and hasattr(model.model, 'dtype'):
+                model_dtype = model.model.dtype
+            elif hasattr(model, 'base_model') and hasattr(model.base_model, 'dtype'):
+                model_dtype = model.base_model.dtype
+            
+            # Extract dtype string
+            dtype_str = str(model_dtype) if model_dtype else "unknown"
+            self.logger.info(f"Detected model precision: {dtype_str}")
+            
+            # Check current training args precision settings
+            current_fp16 = getattr(training_args, 'fp16', False)
+            current_bf16 = getattr(training_args, 'bf16', False)
+            
+            self.logger.info(f"Training args precision: fp16={current_fp16}, bf16={current_bf16}")
+            
+            # Determine optimal precision based on model and hardware
+            if "bfloat16" in dtype_str.lower():
+                # Model is in bfloat16, adjust training args accordingly
+                if current_fp16 and not current_bf16:
+                    self.logger.warning("Model is in bfloat16 but training args use fp16. Adjusting to bf16...")
+                    # Create new training args with corrected precision
+                    args_dict = training_args.to_dict()
+                    args_dict['fp16'] = False
+                    args_dict['bf16'] = True
+                    training_args = type(training_args)(**args_dict)
+                    self.logger.info("Adjusted training precision to bfloat16 for Unsloth compatibility")
+            elif "float16" in dtype_str.lower():
+                # Model is in float16, ensure training args match
+                if current_bf16 and not current_fp16:
+                    self.logger.warning("Model is in float16 but training args use bf16. Adjusting to fp16...")
+                    args_dict = training_args.to_dict()
+                    args_dict['fp16'] = True
+                    args_dict['bf16'] = False
+                    training_args = type(training_args)(**args_dict)
+                    self.logger.info("Adjusted training precision to float16 for Unsloth compatibility")
+            
+            # Final validation
+            final_fp16 = getattr(training_args, 'fp16', False)
+            final_bf16 = getattr(training_args, 'bf16', False)
+            self.logger.info(f"Final training precision: fp16={final_fp16}, bf16={final_bf16}")
+            
+            return training_args
+            
+        except Exception as e:
+            self.logger.error(f"Error validating precision settings: {e}")
+            self.logger.info("Continuing with original training args...")
+            return training_args
+
+    def _emergency_memory_cleanup(self):
+        """Emergency memory cleanup during OOM recovery"""
+        try:
+            self.logger.warning("Performing emergency memory cleanup...")
+            
+            # Force garbage collection multiple times
+            for i in range(3):
+                gc.collect()
+            
+            # Clear all CUDA caches
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                torch.cuda.synchronize()
+                
+                # Log memory status
+                gpu_mem = torch.cuda.memory_allocated() / 1024**3
+                gpu_reserved = torch.cuda.memory_reserved() / 1024**3
+                self.logger.info(f"After emergency cleanup: {gpu_mem:.2f}GB allocated, {gpu_reserved:.2f}GB reserved")
+            
+            # Brief pause to let cleanup complete
+            import time
+            time.sleep(2)
+            
+        except Exception as e:
+            self.logger.error(f"Error during emergency cleanup: {e}")
 
     def _cleanup_resources(self):
         """Clean up GPU/CPU resources in worker process"""
