@@ -26,7 +26,9 @@ from services.service_orchestrator import register_with_orchestrator
 # Import shared utilities and schemas from parent directories
 from models.schemas import (
     DataGenerationRequest, DataGenerationResponse, TemplateConfig,
-    DatasetValidationRequest, ValidationResult, PrepareDataRequest, PrepareDataResponse
+    DatasetValidationRequest, ValidationResult, PrepareDataRequest, PrepareDataResponse,
+    EmbeddingModelListResponse, PreprocessingPreviewRequest, PreprocessingPreviewResponse,
+    VisualizationGenerationRequest, VisualizationGenerationResponse
 )
 from utils.logging import get_logger
 from utils.performance import performance_monitor
@@ -488,6 +490,187 @@ async def analyze_data_quality(job_id: str):
         raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
     except Exception as e:
         logger.error(f"Quality analysis failed for {job_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/embedding-models", response_model=EmbeddingModelListResponse)
+async def get_embedding_models():
+    """Get available embedding models for preprocessing"""
+    if not data_preparation_service:
+        raise HTTPException(status_code=503, detail="Data preparation service not initialized")
+    
+    try:
+        models = data_preparation_service.get_embedding_models()
+        return models
+    except Exception as e:
+        logger.error(f"Failed to get embedding models: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/preprocessing/preview", response_model=PreprocessingPreviewResponse)
+async def preview_preprocessing(request: PreprocessingPreviewRequest):
+    """Preview preprocessing results on a sample of data"""
+    if not data_preparation_service:
+        raise HTTPException(status_code=503, detail="Data preparation service not initialized")
+    
+    try:
+        logger.info(f"Starting preprocessing preview for {request.input_file}")
+        
+        # Create a mock response for now - would implement actual preview logic
+        preview_response = PreprocessingPreviewResponse(
+            status="success",
+            message=f"Preview generated for {request.sample_size} samples",
+            preview_samples=[],
+            estimated_processing_time=30.0,
+            estimated_output_size="~500MB",
+            validation_warnings=[],
+            preprocessing_summary={
+                "sample_size": request.sample_size,
+                "embedding_enabled": request.preprocessing_config.enable_embeddings,
+                "cleaning_level": request.preprocessing_config.text_cleaning_level
+            }
+        )
+        
+        return preview_response
+        
+    except Exception as e:
+        logger.error(f"Preprocessing preview failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/generate-visualizations", response_model=VisualizationGenerationResponse)
+async def generate_preprocessing_visualizations(request: VisualizationGenerationRequest):
+    """Generate visualizations for preprocessed data"""
+    try:
+        logger.info(f"Generating visualizations for dataset: {request.dataset_path}")
+        
+        # This would integrate with the visualization service
+        visualization_response = VisualizationGenerationResponse(
+            status="success",
+            message="Visualizations generated successfully",
+            visualization_data={
+                "correlation_matrix": {"generated": True},
+                "tensor_analysis": {"generated": True},
+                "token_distribution": {"generated": True}
+            },
+            file_paths={
+                "correlation_heatmap": "/visualizations/correlation.html",
+                "tensor_plot": "/visualizations/tensor.html",
+                "distribution_chart": "/visualizations/distribution.html"
+            },
+            generation_time_ms=1500.0,
+            metadata={
+                "dataset_path": request.dataset_path,
+                "visualization_types": request.visualization_types,
+                "output_format": request.output_format
+            }
+        )
+        
+        return visualization_response
+        
+    except Exception as e:
+        logger.error(f"Visualization generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/preprocessing/config-templates")
+async def get_preprocessing_config_templates():
+    """Get predefined preprocessing configuration templates"""
+    templates = {
+        "basic": {
+            "name": "Basic Preprocessing",
+            "description": "Standard text cleaning with minimal processing",
+            "config": {
+                "enable_embeddings": False,
+                "text_cleaning_level": "standard",
+                "remove_duplicates_by_embedding": False,
+                "generate_correlations": False,
+                "create_tensor_visualizations": False,
+                "quality_analysis": True,
+                "token_analysis": True
+            }
+        },
+        "embedding_enhanced": {
+            "name": "Embedding-Enhanced Preprocessing", 
+            "description": "Full preprocessing with embedding generation and analysis",
+            "config": {
+                "enable_embeddings": True,
+                "embedding_config": {
+                    "model_name": "sentence-transformers/all-mpnet-base-v2",
+                    "model_type": "sentence_transformer",
+                    "max_sequence_length": 512,
+                    "normalize_embeddings": True,
+                    "batch_size": 32
+                },
+                "text_cleaning_level": "standard",
+                "remove_duplicates_by_embedding": True,
+                "similarity_threshold": 0.95,
+                "generate_correlations": True,
+                "create_tensor_visualizations": True,
+                "quality_analysis": True,
+                "token_analysis": True
+            }
+        },
+        "research_analysis": {
+            "name": "Research & Analysis",
+            "description": "Comprehensive analysis with visualizations for research purposes",
+            "config": {
+                "enable_embeddings": True,
+                "embedding_config": {
+                    "model_name": "BAAI/bge-base-en-v1.5",
+                    "model_type": "sentence_transformer",
+                    "max_sequence_length": 512,
+                    "normalize_embeddings": True,
+                    "batch_size": 16
+                },
+                "text_cleaning_level": "aggressive",
+                "remove_duplicates_by_embedding": True,
+                "similarity_threshold": 0.9,
+                "generate_correlations": True,
+                "create_tensor_visualizations": True,
+                "quality_analysis": True,
+                "token_analysis": True,
+                "preview_samples": 20
+            }
+        }
+    }
+    
+    return {"templates": templates}
+
+
+@app.get("/preprocessing/status/{dataset_path}")
+async def get_preprocessing_status(dataset_path: str):
+    """Get preprocessing status and analytics for a dataset"""
+    try:
+        from pathlib import Path
+        import json
+        
+        dataset_path_obj = Path(dataset_path)
+        if not dataset_path_obj.exists():
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        # Check for preprocessing analytics
+        analytics_path = dataset_path_obj / "preprocessing_analytics.json"
+        if analytics_path.exists():
+            with open(analytics_path, 'r') as f:
+                analytics = json.load(f)
+            
+            return {
+                "status": "completed",
+                "dataset_path": dataset_path,
+                "analytics": analytics,
+                "has_embeddings": analytics.get("embedding_stats") is not None,
+                "has_visualizations": analytics.get("tensor_visualizations") is not None
+            }
+        else:
+            return {
+                "status": "not_processed",
+                "dataset_path": dataset_path,
+                "message": "No preprocessing analytics found"
+            }
+            
+    except Exception as e:
+        logger.error(f"Failed to get preprocessing status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

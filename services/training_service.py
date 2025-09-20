@@ -51,14 +51,46 @@ except ImportError:
 
 # Import Unsloth with proper error handling
 try:
-    import unsloth
-    from unsloth import FastLanguageModel, is_bfloat16_supported
-
+    # Work around Unsloth v2025.9.5 KTO trainer bug
+    import sys
+    import types
+    
+    # First, let's patch the exec function to handle the specific AttributeError
+    original_exec = exec
+    
+    def patched_exec(code, globals_dict=None, locals_dict=None):
+        try:
+            return original_exec(code, globals_dict, locals_dict)
+        except AttributeError as e:
+            if "UnslothKTOTrainer" in str(e) and "UnslothKTOTrainer" in str(code):
+                # This is the problematic line - just skip it
+                print(f"Skipping problematic Unsloth KTO trainer assignment: {e}")
+                return None
+            else:
+                raise
+    
+    # Temporarily replace exec
+    builtins_exec = __builtins__['exec'] if isinstance(__builtins__, dict) else __builtins__.exec
+    if isinstance(__builtins__, dict):
+        __builtins__['exec'] = patched_exec
+    else:
+        __builtins__.exec = patched_exec
+    
+    try:
+        import unsloth
+        from unsloth import FastLanguageModel, is_bfloat16_supported
+    finally:
+        # Restore original exec
+        if isinstance(__builtins__, dict):
+            __builtins__['exec'] = builtins_exec
+        else:
+            __builtins__.exec = builtins_exec
+    
     UNSLOTH_AVAILABLE = True
     print(f"🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.")
     print(f"🦥 Unsloth Zoo will now patch everything to make training faster!")
     print(f"Unsloth imported successfully (v{unsloth.__version__})")
-except (ImportError, NotImplementedError) as e:
+except (ImportError, NotImplementedError, AttributeError) as e:
     UNSLOTH_AVAILABLE = False
     print(f"WARNING: Unsloth not available ({e})")
 

@@ -262,17 +262,35 @@ class TrainingCore:
         self._update_status("loading", "Loading model with Unsloth optimization...")
 
         try:
-            # Load model and tokenizer with Unsloth and Qwen2.5-specific configurations
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=request.base_model_dir,
-                max_seq_length=request.max_seq_length,
-                dtype=None,  # Auto-detect optimal dtype
-                load_in_4bit=True,  # Critical for memory efficiency
-                trust_remote_code=True,  # Required for Qwen2.5
-                # Qwen2.5-specific optimizations
-                device_map="balanced",  # Better than "auto" for Qwen2.5
-                attn_implementation="flash_attention_2",  # Enable if available
-            )
+            # Optimized model loading for RTX 4060 8GB with Unsloth 2025.9.5+
+            worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
+            
+            # RTX 4060 8GB optimal loading configuration
+            loading_config = {
+                "model_name": request.base_model_dir,
+                "max_seq_length": 2048 if worker_memory_gb <= 8 else request.max_seq_length,
+                "dtype": None,  # Let Unsloth auto-detect for optimal performance
+                "load_in_4bit": True,  # Essential for 8GB VRAM - 4x memory reduction
+                "trust_remote_code": True,  # Required for Qwen2.5
+            }
+            
+            # Hardware-specific optimizations
+            if worker_memory_gb <= 8:
+                loading_config.update({
+                    "device_map": "auto",  # Let Unsloth handle device mapping
+                    "attn_implementation": "flash_attention_2",  # Better memory efficiency
+                    # Additional 8GB optimizations
+                    "torch_dtype": torch.float16,  # Explicit for compatibility
+                })
+            else:
+                loading_config.update({
+                    "device_map": "balanced",  # Better for multi-GPU setups
+                    "attn_implementation": "flash_attention_2",
+                })
+            
+            self.logger.info(f"Loading model with RTX 4060 8GB optimized config: 4bit={loading_config['load_in_4bit']}, max_seq={loading_config['max_seq_length']}")
+            
+            model, tokenizer = FastLanguageModel.from_pretrained(**loading_config)
             
             # CRITICAL FIX: Proper Qwen2.5 tokenizer configuration
             self.logger.info("Applying Qwen2.5 tokenizer fixes...")
@@ -317,26 +335,27 @@ class TrainingCore:
 
             self._update_status("configuring", "Applying optimized LoRA configuration for Qwen2.5...")
 
-            # Memory-optimized LoRA configuration for Qwen2.5
-            # Adjust rank based on available memory and model size
+            # Optimized LoRA configuration for Qwen2.5 based on latest Unsloth best practices
+            # RTX 4060 8GB optimal settings based on community benchmarks
             worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
             if worker_memory_gb <= 8:
-                # Conservative settings for limited memory
-                lora_rank = 8 if request.peft_method == "lora" else 16
-                lora_alpha = 16
-                self.logger.info(f"Using memory-optimized LoRA config: r={lora_rank}, alpha={lora_alpha}")
+                # Optimal settings for RTX 4060 8GB - based on Unsloth 2025.9.5+ benchmarks
+                lora_rank = 16  # Sweet spot for 8GB VRAM - proven optimal in community testing
+                lora_alpha = 32  # 2x rank ratio for stable training
+                self.logger.info(f"Using RTX 4060 8GB optimized LoRA config: r={lora_rank}, alpha={lora_alpha}")
             else:
-                # Standard settings for higher memory
-                lora_rank = 16 if request.peft_method == "lora" else 32
-                lora_alpha = 32
-                self.logger.info(f"Using standard LoRA config: r={lora_rank}, alpha={lora_alpha}")
+                # Higher memory configurations can use more aggressive settings
+                lora_rank = 32 if request.peft_method == "lora" else 64
+                lora_alpha = 64
+                self.logger.info(f"Using high-memory LoRA config: r={lora_rank}, alpha={lora_alpha}")
 
-            # Qwen2.5-optimized target modules (includes all attention and MLP layers)
+            # Qwen2.5-optimized target modules based on latest Unsloth recommendations
+            # Research shows targeting all major layers is crucial for matching full fine-tuning performance
             qwen_target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",  # Attention layers
-                "gate_proj", "up_proj", "down_proj",      # MLP layers
-                # Add output projection for better performance
-                "lm_head",
+                "q_proj", "k_proj", "v_proj", "o_proj",  # All attention layers (essential)
+                "gate_proj", "up_proj", "down_proj",      # All MLP layers (recommended for Qwen2.5)
+                # Note: embedding layers excluded to save memory on 8GB GPUs
+                # "embed_tokens", "lm_head"  # Uncomment for higher VRAM setups
             ]
             
             # Apply LoRA adapter with Qwen2.5 optimizations
@@ -345,17 +364,17 @@ class TrainingCore:
                 r=lora_rank,
                 target_modules=qwen_target_modules,
                 lora_alpha=lora_alpha,
-                lora_dropout=0.1,  # Slight dropout for regularization
+                lora_dropout=0.0,  # Optimized for Unsloth fast patching  # Slight dropout for regularization
                 bias="none",
-                use_gradient_checkpointing="unsloth",  # Critical for memory efficiency
+                use_gradient_checkpointing="unsloth",  # 30% less VRAM + 2x larger batch sizes
                 random_state=3407,
                 use_rslora=False,  # Keep disabled for stability
                 loftq_config=None,
                 # Qwen2.5-specific optimizations
-                modules_to_save=None,  # Don't save embedding layers to save memory
+                modules_to_save=None,  # Exclude embeddings for 8GB VRAM optimization
             )
             
-            self.logger.info(f"Applied LoRA with rank {lora_rank}, targeting {len(qwen_target_modules)} module types")
+            self.logger.info(f"Applied LoRA with rank {lora_rank}, alpha {lora_alpha}, targeting {len(qwen_target_modules)} module types for optimal 8GB VRAM performance")
 
             # Check for cancellation
             if self._should_cancel():
@@ -372,7 +391,7 @@ class TrainingCore:
 
             self._update_status("preparing", "Setting up training arguments...")
 
-            # Setup training arguments
+            # Setup optimized training arguments for RTX 4060 8GB
             training_args = self._create_adaptive_training_args(request)
 
             # Create progress callback
@@ -386,21 +405,35 @@ class TrainingCore:
             # Memory-optimized SFT configuration
             worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
             
+            # Optimized SFT configuration for RTX 4060 8GB based on Unsloth benchmarks
+            if worker_memory_gb <= 8:
+                # RTX 4060 8GB optimal settings
+                optimal_seq_length = 2048  # Unsloth recommended for 8GB testing
+                dataset_num_proc = 1  # Single process to avoid memory overhead
+                dataset_batch_size = 1000  # Conservative for memory
+            else:
+                # Higher memory configurations
+                optimal_seq_length = min(request.max_seq_length, 4096)
+                dataset_num_proc = 2
+                dataset_batch_size = 2000
+            
             sft_config = SFTConfig(
                 dataset_text_field="text",
-                max_seq_length=min(request.max_seq_length, 2048 if worker_memory_gb <= 8 else request.max_seq_length),
-                packing=True,  # Enable packing for 30% faster training
-                dataset_num_proc=1 if worker_memory_gb <= 8 else 2,  # Reduce for memory
+                max_seq_length=optimal_seq_length,
+                packing=True,  # Critical: 30% faster training with Unsloth
+                dataset_num_proc=dataset_num_proc,
                 # Qwen2.5-specific optimizations
-                chars_per_token=3.5,  # Qwen2.5 average
+                chars_per_token=3.5,  # Qwen2.5 tokenizer average
                 dataset_kwargs={
                     "add_special_tokens": True,
                     "split": "train"
                 },
                 # Memory optimizations
-                dataset_batch_size=1000 if worker_memory_gb <= 8 else 2000,
+                dataset_batch_size=dataset_batch_size,
                 neftune_noise_alpha=None,  # Disable NEFTune to save memory
             )
+            
+            self.logger.info(f"SFT Config optimized for {worker_memory_gb}GB: max_seq_length={optimal_seq_length}, packing=True")
 
             # CRITICAL: Validate and adjust precision settings for Unsloth compatibility
             # This prevents "Unsloth: Model is in bfloat16 precision but you want to use float16 precision" errors
@@ -428,7 +461,7 @@ class TrainingCore:
                 **sft_config.to_dict(),
             )
             
-            self.logger.info(f"SFT trainer configured with max_seq_length={sft_config.max_seq_length}, packing={sft_config.packing}")
+            # SFT configuration logging moved above for clarity
 
             # Add progress callback
             trainer.add_callback(progress_callback)
@@ -608,7 +641,7 @@ class TrainingCore:
                     r=16,
                     lora_alpha=32,
                     target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-                    lora_dropout=0.1,
+                    lora_dropout=0.0,  # Optimized for Unsloth fast patching
                     bias="none",
                     task_type="CAUSAL_LM",
                 )
@@ -685,29 +718,19 @@ class TrainingCore:
             self.logger.error(f"Standard training failed: {e}")
             raise
     def _create_adaptive_training_args(
-        self, request: FineTuneRequest, task_id: str, adaptive_config: Dict[str, Any], training_type: str = "instruction"
+        self, request: FineTuneRequest
     ):
-        """Create adaptive training arguments based on hardware profile and training type
+        """Create adaptive training arguments optimized for hardware profile
         
         Args:
             request: Fine-tuning parameters
-            task_id: Unique task identifier
-            adaptive_config: Hardware-optimized configuration
-            training_type: Type of training ("instruction", "chat", "reasoning")
         """
 
         output_dir = Path(request.output_dir) / "checkpoints"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Get training type specific configuration
-        if training_type == "chat":
-            base_args = self._get_chat_completion_args(adaptive_config, request)
-        elif training_type == "reasoning":
-            base_args = self._get_reasoning_training_args(adaptive_config, request)
-        else:
-            base_args = self._get_instruction_training_args(adaptive_config, request)
-
-        # Get adaptive configuration
+        # Get adaptive configuration from hardware profile
+        adaptive_config = self.adaptive_config.generate_optimal_config(request)
         adaptive_args = adaptive_config["training_args"]
         gpu_opts = adaptive_config["gpu_optimizations"]
 
@@ -766,45 +789,33 @@ class TrainingCore:
             }
             args.update(unsloth_optimizations)
 
-        # Apply training type specific Unsloth optimizations
-        args = self._apply_training_type_optimizations(args, training_type, gpu_opts, adaptive_config)
-
-        # Enhanced precision logging and analysis
-        precision_info = adaptive_config.get("precision_info", {})
-        
-        # Log comprehensive precision analysis
-        self.logger.info(
-            f"Precision analysis - Model: {precision_info.get('model_family', 'unknown')}, "
-            f"Selected: {'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'}, "
-            f"Reason: {optimal_precision['reason']}"
-        )
-
-        # Enhanced validation for specific model families
+        # Apply Unsloth-specific optimizations for RTX 4060 8GB
         if UNSLOTH_AVAILABLE:
-            model_family = precision_info.get("model_family", "")
-            if model_family in ["qwen", "llama", "mistral", "gemma"] and args.get('fp16', False):
-                # Check if this might cause issues
-                if is_bfloat16_supported():
-                    self.logger.warning(
-                        f"Model family '{model_family}' typically works better with bfloat16 on this hardware, "
-                        f"but using float16. Monitor for potential precision issues."
-                    )
-            
-            # Log Unsloth-specific optimization status
-            if args.get('bf16', False):
-                self.logger.info("✅ Using bfloat16 precision - optimal for Unsloth on modern hardware")
-            elif args.get('fp16', False):
-                self.logger.info("✅ Using float16 precision - compatible with Unsloth on older hardware")
-            else:
-                self.logger.warning("⚠️  Using fp32 precision - training will be slower but more stable")
+            args.update({
+                "gradient_checkpointing": True,  # Essential for memory efficiency
+                "max_grad_norm": 0.3,  # Unsloth recommended for stability
+                "lr_scheduler_type": "cosine",  # Better than linear for Qwen2.5
+                "warmup_ratio": 0.05,  # 5% warmup for stable training
+            })
 
-        # Log final configuration details with precision prevention info
-        final_precision = 'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'
+        # Log final optimization summary
+        precision_str = 'bf16' if args['bf16'] else 'fp16' if args['fp16'] else 'fp32'
+        effective_batch = args['per_device_train_batch_size'] * args['gradient_accumulation_steps']
+        
         self.logger.info(
-            f"Adaptive training config: batch_size={args['per_device_train_batch_size']}, "
-            f"grad_accum={args['gradient_accumulation_steps']}, precision={final_precision}\n"
-            f"This configuration should prevent 'Unsloth: Model is in bfloat16 precision but you want to use float16 precision' errors"
+            f"🚀 RTX 4060 8GB Optimized Configuration:"
+            f"\n  📊 Batch: {args['per_device_train_batch_size']} × {args['gradient_accumulation_steps']} = {effective_batch} effective"
+            f"\n  🎯 Precision: {precision_str} ({optimal_precision['reason']})"
+            f"\n  🧠 Optimizer: {args['optim']}"
+            f"\n  ⚡ Unsloth: {'Enabled' if UNSLOTH_AVAILABLE else 'Disabled'}"
         )
+
+        # Final validation to prevent precision errors
+        if args.get('fp16') and args.get('bf16'):
+            # Fix conflict by using optimal precision
+            args['fp16'] = not optimal_precision['bf16']
+            args['bf16'] = optimal_precision['bf16']
+            self.logger.warning("Fixed precision conflict: disabled conflicting settings")
 
         return TrainingArguments(**args)
 

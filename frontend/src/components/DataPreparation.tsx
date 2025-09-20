@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Database, Upload } from 'lucide-react';
-import type { PrepareDataRequest } from '../types/api';
+import { Database, Upload, Settings, Eye, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
+import type { PrepareDataRequest, PreprocessingConfig } from '../types/api';
+import { PreprocessingConfigPanel } from './PreprocessingConfigPanel';
 
 interface DataPreparationProps {
   onPrepareData: (request: PrepareDataRequest) => void;
@@ -14,6 +15,91 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
   const [balance, setBalance] = useState(false);
   const [testSize, setTestSize] = useState(0.2);
   const [maxLength, setMaxLength] = useState(512);
+  const [showAdvancedConfig, setShowAdvancedConfig] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState<string>('basic');
+  
+  // Advanced preprocessing configuration
+  const [preprocessingConfig, setPreprocessingConfig] = useState<PreprocessingConfig>({
+    enable_embeddings: false,
+    text_cleaning_level: 'standard',
+    remove_duplicates_by_embedding: false,
+    similarity_threshold: 0.95,
+    generate_correlations: false,
+    create_tensor_visualizations: false,
+    quality_analysis: true,
+    token_analysis: true,
+    preview_samples: 10
+  });
+
+  const predefinedTemplates = {
+    basic: {
+      name: 'Basic Preprocessing',
+      description: 'Standard text cleaning with minimal processing',
+      config: {
+        enable_embeddings: false,
+        text_cleaning_level: 'standard' as const,
+        remove_duplicates_by_embedding: false,
+        similarity_threshold: 0.95,
+        generate_correlations: false,
+        create_tensor_visualizations: false,
+        quality_analysis: true,
+        token_analysis: true,
+        preview_samples: 10
+      }
+    },
+    embedding_enhanced: {
+      name: 'Embedding-Enhanced',
+      description: 'Full preprocessing with embedding generation and analysis',
+      config: {
+        enable_embeddings: true,
+        embedding_config: {
+          model_name: 'sentence-transformers/all-mpnet-base-v2',
+          model_type: 'sentence_transformer',
+          max_sequence_length: 512,
+          normalize_embeddings: true,
+          batch_size: 32
+        },
+        text_cleaning_level: 'standard' as const,
+        remove_duplicates_by_embedding: true,
+        similarity_threshold: 0.95,
+        generate_correlations: true,
+        create_tensor_visualizations: true,
+        quality_analysis: true,
+        token_analysis: true,
+        preview_samples: 10
+      }
+    },
+    research_analysis: {
+      name: 'Research & Analysis',
+      description: 'Comprehensive analysis with visualizations',
+      config: {
+        enable_embeddings: true,
+        embedding_config: {
+          model_name: 'BAAI/bge-base-en-v1.5',
+          model_type: 'sentence_transformer',
+          max_sequence_length: 512,
+          normalize_embeddings: true,
+          batch_size: 16
+        },
+        text_cleaning_level: 'aggressive' as const,
+        remove_duplicates_by_embedding: true,
+        similarity_threshold: 0.9,
+        generate_correlations: true,
+        create_tensor_visualizations: true,
+        quality_analysis: true,
+        token_analysis: true,
+        preview_samples: 20
+      }
+    }
+  };
+
+  const handleTemplateChange = (templateKey: string) => {
+    setSelectedTemplate(templateKey);
+    if (templateKey !== 'custom') {
+      const template = predefinedTemplates[templateKey as keyof typeof predefinedTemplates];
+      setPreprocessingConfig(template.config);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -24,6 +110,7 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
       balance,
       test_size: testSize,
       max_length: maxLength,
+      preprocessing_config: showAdvancedConfig ? preprocessingConfig : undefined,
     });
   };
 

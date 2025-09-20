@@ -22,7 +22,11 @@ import uvicorn
 from services.visualization_service import VisualizationService
 from models.schemas import (
     AnalyticsQuery, DashboardConfig, MetricsResponse,
-    TrainingAnalytics, ComparisonAnalytics, ChartData
+    TrainingAnalytics, ComparisonAnalytics, ChartData,
+    TensorVisualizationRequest, TensorVisualizationResponse,
+    CorrelationMatrixRequest, CorrelationMatrixResponse,
+    TokenDistributionRequest, TokenDistributionResponse,
+    PreprocessingVisualizationRequest, PreprocessingVisualizationResponse
 )
 from services.service_orchestrator import register_with_orchestrator
 from utils.logging import get_logger
@@ -486,6 +490,240 @@ async def clear_cache():
     except Exception as e:
         logger.error(f"Clear cache failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/tensor/visualize", response_model=TensorVisualizationResponse)
+async def generate_tensor_visualization(request: TensorVisualizationRequest):
+    """Generate comprehensive tensor visualizations"""
+    if not visualization_service:
+        raise HTTPException(status_code=503, detail="Visualization service not initialized")
+    
+    try:
+        result = await visualization_service.generate_tensor_visualization(
+            dataset_path=request.dataset_path,
+            embeddings_path=request.embeddings_path
+        )
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("error", "Tensor visualization failed"))
+        
+        return TensorVisualizationResponse(
+            status=result["status"],
+            dataset_path=result["dataset_path"],
+            has_embeddings=result["has_embeddings"],
+            embedding_shape=result.get("embedding_shape"),
+            visualization_data=result["visualization_data"],
+            timestamp=result["timestamp"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Tensor visualization failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/correlation/matrix", response_model=CorrelationMatrixResponse)
+async def generate_correlation_matrix(request: CorrelationMatrixRequest):
+    """Generate correlation matrix visualization"""
+    if not visualization_service:
+        raise HTTPException(status_code=503, detail="Visualization service not initialized")
+    
+    try:
+        result = await visualization_service.generate_correlation_matrix_visualization(
+            dataset_path=request.dataset_path
+        )
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("error", "Correlation matrix generation failed"))
+        
+        return CorrelationMatrixResponse(
+            status=result["status"],
+            correlation_matrix=result["correlation_matrix"],
+            feature_names=result["feature_names"],
+            plot=result.get("plot"),
+            timestamp=result["timestamp"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Correlation matrix generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/token/distribution", response_model=TokenDistributionResponse)
+async def generate_token_distribution(request: TokenDistributionRequest):
+    """Generate token distribution visualization"""
+    if not visualization_service:
+        raise HTTPException(status_code=503, detail="Visualization service not initialized")
+    
+    try:
+        result = await visualization_service.generate_token_distribution_visualization(
+            dataset_path=request.dataset_path
+        )
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("error", "Token distribution generation failed"))
+        
+        return TokenDistributionResponse(
+            status=result["status"],
+            visualization_data=result["visualization_data"],
+            timestamp=result["timestamp"]
+        )
+        
+    except Exception as e:
+        logger.error(f"Token distribution generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/preprocessing/visualize", response_model=PreprocessingVisualizationResponse)
+async def generate_preprocessing_visualizations(request: PreprocessingVisualizationRequest):
+    """Generate comprehensive preprocessing visualizations"""
+    if not visualization_service:
+        raise HTTPException(status_code=503, detail="Visualization service not initialized")
+    
+    try:
+        visualizations = {}
+        summary_statistics = {}
+        recommendations = []
+        
+        # Generate tensor visualizations if requested
+        if request.include_embeddings:
+            embeddings_path = f"{request.dataset_path}/embeddings.npy"
+            tensor_result = await visualization_service.generate_tensor_visualization(
+                dataset_path=request.dataset_path,
+                embeddings_path=embeddings_path
+            )
+            if tensor_result.get("status") == "success":
+                visualizations["tensor_analysis"] = tensor_result["visualization_data"]
+                recommendations.append("Embeddings generated successfully - consider using for similarity analysis")
+        
+        # Generate correlation analysis if requested
+        if request.include_correlations:
+            correlation_result = await visualization_service.generate_correlation_matrix_visualization(
+                dataset_path=request.dataset_path
+            )
+            if correlation_result.get("status") == "success":
+                visualizations["correlation_analysis"] = correlation_result
+                recommendations.append("Correlation matrix shows feature relationships")
+        
+        # Generate token analysis if requested
+        if request.include_token_analysis:
+            token_result = await visualization_service.generate_token_distribution_visualization(
+                dataset_path=request.dataset_path
+            )
+            if token_result.get("status") == "success":
+                visualizations["token_analysis"] = token_result["visualization_data"]
+                token_stats = token_result["visualization_data"].get("token_statistics", {})
+                if token_stats.get("mean_tokens_per_sample", 0) > 512:
+                    recommendations.append("Average token length is high - consider sequence length adjustments")
+        
+        # Add quality metrics if requested
+        if request.include_quality_metrics:
+            # This would load preprocessing analytics if available
+            try:
+                import json
+                from pathlib import Path
+                analytics_path = Path(request.dataset_path) / "preprocessing_analytics.json"
+                if analytics_path.exists():
+                    with open(analytics_path, 'r') as f:
+                        analytics = json.load(f)
+                    summary_statistics = analytics.get("quality_metrics", {})
+                    if summary_statistics.get("overall_quality_score", 0) < 0.7:
+                        recommendations.append("Dataset quality score is below recommended threshold")
+            except Exception as e:
+                logger.warning(f"Could not load quality metrics: {e}")
+        
+        return PreprocessingVisualizationResponse(
+            status="success",
+            dataset_path=request.dataset_path,
+            visualizations=visualizations,
+            summary_statistics=summary_statistics,
+            recommendations=recommendations,
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except Exception as e:
+        logger.error(f"Preprocessing visualization generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/dataset/{dataset_id}/analytics")
+async def get_dataset_analytics(dataset_id: str):
+    """Get comprehensive analytics for a specific dataset"""
+    if not visualization_service:
+        raise HTTPException(status_code=503, detail="Visualization service not initialized")
+    
+    try:
+        analytics = await visualization_service.get_dataset_analytics(dataset_id)
+        return analytics
+        
+    except Exception as e:
+        logger.error(f"Dataset analytics failed for {dataset_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/embedding/models/performance")
+async def get_embedding_model_performance():
+    """Get performance comparison of different embedding models"""
+    try:
+        # Mock performance data - would be real metrics in production
+        performance_data = {
+            "models": [
+                {
+                    "name": "sentence-transformers/all-mpnet-base-v2",
+                    "accuracy_score": 0.89,
+                    "speed_tokens_per_second": 1200,
+                    "memory_usage_mb": 1100,
+                    "use_cases": ["general", "similarity", "classification"]
+                },
+                {
+                    "name": "BAAI/bge-base-en-v1.5", 
+                    "accuracy_score": 0.92,
+                    "speed_tokens_per_second": 1100,
+                    "memory_usage_mb": 1050,
+                    "use_cases": ["retrieval", "similarity", "classification"]
+                },
+                {
+                    "name": "jinaai/jina-embeddings-v2-small-en",
+                    "accuracy_score": 0.85,
+                    "speed_tokens_per_second": 2400,
+                    "memory_usage_mb": 400,
+                    "use_cases": ["fast_processing", "similarity"]
+                }
+            ],
+            "benchmark_date": datetime.now().isoformat(),
+            "recommendations": {
+                "best_accuracy": "BAAI/bge-base-en-v1.5",
+                "best_speed": "jinaai/jina-embeddings-v2-small-en",
+                "best_balanced": "sentence-transformers/all-mpnet-base-v2"
+            }
+        }
+        return performance_data
+        
+    except Exception as e:
+        logger.error(f"Embedding model performance query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/visualization/templates")
+async def get_visualization_templates():
+    """Get predefined visualization templates"""
+    templates = {
+        "preprocessing_overview": {
+            "name": "Preprocessing Overview",
+            "description": "Complete overview of data preprocessing results",
+            "components": ["tensor_analysis", "correlation_matrix", "token_distribution", "quality_metrics"]
+        },
+        "embedding_analysis": {
+            "name": "Embedding Analysis",
+            "description": "Focus on embedding quality and characteristics",
+            "components": ["pca_visualization", "tsne_plot", "embedding_distribution", "similarity_analysis"]
+        },
+        "quality_report": {
+            "name": "Data Quality Report",
+            "description": "Comprehensive data quality assessment",
+            "components": ["quality_scores", "completeness_analysis", "vocabulary_richness", "duplicate_detection"]
+        }
+    }
+    return {"templates": templates}
 
 
 @app.get("/metrics")

@@ -15,6 +15,26 @@ import numpy as np
 from datasets import load_from_disk, Dataset
 from concurrent.futures import ThreadPoolExecutor
 
+# Enhanced visualization dependencies
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    from plotly.utils import PlotlyJSONEncoder
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+    import pandas as pd
+except ImportError as e:
+    px = None
+    go = None
+    PlotlyJSONEncoder = None
+    sns = None
+    plt = None
+    PCA = None
+    TSNE = None
+    pd = None
+
 # NOTE: Cross-service imports are removed to maintain microservice boundaries
 # These services should be accessed via HTTP API calls through the orchestrator
 # from services.training_service import TrainingService
@@ -842,6 +862,335 @@ class VisualizationService:
         except Exception as e:
             self.logger.error(f"Error clearing cache: {e}")
     
+    async def generate_tensor_visualization(self, dataset_path: str, embeddings_path: Optional[str] = None) -> Dict[str, Any]:
+        """Generate comprehensive tensor visualizations"""
+        try:
+            dataset_path_obj = Path(dataset_path)
+            if not dataset_path_obj.exists():
+                return {"error": f"Dataset path not found: {dataset_path}"}
+                
+            # Load embeddings if available
+            embeddings = None
+            if embeddings_path and Path(embeddings_path).exists():
+                try:
+                    embeddings = np.load(embeddings_path)
+                    self.logger.info(f"Loaded embeddings with shape: {embeddings.shape}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to load embeddings: {e}")
+            
+            # Load preprocessing analytics if available
+            analytics_path = dataset_path_obj / "preprocessing_analytics.json"
+            preprocessing_analytics = {}
+            if analytics_path.exists():
+                with open(analytics_path, 'r') as f:
+                    preprocessing_analytics = json.load(f)
+            
+            visualization_data = {}
+            
+            # Generate tensor visualizations if embeddings are available
+            if embeddings is not None and px is not None:
+                # PCA visualization
+                pca_vis = await self._generate_pca_visualization(embeddings)
+                visualization_data["pca_analysis"] = pca_vis
+                
+                # t-SNE visualization (for smaller datasets)
+                if embeddings.shape[0] <= 5000:
+                    tsne_vis = await self._generate_tsne_visualization(embeddings)
+                    visualization_data["tsne_analysis"] = tsne_vis
+                
+                # Correlation heatmap
+                correlation_vis = await self._generate_correlation_heatmap(embeddings)
+                visualization_data["correlation_heatmap"] = correlation_vis
+                
+                # Embedding distribution
+                distribution_vis = await self._generate_embedding_distribution(embeddings)
+                visualization_data["embedding_distribution"] = distribution_vis
+            
+            # Add preprocessing analytics if available
+            if preprocessing_analytics:
+                visualization_data["preprocessing_summary"] = preprocessing_analytics
+            
+            return {
+                "status": "success",
+                "dataset_path": dataset_path,
+                "has_embeddings": embeddings is not None,
+                "embedding_shape": list(embeddings.shape) if embeddings is not None else None,
+                "visualization_data": visualization_data,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating tensor visualization: {e}")
+            return {"error": str(e), "status": "error"}
+    
+    async def _generate_pca_visualization(self, embeddings: np.ndarray) -> Dict[str, Any]:
+        """Generate PCA visualization of embeddings"""
+        if PCA is None or px is None:
+            return {"error": "PCA or plotly not available"}
+        
+        try:
+            # Apply PCA
+            pca = PCA(n_components=min(3, embeddings.shape[1]))
+            pca_embeddings = pca.fit_transform(embeddings)
+            
+            # Create 2D scatter plot
+            if pca_embeddings.shape[1] >= 2:
+                fig_2d = px.scatter(
+                    x=pca_embeddings[:, 0],
+                    y=pca_embeddings[:, 1],
+                    title="PCA Visualization (2D)",
+                    labels={"x": "PC1", "y": "PC2"},
+                    opacity=0.6
+                )
+                fig_2d_json = fig_2d.to_json()
+            else:
+                fig_2d_json = None
+            
+            # Create 3D scatter plot if possible
+            if pca_embeddings.shape[1] >= 3:
+                fig_3d = px.scatter_3d(
+                    x=pca_embeddings[:, 0],
+                    y=pca_embeddings[:, 1],
+                    z=pca_embeddings[:, 2],
+                    title="PCA Visualization (3D)",
+                    labels={"x": "PC1", "y": "PC2", "z": "PC3"},
+                    opacity=0.6
+                )
+                fig_3d_json = fig_3d.to_json()
+            else:
+                fig_3d_json = None
+            
+            return {
+                "explained_variance_ratio": pca.explained_variance_ratio_.tolist(),
+                "cumulative_variance": np.cumsum(pca.explained_variance_ratio_).tolist(),
+                "pca_components": pca_embeddings.tolist()[:100],  # Limit for JSON size
+                "plot_2d": fig_2d_json,
+                "plot_3d": fig_3d_json,
+                "n_components": pca.n_components_
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in PCA visualization: {e}")
+            return {"error": str(e)}
+    
+    async def _generate_tsne_visualization(self, embeddings: np.ndarray) -> Dict[str, Any]:
+        """Generate t-SNE visualization of embeddings"""
+        if TSNE is None or px is None:
+            return {"error": "t-SNE or plotly not available"}
+        
+        try:
+            # Apply t-SNE (limit to 2D for performance)
+            tsne = TSNE(n_components=2, random_state=42, perplexity=min(30, embeddings.shape[0] - 1))
+            tsne_embeddings = tsne.fit_transform(embeddings)
+            
+            # Create scatter plot
+            fig = px.scatter(
+                x=tsne_embeddings[:, 0],
+                y=tsne_embeddings[:, 1],
+                title="t-SNE Visualization",
+                labels={"x": "t-SNE 1", "y": "t-SNE 2"},
+                opacity=0.6
+            )
+            
+            return {
+                "tsne_components": tsne_embeddings.tolist(),
+                "plot": fig.to_json(),
+                "perplexity": tsne.perplexity
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in t-SNE visualization: {e}")
+            return {"error": str(e)}
+    
+    async def _generate_correlation_heatmap(self, embeddings: np.ndarray) -> Dict[str, Any]:
+        """Generate correlation heatmap for embeddings"""
+        if px is None:
+            return {"error": "plotly not available"}
+        
+        try:
+            # Calculate correlation matrix (limit size for performance)
+            sample_size = min(1000, embeddings.shape[0])
+            if sample_size < embeddings.shape[0]:
+                # Random sample
+                indices = np.random.choice(embeddings.shape[0], sample_size, replace=False)
+                sample_embeddings = embeddings[indices]
+            else:
+                sample_embeddings = embeddings
+            
+            correlation_matrix = np.corrcoef(sample_embeddings)
+            
+            # Create heatmap
+            fig = px.imshow(
+                correlation_matrix,
+                title=f"Embedding Correlation Heatmap (Sample: {sample_size})",
+                color_continuous_scale="RdBu",
+                aspect="auto"
+            )
+            
+            # Calculate statistics
+            correlation_stats = {
+                "mean_correlation": float(np.mean(correlation_matrix[correlation_matrix != 1.0])),
+                "std_correlation": float(np.std(correlation_matrix[correlation_matrix != 1.0])),
+                "max_correlation": float(np.max(correlation_matrix[correlation_matrix != 1.0])),
+                "min_correlation": float(np.min(correlation_matrix)),
+                "sample_size": sample_size
+            }
+            
+            return {
+                "correlation_matrix": correlation_matrix.tolist() if sample_size <= 100 else None,
+                "correlation_stats": correlation_stats,
+                "heatmap_plot": fig.to_json()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in correlation heatmap: {e}")
+            return {"error": str(e)}
+    
+    async def _generate_embedding_distribution(self, embeddings: np.ndarray) -> Dict[str, Any]:
+        """Generate embedding distribution visualizations"""
+        if px is None:
+            return {"error": "plotly not available"}
+        
+        try:
+            # Calculate embedding norms
+            embedding_norms = np.linalg.norm(embeddings, axis=1)
+            
+            # Create histogram of embedding norms
+            fig_hist = px.histogram(
+                x=embedding_norms,
+                title="Distribution of Embedding Norms",
+                labels={"x": "Embedding Norm", "y": "Frequency"}
+            )
+            
+            # Calculate statistics
+            distribution_stats = {
+                "mean_norm": float(np.mean(embedding_norms)),
+                "std_norm": float(np.std(embedding_norms)),
+                "min_norm": float(np.min(embedding_norms)),
+                "max_norm": float(np.max(embedding_norms)),
+                "median_norm": float(np.median(embedding_norms))
+            }
+            
+            # Dimension-wise statistics
+            dim_means = np.mean(embeddings, axis=0)
+            dim_stds = np.std(embeddings, axis=0)
+            
+            # Create dimension statistics plot
+            fig_dims = px.line(
+                y=dim_means,
+                title="Mean Values Across Embedding Dimensions",
+                labels={"x": "Dimension", "y": "Mean Value"}
+            )
+            
+            return {
+                "distribution_stats": distribution_stats,
+                "norm_histogram": fig_hist.to_json(),
+                "dimension_means": dim_means.tolist(),
+                "dimension_stds": dim_stds.tolist(),
+                "dimension_plot": fig_dims.to_json()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error in embedding distribution: {e}")
+            return {"error": str(e)}
+    
+    async def generate_correlation_matrix_visualization(self, dataset_path: str) -> Dict[str, Any]:
+        """Generate correlation matrix visualization for dataset features"""
+        try:
+            dataset_path_obj = Path(dataset_path)
+            
+            # Load dataset
+            dataset = load_from_disk(str(dataset_path_obj))
+            
+            # Convert to pandas for correlation analysis
+            df = dataset.to_pandas()
+            
+            # Select numeric columns
+            numeric_cols = df.select_dtypes(include=[np.number]).columns
+            
+            if len(numeric_cols) == 0:
+                return {"error": "No numeric columns found for correlation analysis"}
+            
+            # Calculate correlation matrix
+            correlation_matrix = df[numeric_cols].corr()
+            
+            # Create heatmap
+            if px is not None:
+                fig = px.imshow(
+                    correlation_matrix.values,
+                    x=correlation_matrix.columns,
+                    y=correlation_matrix.columns,
+                    title="Feature Correlation Matrix",
+                    color_continuous_scale="RdBu",
+                    aspect="auto"
+                )
+                plot_json = fig.to_json()
+            else:
+                plot_json = None
+            
+            return {
+                "status": "success",
+                "correlation_matrix": correlation_matrix.to_dict(),
+                "feature_names": list(correlation_matrix.columns),
+                "plot": plot_json,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating correlation matrix: {e}")
+            return {"error": str(e), "status": "error"}
+    
+    async def generate_token_distribution_visualization(self, dataset_path: str) -> Dict[str, Any]:
+        """Generate token distribution visualizations"""
+        try:
+            # Load preprocessing analytics
+            analytics_path = Path(dataset_path) / "preprocessing_analytics.json"
+            if not analytics_path.exists():
+                return {"error": "No preprocessing analytics found"}
+            
+            with open(analytics_path, 'r') as f:
+                analytics = json.load(f)
+            
+            token_distribution = analytics.get("token_distribution", {})
+            if not token_distribution:
+                return {"error": "No token distribution data found"}
+            
+            visualization_data = {}
+            
+            # Token histogram
+            if "token_distribution_histogram" in token_distribution and px is not None:
+                hist_data = token_distribution["token_distribution_histogram"]
+                
+                # Extract data for plotting
+                ranges = [item["range"] for item in hist_data]
+                counts = [item["count"] for item in hist_data]
+                
+                fig = px.bar(
+                    x=ranges,
+                    y=counts,
+                    title="Token Distribution Histogram",
+                    labels={"x": "Token Range", "y": "Count"}
+                )
+                visualization_data["histogram_plot"] = fig.to_json()
+            
+            # Token statistics
+            token_stats = token_distribution.get("token_statistics", {})
+            visualization_data["token_statistics"] = token_stats
+            
+            # Vocabulary statistics
+            vocab_stats = token_distribution.get("vocabulary_stats", {})
+            visualization_data["vocabulary_statistics"] = vocab_stats
+            
+            return {
+                "status": "success",
+                "visualization_data": visualization_data,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error generating token distribution visualization: {e}")
+            return {"error": str(e), "status": "error"}
+
     async def cleanup(self):
         """Cleanup visualization service resources"""
         try:

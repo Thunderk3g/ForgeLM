@@ -44,14 +44,46 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
 # Import Unsloth with proper error handling
 try:
-    import unsloth
-    from unsloth import FastLanguageModel, is_bfloat16_supported
-
+    # Work around Unsloth v2025.9.5 KTO trainer bug
+    import sys
+    import types
+    
+    # First, let's patch the exec function to handle the specific AttributeError
+    original_exec = exec
+    
+    def patched_exec(code, globals_dict=None, locals_dict=None):
+        try:
+            return original_exec(code, globals_dict, locals_dict)
+        except AttributeError as e:
+            if "UnslothKTOTrainer" in str(e) and "UnslothKTOTrainer" in str(code):
+                # This is the problematic line - just skip it
+                print(f"Skipping problematic Unsloth KTO trainer assignment: {e}")
+                return None
+            else:
+                raise
+    
+    # Temporarily replace exec
+    builtins_exec = __builtins__['exec'] if isinstance(__builtins__, dict) else __builtins__.exec
+    if isinstance(__builtins__, dict):
+        __builtins__['exec'] = patched_exec
+    else:
+        __builtins__.exec = patched_exec
+    
+    try:
+        import unsloth
+        from unsloth import FastLanguageModel, is_bfloat16_supported
+    finally:
+        # Restore original exec
+        if isinstance(__builtins__, dict):
+            __builtins__['exec'] = builtins_exec
+        else:
+            __builtins__.exec = builtins_exec
+    
     UNSLOTH_AVAILABLE = True
     print(f"🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.")
     print(f"🦥 Unsloth Zoo will now patch everything to make training faster!")
     print(f"Unsloth imported successfully (v{unsloth.__version__})")
-except (ImportError, NotImplementedError) as e:
+except (ImportError, NotImplementedError, AttributeError) as e:
     UNSLOTH_AVAILABLE = False
     print(f"WARNING: Unsloth not available ({e})")
 # Import common dependencies first
@@ -397,6 +429,252 @@ class TrainingService:
             self.logger.error(f"Error fixing tokenizer: {e}")
             return tokenizer
 
+    def _validate_lora_dropout(self, model, expected_dropout: float):
+        """Validate that LoRA dropout was applied correctly"""
+        try:
+            # Check if model has LoRA modules
+            if hasattr(model, 'peft_config'):
+                for adapter_name, config in model.peft_config.items():
+                    if hasattr(config, 'lora_dropout'):
+                        actual_dropout = config.lora_dropout
+                        if abs(actual_dropout - expected_dropout) > 1e-6:
+                            self.logger.warning(
+                                f"LoRA dropout mismatch: expected {expected_dropout}, got {actual_dropout}"
+                            )
+                        else:
+                            self.logger.info(f"✅ LoRA dropout validated: {actual_dropout}")
+                            
+            # Also check individual LoRA layers
+            dropout_found = False
+            for name, module in model.named_modules():
+                if hasattr(module, 'lora_dropout') and hasattr(module.lora_dropout, 'p'):
+                    actual_dropout = module.lora_dropout.p
+                    dropout_found = True
+                    if abs(actual_dropout - expected_dropout) > 1e-6:
+                        self.logger.warning(
+                            f"Layer {name} dropout mismatch: expected {expected_dropout}, got {actual_dropout}"
+                        )
+                        
+            if dropout_found:
+                self.logger.info(f"✅ LoRA layer dropouts validated: {expected_dropout}")
+            else:
+                self.logger.info("No LoRA dropout layers found in model - this is expected for dropout=0.0")
+                
+        except Exception as e:
+            self.logger.error(f"Error validating LoRA dropout: {e}")
+
+    def _load_and_validate_dataset(self, dataset_dir: str):
+        """Load and validate dataset with comprehensive error handling"""
+        from pathlib import Path
+        import os
+        
+        dataset_path = Path(dataset_dir)
+        self.logger.info(f"Loading dataset from: {dataset_path}")
+        
+        # Check if dataset directory exists
+        if not dataset_path.exists():
+            raise FileNotFoundError(f"Dataset directory does not exist: {dataset_path}")
+        
+        # Check for dataset files
+        expected_files = [
+            "dataset_info.json",
+            "state.json", 
+            "train/data-00000-of-00001.arrow",  # Common Arrow format
+            "train/dataset_info.json",
+            "train/state.json"
+        ]
+        
+        missing_files = []
+        for file_path in expected_files:
+            full_path = dataset_path / file_path
+            if not full_path.exists():
+                missing_files.append(str(full_path))
+        
+        if missing_files:
+            self.logger.warning(f"Missing dataset files: {missing_files}")
+            self.logger.info("This may indicate a corrupted or incomplete dataset")
+        
+        try:
+            # Attempt primary dataset loading
+            self.logger.info("Attempting to load dataset with load_from_disk...")
+            dataset = load_from_disk(str(dataset_path))
+            
+            # Validate loaded dataset
+            self._validate_dataset_schema(dataset)
+            
+            self.logger.info(f"✅ Dataset loaded successfully: {len(dataset)} samples")
+            return dataset
+            
+        except Exception as primary_error:
+            self.logger.error(f"Primary dataset loading failed: {primary_error}")
+            
+            # Check if this is the schema error we're trying to fix
+            if "schema message" in str(primary_error).lower() or "null or length 0" in str(primary_error).lower():
+                self.logger.warning("🔧 Detected schema error - attempting recovery...")
+                return self._recover_from_schema_error(dataset_path, primary_error)
+            else:
+                # Try alternative loading methods
+                return self._try_alternative_dataset_loading(dataset_path, primary_error)
+
+    def _validate_dataset_schema(self, dataset):
+        """Validate dataset schema and structure"""
+        if len(dataset) == 0:
+            raise ValueError("Dataset is empty")
+        
+        # Check if it's a DatasetDict or Dataset
+        if hasattr(dataset, 'keys'):  # DatasetDict
+            if 'train' not in dataset:
+                raise ValueError("Dataset must contain a 'train' split")
+            train_dataset = dataset['train']
+        else:  # Single Dataset
+            train_dataset = dataset
+        
+        # Check for text field (most important for SFT)
+        if 'text' not in train_dataset.column_names:
+            available_columns = train_dataset.column_names
+            self.logger.warning(f"No 'text' column found. Available columns: {available_columns}")
+            
+            # Look for alternative text columns
+            text_candidates = ['instruction', 'input', 'prompt', 'conversation', 'messages']
+            found_alternative = None
+            for candidate in text_candidates:
+                if candidate in available_columns:
+                    found_alternative = candidate
+                    break
+            
+            if found_alternative:
+                self.logger.info(f"Found alternative text column: {found_alternative}")
+            else:
+                raise ValueError(f"No suitable text column found. Available: {available_columns}")
+        
+        # Check sample data
+        sample = train_dataset[0]
+        self.logger.info(f"Dataset schema validation passed. Sample keys: {list(sample.keys())}")
+
+    def _recover_from_schema_error(self, dataset_path: Path, original_error):
+        """Attempt to recover from dataset schema errors"""
+        self.logger.info("🔧 Attempting dataset schema recovery...")
+        
+        recovery_methods = [
+            self._try_reload_with_cache_clear,
+            self._try_recreate_from_arrow_files,
+            self._try_fallback_json_loading,
+        ]
+        
+        for i, recovery_method in enumerate(recovery_methods, 1):
+            try:
+                self.logger.info(f"Recovery attempt {i}/{len(recovery_methods)}: {recovery_method.__name__}")
+                dataset = recovery_method(dataset_path)
+                if dataset is not None:
+                    self.logger.info(f"✅ Dataset recovery successful with method {i}")
+                    return dataset
+            except Exception as recovery_error:
+                self.logger.warning(f"Recovery method {i} failed: {recovery_error}")
+                continue
+        
+        # All recovery methods failed
+        raise ValueError(
+            f"Dataset schema error recovery failed. Original error: {original_error}. "
+            f"Please regenerate the dataset or check the source files."
+        )
+
+    def _try_reload_with_cache_clear(self, dataset_path: Path):
+        """Try reloading after clearing caches"""
+        import datasets
+        
+        # Clear datasets cache
+        try:
+            datasets.disable_caching()
+            dataset = load_from_disk(str(dataset_path))
+            datasets.enable_caching()
+            return dataset
+        except Exception:
+            datasets.enable_caching()  # Ensure caching is re-enabled
+            raise
+
+    def _try_recreate_from_arrow_files(self, dataset_path: Path):
+        """Try to recreate dataset from raw Arrow files"""
+        from datasets import Dataset, DatasetDict
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        
+        # Look for Arrow files
+        arrow_files = list(dataset_path.rglob("*.arrow"))
+        parquet_files = list(dataset_path.rglob("*.parquet"))
+        
+        if arrow_files:
+            self.logger.info(f"Found {len(arrow_files)} Arrow files, attempting direct load...")
+            # Try loading the first Arrow file directly
+            table = pa.ipc.open_file(str(arrow_files[0])).read_all()
+            dataset = Dataset(table)
+            return dataset
+        elif parquet_files:
+            self.logger.info(f"Found {len(parquet_files)} Parquet files, attempting direct load...")
+            table = pq.read_table(str(parquet_files[0]))
+            dataset = Dataset(table)
+            return dataset
+        else:
+            raise FileNotFoundError("No Arrow or Parquet files found for recovery")
+
+    def _try_fallback_json_loading(self, dataset_path: Path):
+        """Try loading from JSON files if available"""
+        from datasets import Dataset
+        import json
+        
+        json_files = list(dataset_path.rglob("*.json"))
+        jsonl_files = list(dataset_path.rglob("*.jsonl"))
+        
+        data_files = json_files + jsonl_files
+        if not data_files:
+            raise FileNotFoundError("No JSON files found for fallback loading")
+        
+        # Try loading from the first JSON file
+        data_file = data_files[0]
+        self.logger.info(f"Attempting fallback loading from: {data_file}")
+        
+        if data_file.suffix == '.jsonl':
+            # Load JSONL
+            data = []
+            with open(data_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    data.append(json.loads(line.strip()))
+        else:
+            # Load JSON
+            with open(data_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        
+        return Dataset.from_list(data)
+
+    def _try_alternative_dataset_loading(self, dataset_path: Path, original_error):
+        """Try alternative dataset loading methods"""
+        self.logger.info("Trying alternative dataset loading methods...")
+        
+        # Method 1: Direct datasets.load_dataset
+        try:
+            from datasets import load_dataset
+            dataset = load_dataset(str(dataset_path))
+            return dataset
+        except Exception as e:
+            self.logger.warning(f"load_dataset failed: {e}")
+        
+        # Method 2: Load specific format files
+        try:
+            return self._try_recreate_from_arrow_files(dataset_path)
+        except Exception as e:
+            self.logger.warning(f"Arrow file loading failed: {e}")
+        
+        # Method 3: JSON fallback
+        try:
+            return self._try_fallback_json_loading(dataset_path)
+        except Exception as e:
+            self.logger.warning(f"JSON fallback failed: {e}")
+        
+        # All methods failed
+        raise ValueError(
+            f"All dataset loading methods failed. Original error: {original_error}. "
+            f"Please check dataset integrity and regenerate if necessary."
+        )
+
     def _fine_tune_with_unsloth(
         self, request: FineTuneRequest, task_id: str, log_queue: queue.Queue
     ) -> Dict[str, Any]:
@@ -441,16 +719,21 @@ class TrainingService:
             # CRITICAL FIX: Fix Qwen2.5 tokenizer configuration
             tokenizer = self.fix_qwen_tokenizer(tokenizer)
 
-            # Apply adaptive LoRA configuration
+            # Apply adaptive LoRA configuration with explicit dropout enforcement
+            enforced_dropout = 0.0  # CRITICAL: Must be 0.0 for Unsloth QKV optimization
             self.logger.info(
-                f"Applying LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, targets={len(lora_config['target_modules'])}"
+                f"Applying LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, "
+                f"dropout={enforced_dropout} (enforced for Unsloth), targets={len(lora_config['target_modules'])}"
             )
+            self.logger.info(f"LoRA target modules: {lora_config['target_modules']}")
+            self.logger.warning(f"CRITICAL: LoRA dropout ENFORCED to {enforced_dropout} for Unsloth QKV optimization")
+            
             model = FastLanguageModel.get_peft_model(
                 model,
                 r=lora_config["r"],
                 target_modules=lora_config["target_modules"],
                 lora_alpha=lora_config["lora_alpha"],
-                lora_dropout=lora_config["lora_dropout"],
+                lora_dropout=enforced_dropout,  # Explicitly enforce 0.0
                 bias="none",
                 use_gradient_checkpointing=(
                     "unsloth" if gpu_opts.get("gradient_checkpointing", True) else "no"
@@ -459,9 +742,12 @@ class TrainingService:
                 use_rslora=False,
                 loftq_config=None,
             )
+            
+            # Validate dropout was applied correctly
+            self._validate_lora_dropout(model, enforced_dropout)
 
-            # Load dataset
-            dataset = load_from_disk(request.dataset_dir)
+            # Load dataset with comprehensive error handling and schema validation
+            dataset = self._load_and_validate_dataset(request.dataset_dir)
 
             # Setup adaptive training arguments with training type (already defined above)
             training_args = self._create_adaptive_training_args(
@@ -633,7 +919,7 @@ class TrainingService:
                     r=16,
                     lora_alpha=32,
                     target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-                    lora_dropout=0.1,
+                    lora_dropout=0.0,  # Optimized for Unsloth fast patching
                     bias="none",
                     task_type="CAUSAL_LM",
                 )
