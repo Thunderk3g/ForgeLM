@@ -783,7 +783,7 @@ class TrainingService:
                 model=model,
                 tokenizer=tokenizer,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
-                eval_dataset=dataset.get("val"),
+                eval_dataset=dataset["val"] if "val" in dataset else None,
                 args=training_args,
                 data_collator=None,
                 **sft_config.to_dict(),
@@ -957,7 +957,7 @@ class TrainingService:
                 tokenizer=tokenizer,
                 args=training_args,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
-                eval_dataset=dataset.get("val"),
+                eval_dataset=dataset["val"] if "val" in dataset else None,
                 data_collator=None,
                 **sft_config.to_dict(),
             )

@@ -442,7 +442,7 @@ class TrainingCore:
             
             # Prepare dataset for training
             train_dataset = dataset["train"] if "train" in dataset else dataset
-            eval_dataset = dataset.get("val") if worker_memory_gb > 8 else None  # Disable eval for memory
+            eval_dataset = dataset["val"] if "val" in dataset and worker_memory_gb > 8 else None  # Disable eval for memory
             
             # Log dataset info
             self.logger.info(f"Training dataset size: {len(train_dataset)}")
@@ -669,7 +669,7 @@ class TrainingCore:
                 model=model,
                 tokenizer=tokenizer,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
-                eval_dataset=dataset.get("val"),
+                eval_dataset=dataset["val"] if "val" in dataset else None,
                 data_collator=None,
                 args=training_args,
                 **sft_config.to_dict(),

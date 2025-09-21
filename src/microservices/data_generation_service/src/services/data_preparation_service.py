@@ -860,3 +860,31 @@ class DataPreparationService:
         except Exception as e:
             logger.error(f"Error in token distribution analysis: {e}")
             return {"error": str(e)}
+    
+    def _create_distribution_histogram(self, data: List[float], bins: int = 20) -> List[Dict[str, Any]]:
+        """Create histogram data for distribution visualization"""
+        try:
+            import numpy as np
+            
+            if not data:
+                return []
+            
+            # Calculate histogram
+            hist, bin_edges = np.histogram(data, bins=bins)
+            
+            # Create histogram data
+            histogram_data = []
+            for i in range(len(hist)):
+                bin_start = bin_edges[i]
+                bin_end = bin_edges[i + 1]
+                histogram_data.append({
+                    "range": f"{bin_start:.0f}-{bin_end:.0f}",
+                    "count": int(hist[i]),
+                    "percentage": float(hist[i] / len(data) * 100)
+                })
+            
+            return histogram_data
+            
+        except Exception as e:
+            logger.error(f"Error creating distribution histogram: {e}")
+            return []

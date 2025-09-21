@@ -6,12 +6,14 @@ and template management for training data generation.
 """
 
 import asyncio
+import json
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Dict, Any, Optional, List
 
-from fastapi import FastAPI, HTTPException, Response, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Response, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
@@ -22,6 +24,7 @@ from services.data_generation_service import DataGenerationService
 from services.template_service import TemplateService
 from services.data_preparation_service import DataPreparationService
 from services.service_orchestrator import register_with_orchestrator
+from services.websocket_service import get_websocket_service
 
 # Import shared utilities and schemas from parent directories
 from models.schemas import (
@@ -672,6 +675,128 @@ async def get_preprocessing_status(dataset_path: str):
     except Exception as e:
         logger.error(f"Failed to get preprocessing status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """WebSocket endpoint for real-time preprocessing updates"""
+    await websocket.accept()
+    websocket_service = get_websocket_service()
+    
+    try:
+        # Register connection
+        await websocket_service.register_connection(websocket, session_id)
+        
+        while True:
+            # Listen for messages
+            try:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                await handle_websocket_message(websocket_service, session_id, message)
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"WebSocket error for session {session_id}: {e}")
+                await websocket.send_text(json.dumps({
+                    "type": "error",
+                    "message": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }))
+                
+    except WebSocketDisconnect:
+        pass
+    finally:
+        await websocket_service.unregister_connection(session_id)
+
+
+async def handle_websocket_message(ws_service, session_id: str, message: dict):
+    """Handle incoming WebSocket messages"""
+    message_type = message.get("type")
+    
+    if message_type == "ping":
+        await ws_service.send_message(session_id, {
+            "type": "pong",
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    elif message_type == "start_preview":
+        config = message.get("config", {})
+        await ws_service.start_preview_session(session_id, config)
+        
+        # Start actual preview processing (mock implementation)
+        asyncio.create_task(process_preview_session(ws_service, session_id, config))
+    
+    elif message_type == "stop_preview":
+        await ws_service.send_message(session_id, {
+            "type": "preview_stopped",
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    elif message_type == "pause_preview":
+        await ws_service.send_message(session_id, {
+            "type": "preview_paused",
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        })
+    
+    elif message_type == "resume_preview":
+        await ws_service.send_message(session_id, {
+            "type": "preview_resumed",
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        })
+
+
+async def process_preview_session(ws_service, session_id: str, config: dict):
+    """Process a preview session with real-time updates"""
+    try:
+        sample_size = config.get("sample_size", 10)
+        
+        for i in range(sample_size):
+            # Simulate sample processing
+            await asyncio.sleep(0.5)  # Simulate processing time
+            
+            sample_data = {
+                "index": i,
+                "original_text": f"Sample {i+1} original text...",
+                "processed_text": f"Sample {i+1} processed text...",
+                "token_count": 50 + i * 5,
+                "quality_score": 0.7 + (i % 3) * 0.1,
+                "embedding_preview": [0.1, 0.2, 0.3] if config.get("enable_embeddings") else None
+            }
+            
+            await ws_service.send_preview_sample(session_id, sample_data, i)
+        
+        # Send completion summary
+        summary = {
+            "total_samples": sample_size,
+            "avg_quality_score": 0.8,
+            "estimated_processing_time": sample_size * 2.0,
+            "estimated_output_size": f"~{sample_size * 50}MB"
+        }
+        
+        await ws_service.complete_preview_session(session_id, summary)
+        
+    except Exception as e:
+        await ws_service.send_message(session_id, {
+            "type": "preview_error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        })
+
+
+@app.post("/preprocessing/preview-realtime")
+async def start_realtime_preview(request: dict):
+    """Start a real-time preprocessing preview session"""
+    session_id = str(uuid.uuid4())
+    
+    return {
+        "session_id": session_id,
+        "websocket_url": f"/ws/{session_id}",
+        "status": "session_created",
+        "message": "Connect to WebSocket to receive real-time updates"
+    }
 
 
 # Background task for updating metrics

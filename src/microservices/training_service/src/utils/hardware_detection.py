@@ -9,7 +9,7 @@ import os
 import psutil
 import platform
 import subprocess
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 from dataclasses import dataclass
 from pathlib import Path
 import json

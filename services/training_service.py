@@ -424,7 +424,7 @@ class TrainingService:
                 model=model,
                 tokenizer=tokenizer,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
-                eval_dataset=dataset.get("val"),
+                eval_dataset=dataset["val"] if "val" in dataset else None,
                 dataset_text_field="text",  # Assuming text field
                 max_seq_length=request.max_seq_length,
                 data_collator=None,
@@ -531,7 +531,7 @@ class TrainingService:
                 model=model,
                 tokenizer=tokenizer,
                 train_dataset=dataset["train"] if "train" in dataset else dataset,
-                eval_dataset=dataset.get("val"),
+                eval_dataset=dataset["val"] if "val" in dataset else None,
                 dataset_text_field="text",
                 max_seq_length=request.max_seq_length,
                 args=training_args,

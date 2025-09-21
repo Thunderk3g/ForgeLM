@@ -115,107 +115,231 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
   };
 
   return (
-    <div className="bg-card rounded-lg shadow-sm border-border border p-6">
-      <div className="flex items-center space-x-2 mb-4">
-        <Database className="w-5 h-5 text-green-500" />
-        <h3 className="font-semibold text-foreground">Prepare Training Data</h3>
+    <div className="space-y-6">
+      <div className="bg-card rounded-lg shadow-sm border-border border p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-2">
+            <Database className="w-5 h-5 text-green-500" />
+            <h3 className="font-semibold text-foreground">Prepare Training Data</h3>
+          </div>
+          <div className="flex items-center space-x-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            <span className="text-sm text-muted-foreground">Enhanced Preprocessing</span>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Basic Configuration */}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-1">
+                Input File Path
+              </label>
+              <input
+                type="text"
+                value={inputFile}
+                onChange={(e) => setInputFile(e.target.value)}
+                className="w-full p-2 bg-background border border-input rounded-md text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
+                placeholder="/app/data/input/dataset.csv"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Task Type
+              </label>
+              <div className="grid grid-cols-3 gap-3">
+                {(['instruction', 'supervised', 'unsupervised'] as const).map((option) => (
+                  <label
+                    key={option}
+                    className={`
+                      flex items-center justify-center p-3 rounded-lg border cursor-pointer transition-all
+                      ${task === option 
+                        ? 'border-green-500 bg-green-50 text-green-700' 
+                        : 'border-border hover:border-green-300 hover:bg-accent'
+                      }
+                    `}
+                  >
+                    <input
+                      type="radio"
+                      value={option}
+                      checked={task === option}
+                      onChange={(e) => setTask(e.target.value as typeof task)}
+                      className="sr-only"
+                    />
+                    <span className="capitalize font-medium">{option}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Test Size: {testSize}
+                </label>
+                <input
+                  type="range"
+                  value={testSize}
+                  onChange={(e) => setTestSize(parseFloat(e.target.value))}
+                  min="0.1"
+                  max="0.5"
+                  step="0.05"
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>10%</span>
+                  <span>50%</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">
+                  Max Length: {maxLength}
+                </label>
+                <input
+                  type="range"
+                  value={maxLength}
+                  onChange={(e) => setMaxLength(parseInt(e.target.value))}
+                  min="128"
+                  max="4096"
+                  step="128"
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                  <span>128</span>
+                  <span>4096</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <label className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={augment}
+                  onChange={(e) => setAugment(e.target.checked)}
+                  className="accent-green-500"
+                />
+                <div>
+                  <span className="font-medium">Data Augmentation</span>
+                  <div className="text-xs text-muted-foreground">Enhance dataset diversity</div>
+                </div>
+              </label>
+              <label className="flex items-center space-x-2 p-3 border rounded-lg hover:bg-accent cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={balance}
+                  onChange={(e) => setBalance(e.target.checked)}
+                  className="accent-green-500"
+                />
+                <div>
+                  <span className="font-medium">Balance Classes</span>
+                  <div className="text-xs text-muted-foreground">Equalize class distribution</div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          {/* Preprocessing Template Selection */}
+          <div className="border-t pt-4">
+            <label className="block text-sm font-medium text-foreground mb-3">
+              Preprocessing Template
+            </label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {Object.entries(predefinedTemplates).map(([key, template]) => (
+                <label
+                  key={key}
+                  className={`
+                    p-3 rounded-lg border cursor-pointer transition-all
+                    ${selectedTemplate === key 
+                      ? 'border-purple-500 bg-purple-50 text-purple-700' 
+                      : 'border-border hover:border-purple-300 hover:bg-accent'
+                    }
+                  `}
+                >
+                  <input
+                    type="radio"
+                    value={key}
+                    checked={selectedTemplate === key}
+                    onChange={(e) => handleTemplateChange(e.target.value)}
+                    className="sr-only"
+                  />
+                  <div className="font-medium text-sm">{template.name}</div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {template.description}
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Advanced Configuration Toggle */}
+          <div className="border-t pt-4">
+            <button
+              type="button"
+              onClick={() => setShowAdvancedConfig(!showAdvancedConfig)}
+              className="flex items-center space-x-2 text-sm font-medium text-foreground hover:text-purple-600 transition-colors"
+            >
+              {showAdvancedConfig ? (
+                <ChevronDown className="w-4 h-4" />
+              ) : (
+                <ChevronRight className="w-4 h-4" />
+              )}
+              <Settings className="w-4 h-4" />
+              <span>Advanced Preprocessing Configuration</span>
+              {preprocessingConfig.enable_embeddings && (
+                <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded">
+                  Embeddings Enabled
+                </span>
+              )}
+            </button>
+          </div>
+
+          {/* Submit Button */}
+          <div className="space-y-2">
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full flex items-center justify-center space-x-2 py-3 px-4 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              <span>
+                {isLoading ? 'Preparing Data...' : 
+                 showAdvancedConfig && preprocessingConfig.enable_embeddings ? 
+                 'Prepare Data with Embeddings' : 'Prepare Data'}
+              </span>
+            </button>
+            
+            {showAdvancedConfig && (
+              <div className="flex space-x-2">
+                <button
+                  type="button"
+                  className="flex-1 flex items-center justify-center space-x-2 py-2 px-4 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  <Eye className="w-4 h-4" />
+                  <span>Preview Changes</span>
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 flex items-center justify-center space-x-2 py-2 px-4 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Generate Visualizations</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </form>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-1">
-            Input File Path
-          </label>
-          <input
-            type="text"
-            value={inputFile}
-            onChange={(e) => setInputFile(e.target.value)}
-            className="w-full p-2 bg-background border border-input rounded-md text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            placeholder="/app/data/input/dataset.csv"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-foreground mb-2">
-            Task Type
-          </label>
-          <div className="space-y-2">
-            {(['instruction', 'supervised', 'unsupervised'] as const).map((option) => (
-              <label key={option} className="flex items-center space-x-2">
-                <input
-                  type="radio"
-                  value={option}
-                  checked={task === option}
-                  onChange={(e) => setTask(e.target.value as typeof task)}
-                  className="text-green-500 accent-green-500"
-                />
-                <span className="capitalize">{option} Learning</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Test Size
-            </label>
-            <input
-              type="number"
-              value={testSize}
-              onChange={(e) => setTestSize(parseFloat(e.target.value))}
-              min="0.1"
-              max="0.5"
-              step="0.05"
-              className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-1">
-              Max Length
-            </label>
-            <input
-              type="number"
-              value={maxLength}
-              onChange={(e) => setMaxLength(parseInt(e.target.value))}
-              min="128"
-              max="4096"
-              step="128"
-              className="w-full p-2 bg-background border border-input rounded-md text-foreground focus:ring-2 focus:ring-ring focus:border-ring transition-colors"
-            />
-          </div>
-        </div>
-
-        <div className="flex space-x-4">
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={augment}
-              onChange={(e) => setAugment(e.target.checked)}
-              className="text-green-500 accent-green-500"
-            />
-            <span>Data Augmentation</span>
-          </label>
-          <label className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              checked={balance}
-              onChange={(e) => setBalance(e.target.checked)}
-              className="text-green-500 accent-green-500"
-            />
-            <span>Balance Classes</span>
-          </label>
-        </div>
-
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="w-full flex items-center justify-center space-x-2 py-2 px-4 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          <Upload className="w-4 h-4" />
-          <span>{isLoading ? 'Preparing Data...' : 'Prepare Data'}</span>
-        </button>
-      </form>
+      {/* Advanced Configuration Panel */}
+      {showAdvancedConfig && (
+        <PreprocessingConfigPanel
+          config={preprocessingConfig}
+          onConfigChange={setPreprocessingConfig}
+          className="animate-in slide-in-from-top-5 duration-200"
+        />
+      )}
     </div>
   );
 };
