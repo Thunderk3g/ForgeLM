@@ -49,43 +49,10 @@ except ImportError:
     TRANSFORMERS_AVAILABLE = False
     print("WARNING: Transformers/TRL not available")
 
-# Import Unsloth with proper error handling
+# FIXED: Safe Unsloth import without exec() patching
 try:
-    # Work around Unsloth v2025.9.5 KTO trainer bug
-    import sys
-    import types
-    
-    # First, let's patch the exec function to handle the specific AttributeError
-    original_exec = exec
-    
-    def patched_exec(code, globals_dict=None, locals_dict=None):
-        try:
-            return original_exec(code, globals_dict, locals_dict)
-        except AttributeError as e:
-            if "UnslothKTOTrainer" in str(e) and "UnslothKTOTrainer" in str(code):
-                # This is the problematic line - just skip it
-                print(f"Skipping problematic Unsloth KTO trainer assignment: {e}")
-                return None
-            else:
-                raise
-    
-    # Temporarily replace exec
-    builtins_exec = __builtins__['exec'] if isinstance(__builtins__, dict) else __builtins__.exec
-    if isinstance(__builtins__, dict):
-        __builtins__['exec'] = patched_exec
-    else:
-        __builtins__.exec = patched_exec
-    
-    try:
-        import unsloth
-        from unsloth import FastLanguageModel, is_bfloat16_supported
-    finally:
-        # Restore original exec
-        if isinstance(__builtins__, dict):
-            __builtins__['exec'] = builtins_exec
-        else:
-            __builtins__.exec = builtins_exec
-    
+    import unsloth
+    from unsloth import FastLanguageModel, is_bfloat16_supported
     UNSLOTH_AVAILABLE = True
     print(f"🦥 Unsloth: Will patch your computer to enable 2x faster free finetuning.")
     print(f"🦥 Unsloth Zoo will now patch everything to make training faster!")
@@ -143,9 +110,29 @@ def cleanup_resources():
 
 
 def signal_handler(signum, frame):
-    """Handle shutdown signals in Kubernetes."""
+    """Enhanced signal handler for container environments"""
     print(f"Received signal {signum}, initiating graceful shutdown...")
+    
+    # Cancel all training immediately
+    for task_id in list(active_sessions.keys()):
+        try:
+            task_completion_flags[task_id] = True
+            print(f"Cancelled training {task_id}")
+        except Exception as e:
+            print(f"Error cancelling {task_id}: {e}")
+    
+    # Emergency cleanup
     cleanup_resources()
+    
+    # Force exit after timeout to prevent hanging
+    import threading
+    def force_exit():
+        import time
+        time.sleep(10)
+        print("Force exit after 10s timeout")
+        os._exit(0)
+    
+    threading.Thread(target=force_exit, daemon=True).start()
     exit(0)
 
 

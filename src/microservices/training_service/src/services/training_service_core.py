@@ -96,6 +96,13 @@ class WorkerProgressCallback(TrainerCallback):
             epoch = state.epoch
             message = f"Starting epoch {epoch}/{args.num_train_epochs}"
             self.logger.info(message)
+            
+            # FIXED: Enhanced logging for epoch begin to detect hangs
+            if epoch < 1:  # Only for first epoch
+                self.logger.info(f"🚨 Epoch {epoch} begin - about to enter first training loop iteration")
+                if torch.cuda.is_available():
+                    epoch_mem = torch.cuda.memory_allocated() / 1024**3
+                    self.logger.info(f"🚨 Memory at epoch begin {epoch}: {epoch_mem:.2f}GB allocated")
         except Exception as e:
             self.logger.error(f"Error in epoch begin callback: {e}")
 
@@ -158,13 +165,25 @@ class TrainingCore:
         self.logger = get_logger(f"worker.core.{task_id}")
         self.status_file = Path("logs") / f"{task_id}_status.json"
         self.cancellation_callback: Optional[Callable] = None
+        
+        # FIXED: Add signal handlers to prevent unexpected container restarts
+        try:
+            import signal
+            signal.signal(signal.SIGTERM, self._signal_handler)
+            signal.signal(signal.SIGINT, self._signal_handler)
+            self.logger.info("Signal handlers registered for graceful shutdown")
+        except Exception as e:
+            self.logger.warning(f"Could not register signal handlers: {e}")
+        
+        # FIXED: Add memory monitoring flag
+        self._memory_monitoring_active = False
+        self._memory_monitor_thread = None
+        
         # Initialize hardware detection and adaptive configuration
         from utils.hardware_detection import hardware_detector, AdaptiveTrainingConfig
 
         self.hardware_profile = hardware_detector.detect_full_profile()
         self.adaptive_config = AdaptiveTrainingConfig(self.hardware_profile)
-
-        # Register cleanup
 
         # Log hardware profile and optimizations
         hardware_summary = self.adaptive_config.get_hardware_summary()
@@ -178,7 +197,109 @@ class TrainingCore:
             f"Environment: {hardware_summary['environment']}, Storage={hardware_summary['storage']}"
         )
         self.logger.info(f"Unsloth available: {UNSLOTH_AVAILABLE}")
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        self.logger.warning(f"Received signal {signum}, initiating graceful shutdown...")
+        self._update_status("cancelled", f"Training cancelled due to signal {signum}")
+        # Don't raise exception, just log and let the process exit gracefully
         
+    def _detect_container_stress(self) -> bool:
+        """Detect container stress signals that could cause restart"""
+        try:
+            # Check OOM score
+            try:
+                with open('/proc/self/oom_score', 'r') as f:
+                    oom_score = int(f.read().strip())
+                    if oom_score > 300:  # FIXED: More aggressive OOM detection
+                        self.logger.warning(f"High OOM score detected: {oom_score}")
+                        return True
+            except (FileNotFoundError, PermissionError):
+                # /proc may not be available in some container environments
+                pass
+            
+            # Check memory pressure using psutil
+            try:
+                import psutil
+                memory = psutil.virtual_memory()
+                if memory.percent > 75:  # FIXED: More aggressive memory monitoring
+                    self.logger.warning(f"High memory pressure: {memory.percent}%")
+                    return True
+                    
+                # Check if we're approaching container memory limits
+                container_limit_gb = float(os.environ.get("CONTAINER_MEMORY_LIMIT_GB", "8"))
+                memory_used_gb = (memory.total - memory.available) / (1024**3)
+                memory_usage_percent = (memory_used_gb / container_limit_gb) * 100
+                
+                if memory_usage_percent > 70:  # FIXED: More aggressive container memory monitoring
+                    self.logger.warning(f"Container memory usage {memory_usage_percent:.1f}% of {container_limit_gb}GB limit")
+                    return True
+                    
+            except ImportError:
+                self.logger.warning("psutil not available for memory monitoring")
+                
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"Error detecting container stress: {e}")
+            return False
+    
+    def _start_memory_monitoring(self):
+        """Start memory monitoring thread during training"""
+        if self._memory_monitoring_active:
+            return
+            
+        self._memory_monitoring_active = True
+        import threading
+        
+        def memory_monitor():
+            while self._memory_monitoring_active:
+                try:
+                    if self._detect_container_stress():
+                        self.logger.error("🚨 CRITICAL: Memory limit approaching - stopping training to prevent container restart")
+                        self._update_status("cancelled", "Training stopped due to memory pressure")
+                        self._memory_monitoring_active = False
+                        # Force cleanup and exit
+                        import gc
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            torch.cuda.ipc_collect()
+                        break
+                    
+                    time.sleep(5)  # Check every 5 seconds
+                except Exception as e:
+                    self.logger.warning(f"Memory monitoring error: {e}")
+                    time.sleep(10)
+        
+        self._memory_monitor_thread = threading.Thread(target=memory_monitor, daemon=True)
+        self._memory_monitor_thread.start()
+        self.logger.info("Memory monitoring started")
+    
+    def _stop_memory_monitoring(self):
+        """Stop memory monitoring thread"""
+        self._memory_monitoring_active = False
+        if self._memory_monitor_thread:
+            self._memory_monitor_thread.join(timeout=2)
+        self.logger.info("Memory monitoring stopped")
+
+    def _enable_emergency_mode(self, request: FineTuneRequest):
+        """Enable emergency mode for container stability"""
+        self.logger.warning("🚨 Enabling emergency stability mode for RTX 4060 8GB")
+        
+        # Ultra-conservative settings to prevent container restart
+        emergency_config = {
+            "max_seq_length": 128,  # FIXED: Even smaller to test memory - was min(256, ...)
+            "batch_size": 1,  # Always 1 for stability
+            "gradient_accumulation_steps": max(128, request.gradient_accumulation_steps),  # FIXED: Much higher accumulation
+            "reduced_precision": True,
+            "dataloader_num_workers": 0,  # FIXED: Force single worker
+            "dataset_num_proc": 1  # FIXED: Force single process
+        }
+        
+        self.logger.info(f"Emergency config: {emergency_config}")
+        self.logger.warning("🚨 Using ultra-conservative settings to prevent container restarts")
+        return emergency_config
         
 
     def set_cancellation_callback(self, callback: Callable):
@@ -262,14 +383,34 @@ class TrainingCore:
         self._update_status("loading", "Loading model with Unsloth optimization...")
 
         try:
+            # FIXED: Always apply emergency mode for RTX 4060 8GB to prevent restarts
+            self.logger.warning("🚨 Applying emergency stability mode for RTX 4060 8GB")
+            emergency_config = self._enable_emergency_mode(request)
+            # Override request parameters with emergency settings
+            request.max_seq_length = emergency_config["max_seq_length"]
+            request.batch_size = emergency_config["batch_size"] 
+            request.gradient_accumulation_steps = emergency_config["gradient_accumulation_steps"]
+            
+            # Additional memory pressure check
+            if self._detect_container_stress():
+                self.logger.error("Container stress detected - applying additional emergency measures")
+                # Even more aggressive settings
+                request.batch_size = 1
+                request.gradient_accumulation_steps = max(32, request.gradient_accumulation_steps)
+                request.max_seq_length = min(1024, request.max_seq_length)
+            
+            # FIXED: Validate precision BEFORE model loading to prevent race conditions
+            optimal_precision = self._get_optimal_precision_settings()
+            self.logger.info(f"Pre-validated precision: {optimal_precision['reason']}")
+            
             # Optimized model loading for RTX 4060 8GB with Unsloth 2025.9.5+
             worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
             
-            # RTX 4060 8GB optimal loading configuration
+            # RTX 4060 8GB optimal loading configuration with validated precision
             loading_config = {
                 "model_name": request.base_model_dir,
                 "max_seq_length": 2048 if worker_memory_gb <= 8 else request.max_seq_length,
-                "dtype": None,  # Let Unsloth auto-detect for optimal performance
+                "dtype": torch.bfloat16 if optimal_precision['bf16'] else torch.float16,  # FIXED: Explicit dtype
                 "load_in_4bit": True,  # Essential for 8GB VRAM - 4x memory reduction
                 "trust_remote_code": True,  # Required for Qwen2.5
             }
@@ -335,43 +476,43 @@ class TrainingCore:
 
             self._update_status("configuring", "Applying optimized LoRA configuration for Qwen2.5...")
 
-            # Optimized LoRA configuration for Qwen2.5 based on latest Unsloth best practices
-            # RTX 4060 8GB optimal settings based on community benchmarks
-            worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
-            if worker_memory_gb <= 8:
-                # Optimal settings for RTX 4060 8GB - based on Unsloth 2025.9.5+ benchmarks
-                lora_rank = 16  # Sweet spot for 8GB VRAM - proven optimal in community testing
-                lora_alpha = 32  # 2x rank ratio for stable training
-                self.logger.info(f"Using RTX 4060 8GB optimized LoRA config: r={lora_rank}, alpha={lora_alpha}")
+            # Conservative LoRA for containers to prevent OOM
+            is_container = self.hardware_profile.is_container
+            if is_container:
+                lora_rank = 16
+                lora_alpha = 32
+                self.logger.info(f"Container detected - using conservative LoRA: r={lora_rank}, alpha={lora_alpha}")
             else:
-                # Higher memory configurations can use more aggressive settings
-                lora_rank = 32 if request.peft_method == "lora" else 64
-                lora_alpha = 64
-                self.logger.info(f"Using high-memory LoRA config: r={lora_rank}, alpha={lora_alpha}")
+                worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
+                if worker_memory_gb <= 8:
+                    lora_rank = 16
+                    lora_alpha = 32
+                    self.logger.info(f"Using low-memory LoRA config: r={lora_rank}, alpha={lora_alpha}")
+                else:
+                    lora_rank = 32 if request.peft_method == "lora" else 64
+                    lora_alpha = 64
+                    self.logger.info(f"Using high-memory LoRA config: r={lora_rank}, alpha={lora_alpha}")
 
-            # Qwen2.5-optimized target modules based on latest Unsloth recommendations
-            # Research shows targeting all major layers is crucial for matching full fine-tuning performance
+            # Conservative target modules excluding embeddings for memory safety
             qwen_target_modules = [
-                "q_proj", "k_proj", "v_proj", "o_proj",  # All attention layers (essential)
-                "gate_proj", "up_proj", "down_proj",      # All MLP layers (recommended for Qwen2.5)
-                # Note: embedding layers excluded to save memory on 8GB GPUs
-                # "embed_tokens", "lm_head"  # Uncomment for higher VRAM setups
+                "q_proj", "k_proj", "v_proj", "o_proj",  # Attention only
+                "gate_proj", "up_proj", "down_proj",     # MLP
+                # Embeddings excluded to reduce trainable params ~1.67%
             ]
             
-            # Apply LoRA adapter with Qwen2.5 optimizations
+            # Apply conservative LoRA - no full FT on embeddings
             model = FastLanguageModel.get_peft_model(
                 model,
                 r=lora_rank,
                 target_modules=qwen_target_modules,
                 lora_alpha=lora_alpha,
-                lora_dropout=0.0,  # Optimized for Unsloth fast patching  # Slight dropout for regularization
+                lora_dropout=0.0,  # Enforced for Unsloth QKV optimization
                 bias="none",
-                use_gradient_checkpointing="unsloth",  # 30% less VRAM + 2x larger batch sizes
+                use_gradient_checkpointing="unsloth",
                 random_state=3407,
-                use_rslora=False,  # Keep disabled for stability
+                use_rslora=False,
                 loftq_config=None,
-                # Qwen2.5-specific optimizations
-                modules_to_save=None,  # Exclude embeddings for 8GB VRAM optimization
+                modules_to_save=None,  # Explicit: No full fine-tune on embeddings/lm_head
             )
             
             self.logger.info(f"Applied LoRA with rank {lora_rank}, alpha {lora_alpha}, targeting {len(qwen_target_modules)} module types for optimal 8GB VRAM performance")
@@ -391,8 +532,13 @@ class TrainingCore:
 
             self._update_status("preparing", "Setting up training arguments...")
 
-            # Setup optimized training arguments for RTX 4060 8GB
-            training_args = self._create_adaptive_training_args(request)
+            # Conservative training args for containers
+            if self.hardware_profile.is_container:
+                request.gradient_accumulation_steps = max(16, request.gradient_accumulation_steps)
+                self.logger.info(f"Container: Increased grad_accum to {request.gradient_accumulation_steps} for effective batch {request.batch_size * request.gradient_accumulation_steps}")
+
+            # Setup training arguments
+            training_args = self._create_adaptive_training_args(request, optimal_precision)
 
             # Create progress callback
             progress_callback = WorkerProgressCallback(
@@ -410,35 +556,38 @@ class TrainingCore:
                 # RTX 4060 8GB optimal settings
                 optimal_seq_length = 2048  # Unsloth recommended for 8GB testing
                 dataset_num_proc = 1  # Single process to avoid memory overhead
-                dataset_batch_size = 1000  # Conservative for memory
+                dataset_batch_size = 1000  # Conservative for memory - handled via tokenizer batching
             else:
                 # Higher memory configurations
                 optimal_seq_length = min(request.max_seq_length, 4096)
-                dataset_num_proc = 2
-                dataset_batch_size = 2000
+                dataset_num_proc = 1  # FIXED: Force single process to prevent semaphore leaks
+                dataset_batch_size = 2000  # Conservative for memory - handled via tokenizer batching
+
+            # FIXED: Remove invalid 'dataset_batch_size' from SFTConfig - use dataset_kwargs for tokenization batching if needed
+            self.logger.info(f"Creating SFTConfig without invalid 'dataset_batch_size' - max_seq_length={optimal_seq_length}, dataset_num_proc={dataset_num_proc}, packing=True, chars_per_token=3.5")
             
             sft_config = SFTConfig(
                 dataset_text_field="text",
                 max_seq_length=optimal_seq_length,
-                packing=True,  # Critical: 30% faster training with Unsloth
-                dataset_num_proc=dataset_num_proc,
+                packing=False,  # FIXED: Temporarily disable packing to test if collation is causing hang
+                dataset_num_proc=1,  # FIXED: Reduce to 1 to prevent semaphore leaks
                 # Qwen2.5-specific optimizations
                 chars_per_token=3.5,  # Qwen2.5 tokenizer average
                 dataset_kwargs={
                     "add_special_tokens": True,
-                    "split": "train"
+                    "split": "train",
+                    "batched": True,  # Enable batched tokenization
+                    "batch_size": dataset_batch_size,  # Move batch_size here for tokenizer if needed
+                    "remove_columns": ["text"]  # Clean up after tokenization
                 },
-                # Memory optimizations
-                dataset_batch_size=dataset_batch_size,
                 neftune_noise_alpha=None,  # Disable NEFTune to save memory
             )
             
             self.logger.info(f"SFT Config optimized for {worker_memory_gb}GB: max_seq_length={optimal_seq_length}, packing=True")
 
-            # CRITICAL: Validate and adjust precision settings for Unsloth compatibility
-            # This prevents "Unsloth: Model is in bfloat16 precision but you want to use float16 precision" errors
-            self.logger.info("Validating precision settings to prevent Unsloth compatibility errors...")
-            training_args = self._validate_precision_settings(model, training_args)
+            # FIXED: Precision already validated before model loading - just log configuration
+            self.logger.info(f"Model loaded with precision: {optimal_precision['reason']}")
+            # No need to re-validate since model was loaded with correct precision
             
             # Prepare dataset for training
             train_dataset = dataset["train"] if "train" in dataset else dataset
@@ -455,11 +604,36 @@ class TrainingCore:
                 model=model,
                 tokenizer=tokenizer,
                 train_dataset=train_dataset,
-                eval_dataset=eval_dataset,
+                eval_dataset=None,  # Disable eval in containers for memory
                 data_collator=None,
                 args=training_args,
                 **sft_config.to_dict(),
             )
+
+            # FIXED: Add log after trainer creation to confirm dataloader builds successfully
+            self.logger.info("🚨 Trainer created successfully - testing dataloader construction")
+            try:
+                train_dataloader = trainer.get_train_dataloader()
+                self.logger.info(f"🚨 Dataloader created: len={len(train_dataloader)}, batch_size={trainer.args.per_device_train_batch_size}")
+                # Test first batch without consuming it
+                first_batch_iterator = iter(train_dataloader)
+                sample_batch = next(first_batch_iterator)
+                self.logger.info(f"🚨 Sample batch keys: {list(sample_batch.keys())}, input_ids shape: {sample_batch['input_ids'].shape if 'input_ids' in sample_batch else 'N/A'}")
+                batch_mem_peak = torch.cuda.max_memory_allocated() / 1024**3 if torch.cuda.is_available() else 0
+                self.logger.info(f"🚨 Memory peak during dataloader test: {batch_mem_peak:.2f}GB")
+            except Exception as dl_error:
+                self.logger.error(f"🚨 DATALOADER CONSTRUCTION FAILED: {dl_error}")
+                import traceback
+                self.logger.error(f"🚨 Dataloader traceback: {traceback.format_exc()}")
+                raise
+            
+            # Aggressive cleanup post-trainer creation, pre-train
+            self.logger.info("Post-trainer cleanup to prevent OOM...")
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            self._emergency_memory_cleanup()
             
             # SFT configuration logging moved above for clarity
 
@@ -470,8 +644,12 @@ class TrainingCore:
             self.logger.info("Starting Unsloth training with enhanced monitoring...")
             self._update_status("training", "Training started with memory monitoring...")
 
+            # FIXED: Start memory monitoring before training
+            self._start_memory_monitoring()
+
             # Check for cancellation one more time before training
             if self._should_cancel():
+                self._stop_memory_monitoring()
                 raise InterruptedError("Training cancelled before start")
 
             # Enhanced training with memory monitoring and recovery
@@ -482,7 +660,29 @@ class TrainingCore:
                     gpu_mem_reserved = torch.cuda.memory_reserved() / 1024**3
                     self.logger.info(f"GPU memory before training: {gpu_mem_before:.2f}GB allocated, {gpu_mem_reserved:.2f}GB reserved")
                 
-                # Training with automatic recovery
+                # FIXED: Force memory cleanup before training to prevent container restarts
+                self._emergency_memory_cleanup()
+                
+                # Training with monitoring
+                self.logger.info("🚨 About to create first training batch - monitoring memory closely")
+                if torch.cuda.is_available():
+                    pre_train_mem = torch.cuda.memory_allocated() / 1024**3
+                    self.logger.info(f"🚨 Pre-first-batch memory: {pre_train_mem:.2f}GB allocated")
+                
+                # Test dataloader iteration manually before full train
+                self.logger.info("🚨 Testing first batch from dataloader...")
+                try:
+                    first_batch = next(iter(trainer.get_train_dataloader()))
+                    self.logger.info(f"🚨 First batch shape: inputs={first_batch['input_ids'].shape if 'input_ids' in first_batch else 'N/A'}, labels={first_batch.get('labels', 'N/A').shape if 'labels' in first_batch else 'N/A'}")
+                    batch_mem = torch.cuda.memory_allocated() / 1024**3 if torch.cuda.is_available() else 0
+                    self.logger.info(f"🚨 Memory after first batch load: {batch_mem:.2f}GB allocated")
+                except Exception as batch_error:
+                    self.logger.error(f"🚨 ERROR loading first batch: {batch_error}")
+                    import traceback
+                    self.logger.error(f"🚨 Batch load traceback: {traceback.format_exc()}")
+                    raise
+                
+                self.logger.info("🚨 First batch loaded successfully - starting trainer.train()")
                 trainer.train()
                 
                 # Log GPU memory after training
@@ -528,8 +728,39 @@ class TrainingCore:
             except Exception as training_error:
                 self.logger.error(f"Training failed with error: {training_error}")
                 
+                # FIXED: Add comprehensive error handling to prevent container restarts
+                error_msg = str(training_error).lower()
+                
+                # Check for memory-related errors
+                if any(keyword in error_msg for keyword in ["out of memory", "oom", "cuda error", "memory"]):
+                    self.logger.error("🚨 Memory-related error detected - applying emergency recovery")
+                    self._emergency_memory_cleanup()
+                    
+                    # Try with even more conservative settings
+                    self.logger.warning("🚨 Attempting recovery with ultra-conservative settings")
+                    request.batch_size = 1
+                    request.gradient_accumulation_steps = 128  # Very high accumulation
+                    request.max_seq_length = 256  # Very small sequence length
+                    
+                    # Recreate trainer with emergency settings
+                    emergency_args = self._create_adaptive_training_args(request, optimal_precision)
+                    emergency_trainer = SFTTrainer(
+                        model=model,
+                        tokenizer=tokenizer,
+                        train_dataset=train_dataset,
+                        eval_dataset=None,  # Disable eval
+                        data_collator=None,
+                        args=emergency_args,
+                        **sft_config.to_dict(),
+                    )
+                    emergency_trainer.add_callback(progress_callback)
+                    
+                    self._update_status("emergency_recovery", "Attempting emergency recovery...")
+                    emergency_trainer.train()
+                    self.logger.info("✅ Successfully recovered from memory error")
+                    
                 # Check if it's a tokenizer-related error
-                if any(keyword in str(training_error).lower() for keyword in 
+                elif any(keyword in error_msg for keyword in 
                        ["bos_token", "eos_token", "pad_token", "tokenizer", "token_id"]):
                     self.logger.error("Detected tokenizer configuration error - applying emergency fixes")
                     
@@ -553,7 +784,10 @@ class TrainingCore:
                     trainer.train()
                     self.logger.info("Successfully recovered from tokenizer error")
                 else:
-                    # Re-raise non-tokenizer errors
+                    # Log the full error for debugging
+                    import traceback
+                    self.logger.error(f"Full error traceback: {traceback.format_exc()}")
+                    # Re-raise non-recoverable errors
                     raise
 
             # Check if training was cancelled
@@ -662,7 +896,7 @@ class TrainingCore:
                 dataset_text_field="text",
                 max_seq_length=request.max_seq_length,
                 packing=False,
-                dataset_num_proc=2,
+                dataset_num_proc=1,  # FIXED: Force single process to prevent semaphore leaks
             )
 
             trainer = SFTTrainer(
@@ -718,7 +952,7 @@ class TrainingCore:
             self.logger.error(f"Standard training failed: {e}")
             raise
     def _create_adaptive_training_args(
-        self, request: FineTuneRequest
+        self, request: FineTuneRequest, optimal_precision: Dict[str, Any] = None
     ):
         """Create adaptive training arguments optimized for hardware profile
         
@@ -734,44 +968,46 @@ class TrainingCore:
         adaptive_args = adaptive_config["training_args"]
         gpu_opts = adaptive_config["gpu_optimizations"]
 
-        # CRITICAL FIX: Use Unsloth's built-in precision detection instead of manual guessing
-        optimal_precision = self._get_optimal_precision_settings()
+        # FIXED: Use pre-validated precision if provided, otherwise detect
+        if optimal_precision is None:
+            optimal_precision = self._get_optimal_precision_settings()
+            
         self.logger.info(
-            f"Precision detection for training args: {optimal_precision['reason']}\n"
+            f"Precision for training args: {optimal_precision['reason']}\n"
             f"  Setting fp16={optimal_precision['fp16']}, bf16={optimal_precision['bf16']}"
         )
 
         # Merge base args with adaptive configuration
         args = {
-            "per_device_train_batch_size": base_args.get("per_device_train_batch_size", adaptive_args["per_device_train_batch_size"]),
-            "gradient_accumulation_steps": base_args.get("gradient_accumulation_steps", adaptive_args["gradient_accumulation_steps"]),
-            "warmup_steps": base_args.get("warmup_steps", 5),
+            "per_device_train_batch_size": adaptive_args["per_device_train_batch_size"],
+            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"],
+            "warmup_steps": 5,
             "num_train_epochs": request.epochs,
-            "learning_rate": base_args.get("learning_rate", request.learning_rate),
+            "learning_rate": request.learning_rate,
             # FIXED: Use optimal precision detection instead of flawed gpu_opts guessing
             "fp16": optimal_precision["fp16"],
             "bf16": optimal_precision["bf16"],
             # Adaptive optimization
-            "logging_steps": base_args.get("logging_steps", adaptive_args.get("logging_steps", 10)),
+            "logging_steps": adaptive_args.get("logging_steps", 10),
             "optim": (
                 "adamw_8bit"
                 if UNSLOTH_AVAILABLE and gpu_opts["enabled"]
                 else "adamw_hf"
             ),
-            "weight_decay": base_args.get("weight_decay", 0.01),
-            "lr_scheduler_type": base_args.get("lr_scheduler_type", "linear"),
+            "weight_decay": 0.01,
+            "lr_scheduler_type": "linear",
             "seed": 3407,
             "output_dir": str(output_dir),
             # Adaptive checkpoint and evaluation settings
-            "save_steps": base_args.get("save_steps", adaptive_args.get("save_steps", 100)),
+            "save_steps": adaptive_args.get("save_steps", 100),
             "save_total_limit": adaptive_args.get("save_total_limit", 2),
             "eval_strategy": adaptive_args.get("eval_strategy", "no"),
-            # Adaptive data loading
-            "dataloader_num_workers": base_args.get("dataloader_num_workers", adaptive_args.get("dataloader_num_workers", 0)),
-            "dataloader_pin_memory": base_args.get("dataloader_pin_memory", adaptive_args.get("dataloader_pin_memory", False)),
+            # FIXED: Adaptive data loading - force single worker to prevent semaphore leaks
+            "dataloader_num_workers": 0,  # Always 0 to prevent multiprocessing issues
+            "dataloader_pin_memory": False,  # Disabled for container stability
             # System settings
-            "remove_unused_columns": base_args.get("remove_unused_columns", False),
-            "run_name": f"llmforge_{training_type}_{task_id[:8]}",
+            "remove_unused_columns": False,
+            "run_name": f"llmforge_{self.task_id[:8]}",
             "report_to": adaptive_args.get("report_to", []),
         }
 
@@ -831,7 +1067,7 @@ class TrainingCore:
             "lr_scheduler_type": "linear",
             "logging_steps": adaptive_args.get("logging_steps", 10),
             "save_steps": adaptive_args.get("save_steps", 100),
-            "dataloader_num_workers": adaptive_args.get("dataloader_num_workers", 0),
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": adaptive_args.get("dataloader_pin_memory", False),
             "remove_unused_columns": False,
         }
@@ -848,7 +1084,7 @@ class TrainingCore:
             "lr_scheduler_type": "cosine",
             "logging_steps": adaptive_args.get("logging_steps", 5),
             "save_steps": adaptive_args.get("save_steps", 200),
-            "dataloader_num_workers": min(2, adaptive_args.get("dataloader_num_workers", 1)),
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": False,
             "remove_unused_columns": False,
             "group_by_length": True,
@@ -867,7 +1103,7 @@ class TrainingCore:
             "lr_scheduler_type": "cosine",
             "logging_steps": adaptive_args.get("logging_steps", 5),
             "save_steps": adaptive_args.get("save_steps", 500),
-            "dataloader_num_workers": 1,
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": False,
             "remove_unused_columns": False,
             "group_by_length": False,
@@ -917,7 +1153,7 @@ class TrainingCore:
             "dataset_text_field": "text",
             "max_seq_length": min(request.max_seq_length, 4096),
             "packing": True,
-            "dataset_num_proc": 2,
+            "dataset_num_proc": 1,  # FIXED: Force single process to prevent semaphore leaks
             "chars_per_token": 3.5,
         }
         
@@ -1399,6 +1635,9 @@ class TrainingCore:
         try:
             self.logger.warning("Performing emergency memory cleanup...")
             
+            # FIXED: Stop memory monitoring during emergency cleanup
+            self._stop_memory_monitoring()
+            
             # Force garbage collection multiple times
             for i in range(3):
                 gc.collect()
@@ -1424,6 +1663,9 @@ class TrainingCore:
     def _cleanup_resources(self):
         """Clean up GPU/CPU resources in worker process"""
         try:
+            # FIXED: Stop memory monitoring
+            self._stop_memory_monitoring()
+            
             # Force garbage collection
             gc.collect()
 

@@ -19,6 +19,32 @@ export interface PreprocessingConfig {
   enable_embeddings: boolean;
   embedding_config?: EmbeddingModelConfig;
   text_cleaning_level: 'minimal' | 'standard' | 'aggressive';
+  cleaning_options?: {
+    deduplication_method: 'none' | 'hash' | 'similarity';
+    normalize_whitespace: boolean;
+    language_detection: boolean;
+    utf8_sanitization: boolean;
+  };
+  tokenization_and_chunking?: {
+    method: 'bpe' | 'sentencepiece' | 'custom';
+    chunking_strategy: 'fixed' | 'sliding_window' | 'semantic';
+    chunk_size: number;
+    overlap: number;
+    max_length_handling: 'truncate' | 'pad' | 'split';
+  };
+  data_augmentation?: {
+    enabled: boolean;
+    techniques: ('back_translation' | 'synonym_replacement' | 'paraphrasing' | 'noise_injection')[];
+    ratio: number;
+    preview: boolean;
+  };
+  class_balancing?: {
+    enabled: boolean;
+    method: 'smote' | 'upsample' | 'downsample' | 'none';
+    target_ratio: number;
+    stratified_split: boolean;
+    k_neighbors: number;
+  };
   remove_duplicates_by_embedding: boolean;
   similarity_threshold: number;
   generate_correlations: boolean;
@@ -88,6 +114,19 @@ export interface PreprocessingAnalytics {
     original_count: number;
     final_count: number;
   };
+  embedding_evaluation?: {
+    intrinsic_metrics: {
+      cosine_similarity: number;
+      alignment: number;
+      uniformity: number;
+    };
+    downstream_evals?: {
+      classification_accuracy: number;
+      f1_score: number;
+      task: string;
+    };
+    visualization_available: boolean;
+  };
 }
 
 export interface EmbeddingModelInfo {
@@ -140,6 +179,7 @@ export interface FineTuneRequest {
   gradient_accumulation_steps: number;
   max_seq_length: number;
   reasoning_effort?: string;
+  preprocessing_config?: PreprocessingConfig;
 }
 
 export interface ApiResponse {

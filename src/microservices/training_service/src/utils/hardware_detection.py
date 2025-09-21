@@ -318,11 +318,12 @@ class AdaptiveTrainingConfig:
     def generate_optimal_config(self, base_request) -> Dict[str, Any]:
         """Generate optimal training configuration for detected hardware"""
         
-        # Determine memory constraint (use container limit if available)
-        effective_memory_gb = (
-            self.profile.container_memory_gb or 
-            min(self.profile.available_memory_gb, self.profile.system_memory_gb * 0.8)
-        )
+        # FIXED: GPU-aware effective memory: cap at GPU memory * 1.25 (overhead for CPU offload), not container RAM
+        gpu_effective = self.profile.gpu_memory_gb * 1.25 if self.profile.cuda_available else 0
+        container_effective = self.profile.container_memory_gb or min(self.profile.available_memory_gb, self.profile.system_memory_gb * 0.8)
+        effective_memory_gb = min(gpu_effective, container_effective)  # GPU is primary bottleneck for training
+        if self.profile.gpu_memory_gb <= 8:
+            self.logger.warning(f"GPU-limited config: capping effective memory at {effective_memory_gb:.1f}GB (GPU={self.profile.gpu_memory_gb}GB)")
         
         # Extract model name from request for precision optimization
         model_name = getattr(base_request, 'model_name', None) or getattr(base_request, 'base_model', None)
@@ -339,7 +340,7 @@ class AdaptiveTrainingConfig:
             "precision_info": self._get_precision_info(model_name),
         }
         
-        self.logger.info(f"Generated adaptive config for {self.profile.gpu_name} with {effective_memory_gb:.1f}GB memory")
+        self.logger.info(f"Generated GPU-aware adaptive config for {self.profile.gpu_name} ({self.profile.gpu_memory_gb}GB GPU) with {effective_memory_gb:.1f}GB effective memory (capped by GPU)")
         self.logger.info(f"Model precision: {config['gpu_optimizations']['torch_dtype']} (optimized for {model_name or 'generic'})")
         return config
 
@@ -553,55 +554,35 @@ class AdaptiveTrainingConfig:
     def _get_adaptive_training_args(self, base_request, memory_gb: float) -> Dict[str, Any]:
         """Get adaptive training arguments based on hardware"""
         
+        # FIXED: For GPU-limited (<=8GB), enforce conservative settings to prevent OOM hangs
+        gpu_memory = self.profile.gpu_memory_gb
+        if gpu_memory <= 8:
+            self.logger.info(f"Applying GPU-limited (8GB) conservative training args to prevent OOM hangs")
+            per_device_batch = 1  # FIXED: Reduce from 2 to 1 for first batch safety
+            grad_accum = max(base_request.gradient_accumulation_steps, 16)  # FIXED: Increase to maintain effective batch ~16
+            max_seq = 1024  # FIXED: Reduce from 2048 to fit in 8GB with activations
+            eval_strategy = "no"  # FIXED: Disable eval to save VRAM
+        else:
+            per_device_batch = min(base_request.batch_size, 2)
+            grad_accum = max(base_request.gradient_accumulation_steps, 8)
+            max_seq = 2048
+            eval_strategy = "steps" if hasattr(base_request, 'eval_steps') else "no"
+        
         # Base configuration
         args = {
-            "dataloader_num_workers": min(self.profile.cpu_cores - 1, 4),
-            "dataloader_pin_memory": self.profile.system_memory_gb > 16,
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
+            "dataloader_pin_memory": self.profile.system_memory_gb > 16 and gpu_memory > 8,  # FIXED: Disable for low GPU memory
+            "per_device_train_batch_size": per_device_batch,
+            "gradient_accumulation_steps": grad_accum,
+            "max_seq_length": max_seq,  # FIXED: Enforce GPU-safe sequence length
+            "eval_strategy": eval_strategy,
+            "save_steps": 50 if gpu_memory <= 8 else 100,  # FIXED: More frequent saves for low memory recovery
+            "logging_steps": 5 if gpu_memory <= 8 else 10,  # FIXED: Frequent logging for monitoring hangs
+            "save_total_limit": 2 if gpu_memory <= 8 else 3,  # FIXED: Fewer checkpoints for low memory
+            "report_to": [],  # FIXED: Disable external logging to save resources
         }
         
-        # Memory-based batch size and gradient accumulation
-        if memory_gb <= 4:  # Very constrained
-            args.update({
-                "per_device_train_batch_size": 1,
-                "gradient_accumulation_steps": max(base_request.gradient_accumulation_steps, 32),
-                "eval_strategy": "no",
-                "save_steps": 25,
-                "logging_steps": 5,
-                "save_total_limit": 1,
-                "report_to": [],
-            })
-        elif memory_gb <= 8:  # RTX 4060 8GB optimized settings
-            # Based on Unsloth 2025.9.5+ benchmarks for 8GB VRAM
-            args.update({
-                "per_device_train_batch_size": 2,  # Optimal for RTX 4060 8GB
-                "gradient_accumulation_steps": max(base_request.gradient_accumulation_steps, 8),  # Effective batch size of 16
-                "eval_strategy": "no",  # Disable to save memory
-                "save_steps": 100,  # Less frequent saves for stability
-                "logging_steps": 5,   # Frequent logging for monitoring
-                "save_total_limit": 2,
-                "report_to": [],
-                # Additional RTX 4060 optimizations
-                "dataloader_num_workers": 0,  # Avoid multiprocessing overhead
-                "dataloader_pin_memory": False,  # Reduce memory pressure
-            })
-        elif memory_gb <= 16:  # Moderate
-            args.update({
-                "per_device_train_batch_size": min(base_request.batch_size, 2),
-                "gradient_accumulation_steps": max(base_request.gradient_accumulation_steps, 8),
-                "eval_strategy": "steps" if hasattr(base_request, 'eval_steps') else "no",
-                "save_steps": 100,
-                "logging_steps": 10,
-                "save_total_limit": 3,
-            })
-        else:  # High memory
-            args.update({
-                "per_device_train_batch_size": base_request.batch_size,
-                "gradient_accumulation_steps": base_request.gradient_accumulation_steps,
-                "eval_strategy": "steps",
-                "save_steps": 100,
-                "logging_steps": 10,
-                "save_total_limit": 3,
-            })
+        self.logger.info(f"GPU-aware training args: batch={per_device_batch}, accum={grad_accum}, effective_batch={per_device_batch*grad_accum}, seq={max_seq}, eval={eval_strategy}")
         
         return args
     

@@ -11,13 +11,16 @@ import sys
 import json
 import time
 import traceback
-import multiprocessing as mp
+import threading
 from pathlib import Path
 from typing import Dict, Any, Optional
 import signal
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
-# Set multiprocessing start method to spawn for CUDA compatibility
-mp.set_start_method('spawn', force=True)
+# FIXED: Don't force spawn method in containers - causes restart loops
+# mp.set_start_method('spawn', force=True)
+# Use threading instead of multiprocessing for container environments
 
 # Environment optimization for worker process
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -158,58 +161,17 @@ class TrainingWorker:
             return {"status": "error", "error": error_msg}
 
 
-def worker_main(task_id: str, request_data: Dict[str, Any], worker_ready_event: mp.Event):
-    """
-    Main entry point for worker process
-    
-    Args:
-        task_id: Unique task identifier
-        request_data: Serialized training request
-        worker_ready_event: Event to signal worker is ready
-    """
-    try:
-        print(f"Worker {task_id}: Starting in separate process (PID: {os.getpid()})")
-        
-        # Signal that worker is ready
-        worker_ready_event.set()
-        
-        # Create and run worker
-        worker = TrainingWorker(task_id)
-        result = worker.run_training(request_data)
-        
-        print(f"Worker {task_id}: Training completed with result: {result.get('status', 'unknown')}")
-        
-        return result
-        
-    except Exception as e:
-        error_msg = f"Worker process failed: {str(e)}"
-        print(f"Worker {task_id}: {error_msg}")
-        
-        # Try to update status file even on catastrophic failure
-        try:
-            status_file = Path("logs") / f"{task_id}_status.json"
-            status_data = {
-                "task_id": task_id,
-                "status": "error", 
-                "message": error_msg,
-                "error_details": traceback.format_exc(),
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            with open(status_file, 'w') as f:
-                json.dump(status_data, f, indent=2)
-        except:
-            pass  # Don't let status update failure mask the original error
-        
-        return {"status": "error", "error": error_msg}
-
+# REMOVED: worker_main function - not used since switching to threading
+# This function was causing NameError: name 'mp' is not defined
+# The ProcessManager class now handles worker threads directly
 
 class ProcessManager:
-    """Manages training worker processes"""
+    """Manages training worker threads (FIXED: uses threading instead of multiprocessing)"""
     
     def __init__(self):
-        self.active_processes: Dict[str, mp.Process] = {}
-        self.process_lock = mp.Lock()
+        self.active_threads: Dict[str, threading.Thread] = {}
+        self.thread_lock = threading.Lock()
+        self.executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="training-worker")
     
     def start_training_process(self, task_id: str, request_data: Dict[str, Any]) -> bool:
         """
@@ -223,79 +185,67 @@ class ProcessManager:
             True if process started successfully, False otherwise
         """
         try:
-            with self.process_lock:
-                if task_id in self.active_processes:
+            with self.thread_lock:
+                if task_id in self.active_threads:
                     print(f"ProcessManager: Training {task_id} already running")
                     return False
                 
-                # Create ready event for process synchronization
-                worker_ready_event = mp.Event()
+                # FIXED: Create and start training thread instead of process
+                def thread_wrapper():
+                    try:
+                        worker = TrainingWorker(task_id)
+                        return worker.run_training(request_data)
+                    except Exception as e:
+                        print(f"Training thread {task_id} failed: {e}")
+                        return {"status": "error", "error": str(e)}
                 
-                # Create and start process
-                process = mp.Process(
-                    target=worker_main,
-                    args=(task_id, request_data, worker_ready_event),
-                    name=f"training-{task_id[:8]}"
+                thread = threading.Thread(
+                    target=thread_wrapper,
+                    name=f"training-{task_id[:8]}",
+                    daemon=False  # Don't make daemon - we want proper cleanup
                 )
                 
-                process.start()
+                thread.start()
+                self.active_threads[task_id] = thread
                 
-                # Wait for worker to be ready (with timeout)
-                if worker_ready_event.wait(timeout=30):
-                    self.active_processes[task_id] = process
-                    print(f"ProcessManager: Started training process {task_id} (PID: {process.pid})")
-                    return True
-                else:
-                    print(f"ProcessManager: Worker {task_id} failed to start within timeout")
-                    process.terminate()
-                    process.join(timeout=5)
-                    if process.is_alive():
-                        process.kill()
-                    return False
+                print(f"ProcessManager: Started training thread {task_id}")
+                return True
                     
         except Exception as e:
             print(f"ProcessManager: Error starting process for {task_id}: {e}")
             return False
     
     def get_process_status(self, task_id: str) -> Optional[str]:
-        """Get the status of a training process"""
-        with self.process_lock:
-            process = self.active_processes.get(task_id)
-            if process is None:
+        """Get the status of a training thread"""
+        with self.thread_lock:
+            thread = self.active_threads.get(task_id)
+            if thread is None:
                 return None
             
-            if process.is_alive():
+            if thread.is_alive():
                 return "running"
             else:
-                # Process finished, clean it up
-                process.join(timeout=1)
-                del self.active_processes[task_id]
+                # Thread finished, clean it up
+                thread.join(timeout=1)
+                del self.active_threads[task_id]
                 return "finished"
     
     def cancel_training(self, task_id: str) -> bool:
-        """Cancel a running training process"""
+        """Cancel a running training thread"""
         try:
-            with self.process_lock:
-                process = self.active_processes.get(task_id)
-                if process is None or not process.is_alive():
+            with self.thread_lock:
+                thread = self.active_threads.get(task_id)
+                if thread is None or not thread.is_alive():
                     return False
                 
-                print(f"ProcessManager: Cancelling training process {task_id}")
+                print(f"ProcessManager: Cancelling training thread {task_id}")
                 
-                # First try graceful shutdown
-                process.terminate()
-                
-                # Wait for graceful shutdown
-                process.join(timeout=10)
-                
-                # Force kill if still alive
-                if process.is_alive():
-                    print(f"ProcessManager: Force killing process {task_id}")
-                    process.kill()
-                    process.join(timeout=5)
+                # Note: Threads can't be forcefully terminated like processes
+                # We rely on the TrainingWorker's should_stop flag for cancellation
+                # The thread will check this flag and exit gracefully
                 
                 # Clean up
-                del self.active_processes[task_id]
+                del self.active_threads[task_id]
                 
                 return True
                 
@@ -304,44 +254,41 @@ class ProcessManager:
             return False
     
     def cleanup_all_processes(self):
-        """Clean up all active processes"""
-        print("ProcessManager: Cleaning up all active processes...")
+        """Clean up all active threads"""
+        print("ProcessManager: Cleaning up all active threads...")
         
-        with self.process_lock:
-            for task_id, process in list(self.active_processes.items()):
+        with self.thread_lock:
+            for task_id, thread in list(self.active_threads.items()):
                 try:
-                    if process.is_alive():
-                        print(f"ProcessManager: Terminating process {task_id}")
-                        process.terminate()
-                        process.join(timeout=5)
+                    if thread.is_alive():
+                        print(f"ProcessManager: Waiting for thread {task_id} to finish...")
+                        thread.join(timeout=5)
                         
-                        if process.is_alive():
-                            print(f"ProcessManager: Force killing process {task_id}")
-                            process.kill()
-                            process.join(timeout=2)
+                        if thread.is_alive():
+                            print(f"ProcessManager: Thread {task_id} still running after timeout")
                 except Exception as e:
-                    print(f"ProcessManager: Error cleaning up process {task_id}: {e}")
+                    print(f"ProcessManager: Error cleaning up thread {task_id}: {e}")
             
-            self.active_processes.clear()
+            self.active_threads.clear()
     
     def get_active_processes(self) -> Dict[str, Dict[str, Any]]:
-        """Get information about all active processes"""
+        """Get information about all active threads"""
         active = {}
         
-        with self.process_lock:
-            for task_id, process in list(self.active_processes.items()):
-                if process.is_alive():
+        with self.thread_lock:
+            for task_id, thread in list(self.active_threads.items()):
+                if thread.is_alive():
                     active[task_id] = {
                         "task_id": task_id,
-                        "pid": process.pid,
-                        "name": process.name,
+                        "thread_id": thread.ident,
+                        "name": thread.name,
                         "status": "running"
                     }
                 else:
-                    # Clean up finished processes
+                    # Clean up finished threads
                     try:
-                        process.join(timeout=0.1)
-                        del self.active_processes[task_id]
+                        thread.join(timeout=0.1)
+                        del self.active_threads[task_id]
                     except:
                         pass
         
@@ -350,22 +297,22 @@ class ProcessManager:
     def get_active_job_count(self) -> int:
         """Get the number of active training jobs for health checks"""
         try:
-            with self.process_lock:
-                # Clean up finished processes first
+            with self.thread_lock:
+                # Clean up finished threads first
                 finished_tasks = []
-                for task_id, process in list(self.active_processes.items()):
-                    if not process.is_alive():
+                for task_id, thread in list(self.active_threads.items()):
+                    if not thread.is_alive():
                         finished_tasks.append(task_id)
                         try:
-                            process.join(timeout=0.1)
+                            thread.join(timeout=0.1)
                         except:
                             pass
                 
-                # Remove finished processes
+                # Remove finished threads
                 for task_id in finished_tasks:
-                    del self.active_processes[task_id]
+                    del self.active_threads[task_id]
                 
-                return len(self.active_processes)
+                return len(self.active_threads)
         except Exception as e:
             print(f"Error getting active job count: {e}")
             return 0

@@ -36,9 +36,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 COPY src/docker/shared-base/requirements-common.txt /tmp/requirements-common.txt
 RUN pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-common.txt
 
-# Install PyTorch with CUDA support (largest dependencies)
+# Install PyTorch with CUDA support (largest dependencies) - FIXED: Pin to compatible cu121 version for Unsloth stability
 RUN pip install --no-cache-dir --timeout=300 --retries=3 \
-    torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+    torch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 --index-url https://download.pytorch.org/whl/cu121
 
 # Install ML-specific dependencies (Unsloth, Transformers, etc.)
 COPY src/docker/shared-ml-base/requirements-ml.txt /tmp/requirements-ml.txt

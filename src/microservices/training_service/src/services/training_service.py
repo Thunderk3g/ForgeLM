@@ -171,18 +171,18 @@ if TRANSFORMERS_AVAILABLE:
 
     class UnslothProgressCallback(TrainerCallback):
         """Custom callback for Unsloth training progress tracking"""
-
+    
         def __init__(self, task_id: str, log_queue: queue.Queue):
             self.task_id = task_id
             self.log_queue = log_queue
             self.start_time = time.time()
             self.logger = get_logger(f"training.{task_id}")
-
+    
         def on_train_begin(self, args, state, control, **kwargs):
             """Called at the beginning of training"""
             try:
                 message = f"Starting training with {state.max_steps} total steps"
-
+    
                 log_entry = {
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "type": "train_start",
@@ -190,18 +190,22 @@ if TRANSFORMERS_AVAILABLE:
                     "total_steps": state.max_steps,
                     "total_epochs": args.num_train_epochs,
                 }
-
+    
                 self.log_queue.put(log_entry)
                 self.logger.info(message)
+                
+                # FIXED: Log initial GPU memory at train start
+                if torch.cuda.is_available():
+                    self.logger.info(f"GPU memory at train_begin: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
             except Exception as e:
                 self.logger.error(f"Error in train begin callback: {e}")
-
+    
         def on_epoch_begin(self, args, state, control, **kwargs):
             """Called at the beginning of each epoch"""
             try:
                 epoch = state.epoch
                 message = f"Starting epoch {epoch}/{args.num_train_epochs}"
-
+    
                 log_entry = {
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "type": "epoch_start",
@@ -209,17 +213,23 @@ if TRANSFORMERS_AVAILABLE:
                     "epoch": epoch,
                     "total_epochs": args.num_train_epochs,
                 }
-
+    
                 self.log_queue.put(log_entry)
                 self.logger.info(message)
             except Exception as e:
                 self.logger.error(f"Error in epoch begin callback: {e}")
-
+    
         def on_step_begin(self, args, state, control, **kwargs):
             """Called at the beginning of each training step"""
-            # We don't need to log every step begin to avoid spam
-            # This method exists just to satisfy the trainer callback interface
-            pass
+            try:
+                current_step = state.global_step
+                # FIXED: Log entry into first few steps to detect hangs
+                if current_step < 3:
+                    self.logger.info(f"Entering step_begin for step {current_step} - checking for cancellation")
+                    if torch.cuda.is_available():
+                        self.logger.info(f"GPU memory at step_begin {current_step}: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
+            except Exception as e:
+                self.logger.error(f"Error in step begin callback: {e}")
 
         def on_step_end(self, args, state, control, **kwargs):
             """Called at the end of each training step"""
@@ -227,7 +237,7 @@ if TRANSFORMERS_AVAILABLE:
                 current_step = state.global_step
                 total_steps = state.max_steps
                 current_epoch = state.epoch
-
+        
                 # Get loss from logs if available
                 loss = None
                 learning_rate = None
@@ -235,20 +245,24 @@ if TRANSFORMERS_AVAILABLE:
                     last_log = state.log_history[-1]
                     loss = last_log.get("train_loss", last_log.get("loss"))
                     learning_rate = last_log.get("learning_rate")
-
+        
                 # Calculate progress
                 progress_pct = (
                     (current_step / total_steps * 100) if total_steps > 0 else 0
                 )
-
-                # Log every 10 steps to avoid spam
-                if current_step % 10 == 0 or current_step == total_steps:
+        
+                # FIXED: Log memory after first few steps
+                if current_step <= 3 and torch.cuda.is_available():
+                    self.logger.info(f"GPU memory at step_end {current_step}: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB, max={torch.cuda.max_memory_allocated()/1024**3:.2f}GB")
+        
+                # Log every 10 steps to avoid spam, but always log first step completion
+                if current_step == 1 or current_step % 10 == 0 or current_step == total_steps:
                     message = f"Step {current_step}/{total_steps} ({progress_pct:.1f}%) - Epoch: {current_epoch:.2f}"
                     if loss is not None:
                         message += f" - Loss: {loss:.4f}"
                     if learning_rate is not None:
                         message += f" - LR: {learning_rate:.2e}"
-
+        
                     log_entry = {
                         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                         "type": "training",
@@ -261,9 +275,9 @@ if TRANSFORMERS_AVAILABLE:
                         "learning_rate": learning_rate,
                         "progress_percentage": progress_pct,
                     }
-
+        
                     self.log_queue.put(log_entry)
-
+        
                     # Also update status file
                     self._update_status_file(
                         current_step,
@@ -274,7 +288,7 @@ if TRANSFORMERS_AVAILABLE:
                         learning_rate,
                         progress_pct,
                     )
-
+        
             except Exception as e:
                 self.logger.error(f"Error in step end callback: {e}")
 
@@ -478,7 +492,7 @@ class TrainingService:
         # Check for dataset files
         expected_files = [
             "dataset_info.json",
-            "state.json", 
+            # Note: state.json is typically in subdirectories, not root for HuggingFace datasets
             "train/data-00000-of-00001.arrow",  # Common Arrow format
             "train/dataset_info.json",
             "train/state.json"
@@ -502,7 +516,20 @@ class TrainingService:
             # Validate loaded dataset
             self._validate_dataset_schema(dataset)
             
-            self.logger.info(f"✅ Dataset loaded successfully: {len(dataset)} samples")
+            # FIXED: Log actual split sizes, not len(dataset)
+            if hasattr(dataset, 'keys') and 'train' in dataset:
+                train_size = len(dataset['train'])
+                val_size = len(dataset['val']) if 'val' in dataset else 0
+                self.logger.info(f"✅ Dataset loaded successfully: {train_size} train samples, {val_size} validation samples (DatasetDict with {len(dataset)} splits)")
+                # Store sizes for later use if needed
+                dataset._debug_train_size = train_size
+                dataset._debug_val_size = val_size
+            else:
+                size = len(dataset)
+                self.logger.info(f"✅ Dataset loaded successfully: {size} samples (single Dataset)")
+                dataset._debug_train_size = size
+                dataset._debug_val_size = 0
+            
             return dataset
             
         except Exception as primary_error:
@@ -748,21 +775,25 @@ class TrainingService:
 
             # Load dataset with comprehensive error handling and schema validation
             dataset = self._load_and_validate_dataset(request.dataset_dir)
-
+            
+            # Log dataset details for debugging
+            train_dataset = dataset["train"] if "train" in dataset else dataset
+            self.logger.info(f"Using train_dataset with {len(train_dataset)} samples for training")
+            
             # Setup adaptive training arguments with training type (already defined above)
             training_args = self._create_adaptive_training_args(
                 request, task_id, adaptive_config, training_type
             )
-
+            
             # Create progress callback
             progress_callback = UnslothProgressCallback(task_id, log_queue)
-
+            
             # Create trainer with adaptive SFT configuration
             adaptive_training_args = adaptive_config["training_args"]
             effective_seq_length = min(
                 request.max_seq_length, model_config["max_seq_length"]
             )
-
+            
             # Get training type specific SFT configuration
             if training_type == "chat":
                 sft_config_dict = self.get_chat_sft_config(request, adaptive_config)
@@ -773,12 +804,15 @@ class TrainingService:
                 sft_config = SFTConfig(
                     dataset_text_field="text",
                     max_seq_length=effective_seq_length,
-                    dataset_num_proc=adaptive_training_args.get(
-                        "dataloader_num_workers", 1
-                    ),
+                    dataset_num_proc=1,  # FIXED: Force single process to prevent semaphore leaks
                     packing=True,  # Enable packing for efficiency
+                    dataset_kwargs={
+                        "batched": True,
+                        "batch_size": 500,  # FIXED: Batched tokenization with limited batch size to prevent RAM OOM
+                        "remove_columns": ["text"],  # Clean up after tokenization
+                    },
                 )
-
+            
             trainer = SFTTrainer(
                 model=model,
                 tokenizer=tokenizer,
@@ -788,13 +822,13 @@ class TrainingService:
                 data_collator=None,
                 **sft_config.to_dict(),
             )
-
+            
             # Add custom callback for progress tracking
             trainer.add_callback(progress_callback)
             
             # CRITICAL: Validate precision settings to prevent Unsloth errors
             training_args = self._validate_precision_settings(training_args, model)
-
+            
             # Register this training for cleanup
             self.active_trainings[task_id] = {
                 "trainer": trainer,
@@ -802,11 +836,31 @@ class TrainingService:
                 "tokenizer": tokenizer,
                 "start_time": time.time(),
             }
-
+            
+            # FIXED: Log memory usage before training
+            if torch.cuda.is_available():
+                self.logger.info(f"GPU memory before trainer.train(): allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB, max_allocated={torch.cuda.max_memory_allocated()/1024**3:.2f}GB")
+                self.logger.info(f"Training config: batch_size={training_args.per_device_train_batch_size}, grad_accum={training_args.gradient_accumulation_steps}, seq_length={effective_seq_length}, precision=bf16" if training_args.bf16 else "fp16")
+            
             # Start training with error recovery
             self.logger.info(f"Starting Unsloth-optimized training for task {task_id}")
+            
+            # FIXED: Force memory cleanup before training to prevent container restarts
             try:
+                import gc
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+                    torch.cuda.synchronize()
+                self.logger.info("Pre-training memory cleanup completed")
+            except Exception as e:
+                self.logger.warning(f"Pre-training cleanup failed: {e}")
+            
+            try:
+                self.logger.info("About to call trainer.train() - monitoring for hangs")
                 trainer.train()
+                self.logger.info("trainer.train() completed successfully")
             except torch.cuda.OutOfMemoryError as oom_error:
                 self.logger.error(f"OOM Error during training: {oom_error}")
                 # Emergency memory cleanup
@@ -949,7 +1003,7 @@ class TrainingService:
                 dataset_text_field="text",
                 max_seq_length=request.max_seq_length,
                 packing=False,
-                dataset_num_proc=2,
+                dataset_num_proc=1,  # FIXED: Force single process to prevent semaphore leaks
             )
 
             trainer = SFTTrainer(
@@ -1068,7 +1122,7 @@ class TrainingService:
             "save_steps": base_args.get("save_steps", adaptive_args.get("save_steps", 100)),
             "save_total_limit": adaptive_args.get("save_total_limit", 2),
             "eval_strategy": adaptive_args.get("eval_strategy", "no"),
-            "dataloader_num_workers": base_args.get("dataloader_num_workers", adaptive_args.get("dataloader_num_workers", 0)),
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": base_args.get("dataloader_pin_memory", adaptive_args.get("dataloader_pin_memory", False)),
             "remove_unused_columns": base_args.get("remove_unused_columns", False),
             "run_name": f"llmforge_{training_type}_{task_id[:8]}",
@@ -1135,7 +1189,7 @@ class TrainingService:
             "lr_scheduler_type": "linear",
             "logging_steps": adaptive_args.get("logging_steps", 10),
             "save_steps": adaptive_args.get("save_steps", 100),
-            "dataloader_num_workers": adaptive_args.get("dataloader_num_workers", 0),
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": adaptive_args.get("dataloader_pin_memory", False),
             "remove_unused_columns": False,
         }
@@ -1152,7 +1206,7 @@ class TrainingService:
             "lr_scheduler_type": "cosine",
             "logging_steps": adaptive_args.get("logging_steps", 5),
             "save_steps": adaptive_args.get("save_steps", 200),
-            "dataloader_num_workers": min(2, adaptive_args.get("dataloader_num_workers", 1)),
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": False,
             "remove_unused_columns": False,
             "group_by_length": True,
@@ -1171,7 +1225,7 @@ class TrainingService:
             "lr_scheduler_type": "cosine",
             "logging_steps": adaptive_args.get("logging_steps", 5),
             "save_steps": adaptive_args.get("save_steps", 500),
-            "dataloader_num_workers": 1,
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": False,
             "remove_unused_columns": False,
             "group_by_length": False,
@@ -1221,7 +1275,7 @@ class TrainingService:
             "dataset_text_field": "text",
             "max_seq_length": min(request.max_seq_length, 4096),
             "packing": True,
-            "dataset_num_proc": 2,
+            "dataset_num_proc": 1,  # FIXED: Force single process to prevent semaphore leaks
             "chars_per_token": 3.5,
         }
         

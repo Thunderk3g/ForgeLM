@@ -28,7 +28,7 @@ import {
 } from "../lib/api"
 import type { LogEntry } from "../lib/api"
 
-import type { SelectModelRequest, PrepareDataRequest, FineTuneRequest, TrainingStatus, ModelInfo } from "../lib/types"
+import type { SelectModelRequest, PrepareDataRequest, FineTuneRequest, TrainingStatus, ModelInfo, PreprocessingConfig, PreprocessingAnalytics } from "../types/api"
 
 interface MetricData {
   epoch: number
@@ -589,6 +589,26 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
                 isLoading={loading.training}
                 selectedModel={selectedModel}
                 selectedModelInfo={selectedModelInfo}
+                datasetPath="/app/data/prepared"
+                preprocessingConfig={{
+                  enable_embeddings: false,
+                  text_cleaning_level: 'standard',
+                  cleaning_options: {
+                    deduplication_method: 'hash',
+                    normalize_whitespace: true,
+                    language_detection: false,
+                    utf8_sanitization: true
+                  },
+                  remove_duplicates_by_embedding: false,
+                  similarity_threshold: 0.95,
+                  generate_correlations: false,
+                  create_tensor_visualizations: false,
+                  quality_analysis: true,
+                  token_analysis: true,
+                  preview_samples: 10
+                }}
+                analytics={undefined}
+                onUpdateConfig={() => {}}
               />
             </div>
 

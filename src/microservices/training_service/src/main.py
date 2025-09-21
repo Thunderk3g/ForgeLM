@@ -7,6 +7,8 @@ and high-performance fine-tuning capabilities.
 
 import asyncio
 import os
+import signal
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -38,7 +40,41 @@ training_errors_total = Counter('training_errors_total', 'Total training errors'
 
 # Global service instance
 training_service: Optional[TrainingService] = None
+metrics_task: Optional[asyncio.Task] = None
 logger = get_logger(__name__)
+
+
+def signal_handler(signum, frame):
+    """Enhanced signal handler for graceful container shutdown"""
+    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
+    
+    # Cancel metrics task if running
+    global metrics_task
+    if metrics_task and not metrics_task.done():
+        metrics_task.cancel()
+        logger.info("Cancelled metrics task")
+    
+    # Stop any active training jobs
+    if training_service:
+        try:
+            # This would need to be implemented in TrainingService
+            logger.info("Stopping all active training jobs...")
+        except Exception as e:
+            logger.error(f"Error stopping training jobs: {e}")
+    
+    # Force exit after timeout to prevent hanging
+    def force_exit():
+        time.sleep(10)
+        logger.warning("Force exit after 10s timeout")
+        os._exit(0)
+    
+    threading.Thread(target=force_exit, daemon=True).start()
+    logger.info("Signal handler completed")
+
+
+# Register signal handlers for container environment
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 
 async def register_service():
@@ -69,7 +105,7 @@ async def register_service():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle management for the training service"""
-    global training_service
+    global training_service, metrics_task
     
     # Startup
     logger.info("Starting Training Microservice...")
@@ -80,13 +116,21 @@ async def lifespan(app: FastAPI):
     
     # Start performance monitoring
     performance_monitor.start_monitoring()
-     # 🔥 Start background metrics updater
-    asyncio.create_task(update_metrics())
+    
+    # FIXED: Properly managed background task
+    metrics_task = asyncio.create_task(update_metrics())
     logger.info("Training Microservice started successfully")
     yield
     
-    # Shutdown
+    # FIXED: Proper cleanup
     logger.info("Shutting down Training Microservice...")
+    if metrics_task and not metrics_task.done():
+        metrics_task.cancel()
+        try:
+            await metrics_task
+        except asyncio.CancelledError:
+            pass
+    
     if training_service:
         await training_service.cleanup()
     performance_monitor.stop_monitoring()

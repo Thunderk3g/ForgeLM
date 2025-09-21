@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { Database, Upload, Settings, Eye, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
+import { Database, Upload, Settings, Eye, Sparkles, ChevronDown, ChevronRight, HelpCircle } from 'lucide-react';
+import { Button } from './ui/button';
 import type { PrepareDataRequest, PreprocessingConfig } from '../types/api';
 import { PreprocessingConfigPanel } from './PreprocessingConfigPanel';
+import { PreprocessingResultsViewer } from './PreprocessingResultsViewer';
 
 interface DataPreparationProps {
   onPrepareData: (request: PrepareDataRequest) => void;
@@ -15,13 +17,20 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
   const [balance, setBalance] = useState(false);
   const [testSize, setTestSize] = useState(0.2);
   const [maxLength, setMaxLength] = useState(512);
-  const [showAdvancedConfig, setShowAdvancedConfig] = useState(false);
+  const [showAdvancedConfig, setShowAdvancedConfig] = useState(true);
+  const [showVizPreview, setShowVizPreview] = useState(true);
   const [selectedTemplate, setSelectedTemplate] = useState<string>('basic');
   
   // Advanced preprocessing configuration
   const [preprocessingConfig, setPreprocessingConfig] = useState<PreprocessingConfig>({
     enable_embeddings: false,
     text_cleaning_level: 'standard',
+    cleaning_options: {
+      deduplication_method: 'hash',
+      normalize_whitespace: true,
+      language_detection: false,
+      utf8_sanitization: true
+    },
     remove_duplicates_by_embedding: false,
     similarity_threshold: 0.95,
     generate_correlations: false,
@@ -38,6 +47,12 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
       config: {
         enable_embeddings: false,
         text_cleaning_level: 'standard' as const,
+        cleaning_options: {
+          deduplication_method: 'hash' as const,
+          normalize_whitespace: true,
+          language_detection: false,
+          utf8_sanitization: true
+        },
         remove_duplicates_by_embedding: false,
         similarity_threshold: 0.95,
         generate_correlations: false,
@@ -60,6 +75,12 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
           batch_size: 32
         },
         text_cleaning_level: 'standard' as const,
+        cleaning_options: {
+          deduplication_method: 'similarity' as const,
+          normalize_whitespace: true,
+          language_detection: true,
+          utf8_sanitization: true
+        },
         remove_duplicates_by_embedding: true,
         similarity_threshold: 0.95,
         generate_correlations: true,
@@ -82,6 +103,12 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
           batch_size: 16
         },
         text_cleaning_level: 'aggressive' as const,
+        cleaning_options: {
+          deduplication_method: 'similarity' as const,
+          normalize_whitespace: true,
+          language_detection: true,
+          utf8_sanitization: true
+        },
         remove_duplicates_by_embedding: true,
         similarity_threshold: 0.9,
         generate_correlations: true,
@@ -126,6 +153,17 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
             <Sparkles className="w-4 h-4 text-purple-500" />
             <span className="text-sm text-muted-foreground">Enhanced Preprocessing</span>
           </div>
+          <Button variant="ghost" size="sm" asChild>
+            <a
+              href="/docs/data-preparation-guide.md"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center space-x-1"
+              title="Data Preparation Best Practices Guide"
+            >
+              <HelpCircle className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+            </a>
+          </Button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -330,6 +368,26 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({ onPrepareData,
             )}
           </div>
         </form>
+      </div>
+
+      {/* Visualization Preview */}
+      <div className="space-y-4">
+        <button
+          type="button"
+          onClick={() => setShowVizPreview(!showVizPreview)}
+          className="flex items-center space-x-2 text-sm font-medium text-blue-600 hover:text-blue-800"
+        >
+          <Eye className="w-4 h-4" />
+          <span>{showVizPreview ? 'Hide' : 'Show'} Preview & Visualizations</span>
+        </button>
+        {showVizPreview && (
+          <div className="animate-in slide-in-from-top-5 duration-200">
+            <PreprocessingResultsViewer
+              result={{ status: 'success', message: 'Data Preparation Preview', train_path: inputFile }}
+              className="border rounded-lg"
+            />
+          </div>
+        )}
       </div>
 
       {/* Advanced Configuration Panel */}

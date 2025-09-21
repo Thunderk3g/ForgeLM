@@ -210,7 +210,7 @@ class GRPOTrainer:
             "weight_decay": 0.001,
             "lr_scheduler_type": "cosine",
             "seed": 3407,
-            "dataloader_num_workers": 1,
+            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
             "dataloader_pin_memory": False,
             "remove_unused_columns": False,
             "group_by_length": False,
@@ -266,7 +266,7 @@ class GRPOTrainer:
                 dataset_text_field="text",
                 max_seq_length=self.max_seq_length,
                 packing=False,  # Don't pack for reasoning
-                dataset_num_proc=1,
+                dataset_num_proc=1,  # FIXED: Force single process to prevent semaphore leaks
                 chars_per_token=3.5,
                 # GRPO specific
                 dataset_kwargs={

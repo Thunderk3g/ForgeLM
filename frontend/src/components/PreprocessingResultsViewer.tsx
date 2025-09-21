@@ -23,13 +23,82 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
   result,
   className = ''
 }) => {
-  const [showVisualizations, setShowVisualizations] = useState(false);
+  const isPreview = result.message.includes('Preview');
+  const [showVisualizations, setShowVisualizations] = useState(isPreview);
   const [analytics, setAnalytics] = useState<PreprocessingAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (result.status === 'success' && result.train_path) {
-      loadAnalytics();
+      if (isPreview) {
+        // Mock analytics for preview mode to show visualizations
+        setAnalytics({
+          quality_metrics: {
+            overall_quality_score: 0.85,
+            avg_text_length: 245,
+            vocabulary_richness: 0.78,
+            data_completeness: 0.98
+          },
+          embedding_stats: {
+            model_name: 'sentence-transformers/all-MiniLM-L6-v2',
+            embedding_dimension: 384,
+            embedding_shape: [1000, 384],
+            mean_norm: 1.0
+          },
+          token_distribution: {
+            token_statistics: {
+              mean_tokens_per_sample: 128,
+              median_tokens_per_sample: 120,
+              total_estimated_tokens: 128000
+            },
+            vocabulary_stats: {
+              total_unique_words: 4500,
+              most_frequent_words: [['the', 250], ['is', 180], ['and', 150], ['to', 120], ['of', 100]]
+            }
+          },
+          preprocessing_time_ms: 2500,
+          duplicate_removal_stats: {
+            original_count: 1000,
+            duplicates_removed: 50,
+            final_count: 950
+          },
+          tensor_visualizations: {
+            tensor_shape: [1000, 384],
+            tensor_stats: {
+              mean: 0.001,
+              std: 0.15,
+              min: -0.5,
+              max: 0.5,
+              norm: 1.0
+            },
+            visualization_data: {
+              pca_components: [[0.1, 0.2], [0.3, 0.4]],
+              tsne_coordinates: [[0.5, 0.6], [0.7, 0.8]],
+              umap_embeddings: [[0.9, 1.0], [1.1, 1.2]]
+            }
+          },
+          correlation_analysis: {
+            correlation_matrix: [[1.0, 0.2, 0.1], [0.2, 1.0, 0.3], [0.1, 0.3, 1.0]],
+            key_correlations: { 'text_length_tokens': 0.65, 'quality_score': 'medium' }
+          },
+          embedding_evaluation: {
+            intrinsic_metrics: {
+              cosine_similarity: 0.75,
+              alignment: 0.82,
+              uniformity: 0.78
+            },
+            downstream_evals: {
+              task: 'classification',
+              classification_accuracy: 0.88,
+              f1_score: 0.85
+            },
+            visualization_available: true
+          }
+        });
+        setLoading(false);
+      } else {
+        loadAnalytics();
+      }
     }
   }, [result]);
 
@@ -79,10 +148,11 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
   };
 
   const hasAdvancedFeatures = analytics && (
-    analytics.embedding_stats || 
-    analytics.tensor_visualizations || 
-    analytics.correlation_analysis || 
-    analytics.token_distribution
+    analytics.embedding_stats ||
+    analytics.tensor_visualizations ||
+    analytics.correlation_analysis ||
+    analytics.token_distribution ||
+    analytics.embedding_evaluation
   );
 
   return (
@@ -246,6 +316,94 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Embedding Evaluation Section */}
+        {analytics?.embedding_evaluation && (
+          <div className="mt-6">
+            <h4 className="font-medium mb-3 flex items-center space-x-2">
+              <Brain className="w-4 h-4 text-purple-500" />
+              <span>Embedding Evaluation</span>
+            </h4>
+            <div className="bg-white rounded-lg border p-4 space-y-4">
+              {/* Intrinsic Metrics */}
+              <div>
+                <h5 className="font-medium text-sm mb-2">Intrinsic Metrics</h5>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <div className="text-muted-foreground">Cosine Similarity</div>
+                    <div className="font-medium text-green-600">
+                      {analytics.embedding_evaluation.intrinsic_metrics.cosine_similarity.toFixed(3)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Alignment</div>
+                    <div className="font-medium text-blue-600">
+                      {analytics.embedding_evaluation.intrinsic_metrics.alignment.toFixed(3)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-muted-foreground">Uniformity</div>
+                    <div className="font-medium text-purple-600">
+                      {analytics.embedding_evaluation.intrinsic_metrics.uniformity.toFixed(3)}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-muted-foreground mt-2">
+                  Higher values indicate better embedding quality (cosine: 0-1, alignment/uniformity: 0-1)
+                </div>
+              </div>
+
+              {/* Downstream Evaluation */}
+              {analytics.embedding_evaluation.downstream_evals && (
+                <div>
+                  <h5 className="font-medium text-sm mb-2">Downstream Task Performance</h5>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-muted-foreground">Task</div>
+                      <div className="font-medium capitalize">
+                        {analytics.embedding_evaluation.downstream_evals.task}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Accuracy</div>
+                      <div className="font-medium text-green-600">
+                        {(analytics.embedding_evaluation.downstream_evals.classification_accuracy * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">F1 Score</div>
+                      <div className="font-medium text-blue-600">
+                        {analytics.embedding_evaluation.downstream_evals.f1_score.toFixed(3)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Visualization Toggle */}
+              {analytics.embedding_evaluation.visualization_available && (
+                <div className="pt-3 border-t">
+                  <button
+                    onClick={() => setShowVisualizations(!showVisualizations)}
+                    className="flex items-center space-x-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors text-sm"
+                  >
+                    <Eye className="w-4 h-4" />
+                    <span>
+                      {showVisualizations ? 'Hide' : 'Show'} Embedding Visualizations
+                    </span>
+                  </button>
+                  {showVisualizations && (
+                    <div className="mt-3 p-3 bg-gray-50 rounded">
+                      <p className="text-xs text-muted-foreground">
+                        PCA and t-SNE projections of embedding space available in the visualization dashboard below.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}

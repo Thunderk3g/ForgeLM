@@ -105,6 +105,7 @@ services:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-training
     restart: unless-stopped
+    init: true  # FIXED: Handle PID 1 properly
     ports:
       - "8001:8001"
     environment:
@@ -117,6 +118,12 @@ services:
       - CUDA_LAUNCH_BLOCKING=0
       - MAX_TRAINING_JOBS=2
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
+      # FIXED: Container stability environment variables
+      - CONTAINER_MEMORY_LIMIT_GB=14
+      - WORKER_MEMORY_GB=12
+      - TRITON_CACHE_DIR=/tmp/.triton_cache
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256,expandable_segments:True
+      - OMP_NUM_THREADS=1
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -128,7 +135,10 @@ services:
       - orchestrator
     deploy:
       resources:
+        limits:
+          memory: 14G  # Safe for 15.5GB host, room for patching/optimizer
         reservations:
+          memory: 12G  # Guarantee for stability
           devices:
             - driver: nvidia
               count: 1
