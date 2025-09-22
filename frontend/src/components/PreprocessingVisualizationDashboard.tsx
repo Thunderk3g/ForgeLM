@@ -1,17 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  BarChart3, 
-  TrendingUp, 
-  Eye, 
-  Brain, 
-  Target, 
-  Download,
-  RefreshCw,
+import {
   AlertCircle,
+  BarChart3,
+  Brain,
   CheckCircle2,
-  Info
-} from 'lucide-react';
-import type { PreprocessingAnalytics, TensorVisualizationData } from '../types/api';
+  Download,
+  Eye,
+  RefreshCw,
+  Target,
+  TrendingUp,
+} from "lucide-react";
+import React, { useCallback, useEffect, useState } from "react";
+import type { PreprocessingAnalytics } from "../types/api";
 
 interface PreprocessingVisualizationDashboardProps {
   datasetPath: string;
@@ -19,57 +18,70 @@ interface PreprocessingVisualizationDashboardProps {
   className?: string;
 }
 
-export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualizationDashboardProps> = ({
-  datasetPath,
-  analytics,
-  className = ''
-}) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'embeddings' | 'quality' | 'tokens'>('overview');
-  const [visualizations, setVisualizations] = useState<any>(null);
+export const PreprocessingVisualizationDashboard: React.FC<
+  PreprocessingVisualizationDashboardProps
+> = ({ datasetPath, analytics, className = "" }) => {
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "embeddings" | "quality" | "tokens"
+  >("overview");
+  const [visualizations, setVisualizations] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (datasetPath) {
-      loadVisualizationData();
-    }
-  }, [datasetPath]);
-
-  const loadVisualizationData = async () => {
+  const loadVisualizationData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      
-      const response = await fetch('/api/visualization/preprocessing/visualize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dataset_path: datasetPath,
-          include_embeddings: true,
-          include_correlations: true,
-          include_token_analysis: true,
-          include_quality_metrics: true
-        })
-      });
-      
+
+      const response = await fetch(
+        "/api/visualization/preprocessing/visualize",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            dataset_path: datasetPath,
+            include_embeddings: true,
+            include_correlations: true,
+            include_token_analysis: true,
+            include_quality_metrics: true,
+          }),
+        }
+      );
+
       if (response.ok) {
         const data = await response.json();
         setVisualizations(data.visualizations);
       } else {
-        setError('Failed to load visualization data');
+        setError("Failed to load visualization data");
       }
-    } catch (err) {
-      setError('Network error while loading visualizations');
+    } catch {
+      setError("Network error while loading visualizations");
     } finally {
       setLoading(false);
     }
-  };
+  }, [datasetPath]);
+
+  useEffect(() => {
+    // If analytics are provided as props, use them directly
+    if (analytics) {
+      setLoading(false);
+      return;
+    }
+
+    // Otherwise, try to fetch from API
+    if (datasetPath) {
+      loadVisualizationData();
+    }
+  }, [datasetPath, analytics, loadVisualizationData]);
 
   const tabs = [
-    { id: 'overview', label: 'Overview', icon: BarChart3 },
-    { id: 'embeddings', label: 'Embeddings', icon: Brain },
-    { id: 'quality', label: 'Quality', icon: Target },
-    { id: 'tokens', label: 'Tokens', icon: TrendingUp }
+    { id: "overview", label: "Overview", icon: BarChart3 },
+    { id: "embeddings", label: "Embeddings", icon: Brain },
+    { id: "quality", label: "Quality", icon: Target },
+    { id: "tokens", label: "Tokens", icon: TrendingUp },
   ];
 
   const renderOverviewTab = () => (
@@ -83,18 +95,28 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
           </div>
           <div className="space-y-3">
             <div className="flex justify-between items-center">
-              <span className="text-sm text-muted-foreground">Overall Score</span>
+              <span className="text-sm text-muted-foreground">
+                Overall Score
+              </span>
               <div className="flex items-center space-x-2">
-                <div className={`w-16 h-2 rounded-full ${
-                  analytics.quality_metrics.overall_quality_score >= 0.8 ? 'bg-green-500' :
-                  analytics.quality_metrics.overall_quality_score >= 0.6 ? 'bg-yellow-500' : 'bg-red-500'
-                }`} />
+                <div
+                  className={`w-16 h-2 rounded-full ${
+                    analytics.quality_metrics.overall_quality_score >= 0.8
+                      ? "bg-green-500"
+                      : analytics.quality_metrics.overall_quality_score >= 0.6
+                      ? "bg-yellow-500"
+                      : "bg-red-500"
+                  }`}
+                />
                 <span className="font-medium">
-                  {(analytics.quality_metrics.overall_quality_score * 100).toFixed(1)}%
+                  {(
+                    analytics.quality_metrics.overall_quality_score * 100
+                  ).toFixed(1)}
+                  %
                 </span>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <div className="text-muted-foreground">Avg Text Length</div>
@@ -105,13 +127,19 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
               <div>
                 <div className="text-muted-foreground">Vocabulary Richness</div>
                 <div className="font-medium">
-                  {(analytics.quality_metrics.vocabulary_richness * 100).toFixed(1)}%
+                  {(
+                    analytics.quality_metrics.vocabulary_richness * 100
+                  ).toFixed(1)}
+                  %
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">Data Completeness</div>
                 <div className="font-medium">
-                  {(analytics.quality_metrics.data_completeness * 100).toFixed(1)}%
+                  {(analytics.quality_metrics.data_completeness * 100).toFixed(
+                    1
+                  )}
+                  %
                 </div>
               </div>
             </div>
@@ -130,22 +158,26 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             <div className="flex justify-between">
               <span className="text-muted-foreground">Model</span>
               <span className="font-mono text-xs">
-                {analytics.embedding_stats.model_name.split('/').pop()}
+                {analytics.embedding_stats.model_name.split("/").pop()}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Dimension</span>
-              <span className="font-medium">{analytics.embedding_stats.embedding_dimension}</span>
+              <span className="font-medium">
+                {analytics.embedding_stats.embedding_dimension}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Shape</span>
               <span className="font-mono text-xs">
-                [{analytics.embedding_stats.embedding_shape.join(', ')}]
+                [{analytics.embedding_stats.embedding_shape.join(", ")}]
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Mean Norm</span>
-              <span className="font-medium">{analytics.embedding_stats.mean_norm.toFixed(3)}</span>
+              <span className="font-medium">
+                {analytics.embedding_stats.mean_norm.toFixed(3)}
+              </span>
             </div>
           </div>
         </div>
@@ -162,7 +194,9 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             <div className="flex justify-between">
               <span className="text-muted-foreground">Mean Tokens/Sample</span>
               <span className="font-medium">
-                {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(0)}
+                {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
+                  0
+                )}
               </span>
             </div>
             <div className="flex justify-between">
@@ -198,7 +232,9 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             {analytics.duplicate_removal_stats && (
               <>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Duplicates Removed</span>
+                  <span className="text-muted-foreground">
+                    Duplicates Removed
+                  </span>
                   <span className="font-medium">
                     {analytics.duplicate_removal_stats.duplicates_removed}
                   </span>
@@ -207,9 +243,11 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
                   <span className="text-muted-foreground">Retention Rate</span>
                   <span className="font-medium">
                     {(
-                      (analytics.duplicate_removal_stats.final_count / 
-                       analytics.duplicate_removal_stats.original_count) * 100
-                    ).toFixed(1)}%
+                      (analytics.duplicate_removal_stats.final_count /
+                        analytics.duplicate_removal_stats.original_count) *
+                      100
+                    ).toFixed(1)}
+                    %
                   </span>
                 </div>
               </>
@@ -231,7 +269,7 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Shape</span>
                 <span className="font-mono text-xs">
-                  [{analytics.tensor_visualizations.tensor_shape.join(', ')}]
+                  [{analytics.tensor_visualizations.tensor_shape.join(", ")}]
                 </span>
               </div>
               <div className="flex justify-between">
@@ -272,7 +310,8 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
           <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h4 className="font-medium mb-2">No Embedding Data</h4>
           <p className="text-sm text-muted-foreground">
-            Enable embedding generation in preprocessing configuration to see tensor visualizations.
+            Enable embedding generation in preprocessing configuration to see
+            tensor visualizations.
           </p>
         </div>
       )}
@@ -287,13 +326,23 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
           <div className="bg-card border rounded-lg p-4">
             <h4 className="font-medium mb-3">Quality Score</h4>
             <div className="text-center">
-              <div className={`text-3xl font-bold mb-2 ${
-                analytics.quality_metrics.overall_quality_score >= 0.8 ? 'text-green-500' :
-                analytics.quality_metrics.overall_quality_score >= 0.6 ? 'text-yellow-500' : 'text-red-500'
-              }`}>
-                {(analytics.quality_metrics.overall_quality_score * 100).toFixed(0)}%
+              <div
+                className={`text-3xl font-bold mb-2 ${
+                  analytics.quality_metrics.overall_quality_score >= 0.8
+                    ? "text-green-500"
+                    : analytics.quality_metrics.overall_quality_score >= 0.6
+                    ? "text-yellow-500"
+                    : "text-red-500"
+                }`}
+              >
+                {(
+                  analytics.quality_metrics.overall_quality_score * 100
+                ).toFixed(0)}
+                %
               </div>
-              <div className="text-sm text-muted-foreground">Overall Quality</div>
+              <div className="text-sm text-muted-foreground">
+                Overall Quality
+              </div>
             </div>
           </div>
 
@@ -308,14 +357,19 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-2">
-                <div 
-                  className="bg-blue-500 h-2 rounded-full" 
-                  style={{ 
-                    width: `${Math.min(analytics.quality_metrics.avg_text_length / 1000 * 100, 100)}%` 
-                  }} 
+                <div
+                  className="bg-blue-500 h-2 rounded-full"
+                  style={{
+                    width: `${Math.min(
+                      (analytics.quality_metrics.avg_text_length / 1000) * 100,
+                      100
+                    )}%`,
+                  }}
                 />
               </div>
-              <div className="text-xs text-muted-foreground">Characters per sample</div>
+              <div className="text-xs text-muted-foreground">
+                Characters per sample
+              </div>
             </div>
           </div>
 
@@ -325,12 +379,17 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-sm">Data Complete</span>
-                <CheckCircle2 className={`w-4 h-4 ${
-                  analytics.quality_metrics.data_completeness >= 0.95 ? 'text-green-500' : 'text-yellow-500'
-                }`} />
+                <CheckCircle2
+                  className={`w-4 h-4 ${
+                    analytics.quality_metrics.data_completeness >= 0.95
+                      ? "text-green-500"
+                      : "text-yellow-500"
+                  }`}
+                />
               </div>
               <div className="text-2xl font-bold">
-                {(analytics.quality_metrics.data_completeness * 100).toFixed(1)}%
+                {(analytics.quality_metrics.data_completeness * 100).toFixed(1)}
+                %
               </div>
               <div className="text-xs text-muted-foreground">
                 Non-empty samples
@@ -343,7 +402,8 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
           <Target className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h4 className="font-medium mb-2">No Quality Analysis</h4>
           <p className="text-sm text-muted-foreground">
-            Enable quality analysis in preprocessing configuration to see quality metrics.
+            Enable quality analysis in preprocessing configuration to see
+            quality metrics.
           </p>
         </div>
       )}
@@ -359,19 +419,29 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             <h4 className="font-medium mb-3">Token Statistics</h4>
             <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Mean per Sample</span>
+                <span className="text-sm text-muted-foreground">
+                  Mean per Sample
+                </span>
                 <span className="font-medium">
-                  {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(0)}
+                  {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
+                    0
+                  )}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Median per Sample</span>
+                <span className="text-sm text-muted-foreground">
+                  Median per Sample
+                </span>
                 <span className="font-medium">
-                  {analytics.token_distribution.token_statistics.median_tokens_per_sample.toFixed(0)}
+                  {analytics.token_distribution.token_statistics.median_tokens_per_sample.toFixed(
+                    0
+                  )}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Total Estimated</span>
+                <span className="text-sm text-muted-foreground">
+                  Total Estimated
+                </span>
                 <span className="font-medium">
                   {analytics.token_distribution.token_statistics.total_estimated_tokens.toLocaleString()}
                 </span>
@@ -384,22 +454,32 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             <h4 className="font-medium mb-3">Vocabulary</h4>
             <div className="space-y-3">
               <div className="flex justify-between">
-                <span className="text-sm text-muted-foreground">Unique Words</span>
+                <span className="text-sm text-muted-foreground">
+                  Unique Words
+                </span>
                 <span className="font-medium">
                   {analytics.token_distribution.vocabulary_stats.total_unique_words.toLocaleString()}
                 </span>
               </div>
-              
-              {analytics.token_distribution.vocabulary_stats.most_frequent_words && (
+
+              {analytics.token_distribution.vocabulary_stats
+                .most_frequent_words && (
                 <div>
-                  <div className="text-sm text-muted-foreground mb-2">Most Frequent</div>
+                  <div className="text-sm text-muted-foreground mb-2">
+                    Most Frequent
+                  </div>
                   <div className="space-y-1">
-                    {analytics.token_distribution.vocabulary_stats.most_frequent_words.slice(0, 5).map(([word, count], index) => (
-                      <div key={index} className="flex justify-between text-xs">
-                        <span className="font-mono">{word}</span>
-                        <span>{count}</span>
-                      </div>
-                    ))}
+                    {analytics.token_distribution.vocabulary_stats.most_frequent_words
+                      .slice(0, 5)
+                      .map(([word, count], index) => (
+                        <div
+                          key={index}
+                          className="flex justify-between text-xs"
+                        >
+                          <span className="font-mono">{word}</span>
+                          <span>{count}</span>
+                        </div>
+                      ))}
                   </div>
                 </div>
               )}
@@ -411,13 +491,15 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
           <TrendingUp className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h4 className="font-medium mb-2">No Token Analysis</h4>
           <p className="text-sm text-muted-foreground">
-            Enable token analysis in preprocessing configuration to see token distribution.
+            Enable token analysis in preprocessing configuration to see token
+            distribution.
           </p>
         </div>
       )}
     </div>
   );
 
+  // Show loading state
   if (loading) {
     return (
       <div className={`bg-card rounded-lg border p-8 ${className}`}>
@@ -432,18 +514,44 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
     );
   }
 
+  // Show error state
   if (error) {
     return (
-      <div className={`bg-card rounded-lg border border-destructive p-8 ${className}`}>
+      <div
+        className={`bg-card rounded-lg border border-destructive p-8 ${className}`}
+      >
         <div className="text-center">
           <AlertCircle className="w-8 h-8 mx-auto mb-4 text-destructive" />
-          <div className="font-medium mb-2 text-destructive">Error Loading Visualizations</div>
+          <div className="font-medium mb-2 text-destructive">
+            Error Loading Visualizations
+          </div>
           <div className="text-sm text-muted-foreground mb-4">{error}</div>
           <button
             onClick={loadVisualizationData}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
           >
             Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Show no data state if no analytics are available
+  if (!analytics && !visualizations) {
+    return (
+      <div className={`bg-card rounded-lg border p-8 ${className}`}>
+        <div className="text-center">
+          <BarChart3 className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+          <div className="font-medium mb-2">No Analytics Data Available</div>
+          <div className="text-sm text-muted-foreground mb-4">
+            Analytics will be generated after preprocessing is complete.
+          </div>
+          <button
+            onClick={loadVisualizationData}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
+          >
+            Refresh
           </button>
         </div>
       </div>
@@ -482,12 +590,17 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
+                onClick={() =>
+                  setActiveTab(
+                    tab.id as "overview" | "embeddings" | "quality" | "tokens"
+                  )
+                }
                 className={`
                   flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium transition-colors
-                  ${activeTab === tab.id 
-                    ? 'bg-primary text-primary-foreground' 
-                    : 'text-muted-foreground hover:text-foreground hover:bg-accent'
+                  ${
+                    activeTab === tab.id
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
                   }
                 `}
               >
@@ -500,10 +613,10 @@ export const PreprocessingVisualizationDashboard: React.FC<PreprocessingVisualiz
       </div>
 
       <div className="p-4">
-        {activeTab === 'overview' && renderOverviewTab()}
-        {activeTab === 'embeddings' && renderEmbeddingsTab()}
-        {activeTab === 'quality' && renderQualityTab()}
-        {activeTab === 'tokens' && renderTokensTab()}
+        {activeTab === "overview" && renderOverviewTab()}
+        {activeTab === "embeddings" && renderEmbeddingsTab()}
+        {activeTab === "quality" && renderQualityTab()}
+        {activeTab === "tokens" && renderTokensTab()}
       </div>
     </div>
   );

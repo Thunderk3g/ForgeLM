@@ -1,35 +1,38 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  CheckCircle, 
-  AlertCircle, 
-  Clock, 
-  Download, 
-  Eye, 
+import {
+  AlertCircle,
   BarChart3,
-  FileText,
   Brain,
+  CheckCircle,
+  Clock,
+  Download,
+  ExternalLink,
+  Eye,
+  FileText,
   Sparkles,
-  ExternalLink
-} from 'lucide-react';
-import type { ApiResponse, PreprocessingAnalytics } from '../types/api';
-import { PreprocessingVisualizationDashboard } from './PreprocessingVisualizationDashboard';
+} from "lucide-react";
+import React, { useEffect, useState } from "react";
+import type { ApiResponse, PreprocessingAnalytics } from "../types/api";
+import { PreprocessingVisualizationDashboard } from "./PreprocessingVisualizationDashboard";
 
 interface PreprocessingResultsViewerProps {
   result: ApiResponse;
   className?: string;
 }
 
-export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProps> = ({
-  result,
-  className = ''
-}) => {
-  const isPreview = result.message.includes('Preview');
-  const [showVisualizations, setShowVisualizations] = useState(isPreview);
-  const [analytics, setAnalytics] = useState<PreprocessingAnalytics | null>(null);
+export const PreprocessingResultsViewer: React.FC<
+  PreprocessingResultsViewerProps
+> = ({ result, className = "" }) => {
+  const isPreview = result.message.includes("Preview");
+  const [showVisualizations, setShowVisualizations] = useState(
+    isPreview || result.status === "success"
+  );
+  const [analytics, setAnalytics] = useState<PreprocessingAnalytics | null>(
+    null
+  );
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (result.status === 'success' && result.train_path) {
+    if (result.status === "success" && result.train_path) {
       if (isPreview) {
         // Mock analytics for preview mode to show visualizations
         setAnalytics({
@@ -37,30 +40,36 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
             overall_quality_score: 0.85,
             avg_text_length: 245,
             vocabulary_richness: 0.78,
-            data_completeness: 0.98
+            data_completeness: 0.98,
           },
           embedding_stats: {
-            model_name: 'sentence-transformers/all-MiniLM-L6-v2',
+            model_name: "sentence-transformers/all-MiniLM-L6-v2",
             embedding_dimension: 384,
             embedding_shape: [1000, 384],
-            mean_norm: 1.0
+            mean_norm: 1.0,
           },
           token_distribution: {
             token_statistics: {
               mean_tokens_per_sample: 128,
               median_tokens_per_sample: 120,
-              total_estimated_tokens: 128000
+              total_estimated_tokens: 128000,
             },
             vocabulary_stats: {
               total_unique_words: 4500,
-              most_frequent_words: [['the', 250], ['is', 180], ['and', 150], ['to', 120], ['of', 100]]
-            }
+              most_frequent_words: [
+                ["the", 250],
+                ["is", 180],
+                ["and", 150],
+                ["to", 120],
+                ["of", 100],
+              ],
+            },
           },
           preprocessing_time_ms: 2500,
           duplicate_removal_stats: {
             original_count: 1000,
             duplicates_removed: 50,
-            final_count: 950
+            final_count: 950,
           },
           tensor_visualizations: {
             tensor_shape: [1000, 384],
@@ -69,31 +78,47 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
               std: 0.15,
               min: -0.5,
               max: 0.5,
-              norm: 1.0
+              norm: 1.0,
             },
             visualization_data: {
-              pca_components: [[0.1, 0.2], [0.3, 0.4]],
-              tsne_coordinates: [[0.5, 0.6], [0.7, 0.8]],
-              umap_embeddings: [[0.9, 1.0], [1.1, 1.2]]
-            }
+              pca_components: [
+                [0.1, 0.2],
+                [0.3, 0.4],
+              ],
+              tsne_coordinates: [
+                [0.5, 0.6],
+                [0.7, 0.8],
+              ],
+              umap_embeddings: [
+                [0.9, 1.0],
+                [1.1, 1.2],
+              ],
+            },
           },
           correlation_analysis: {
-            correlation_matrix: [[1.0, 0.2, 0.1], [0.2, 1.0, 0.3], [0.1, 0.3, 1.0]],
-            key_correlations: { 'text_length_tokens': 0.65, 'quality_score': 'medium' }
+            correlation_matrix: [
+              [1.0, 0.2, 0.1],
+              [0.2, 1.0, 0.3],
+              [0.1, 0.3, 1.0],
+            ],
+            key_correlations: {
+              text_length_tokens: 0.65,
+              quality_score: "medium",
+            },
           },
           embedding_evaluation: {
             intrinsic_metrics: {
               cosine_similarity: 0.75,
               alignment: 0.82,
-              uniformity: 0.78
+              uniformity: 0.78,
             },
             downstream_evals: {
-              task: 'classification',
+              task: "classification",
               classification_accuracy: 0.88,
-              f1_score: 0.85
+              f1_score: 0.85,
             },
-            visualization_available: true
-          }
+            visualization_available: true,
+          },
         });
         setLoading(false);
       } else {
@@ -104,10 +129,14 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
 
   const loadAnalytics = async () => {
     if (!result.train_path) return;
-    
+
     try {
       setLoading(true);
-      const response = await fetch(`/api/data-generation/preprocessing/status/${encodeURIComponent(result.train_path)}`);
+      const response = await fetch(
+        `/api/data-generation/preprocessing/status/${encodeURIComponent(
+          result.train_path
+        )}`
+      );
       if (response.ok) {
         const data = await response.json();
         if (data.analytics) {
@@ -115,7 +144,7 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
         }
       }
     } catch (error) {
-      console.error('Failed to load analytics:', error);
+      console.error("Failed to load analytics:", error);
     } finally {
       setLoading(false);
     }
@@ -123,11 +152,11 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
 
   const getStatusIcon = () => {
     switch (result.status) {
-      case 'success':
+      case "success":
         return <CheckCircle className="w-5 h-5 text-green-500" />;
-      case 'error':
+      case "error":
         return <AlertCircle className="w-5 h-5 text-red-500" />;
-      case 'running':
+      case "running":
         return <Clock className="w-5 h-5 text-blue-500 animate-spin" />;
       default:
         return <Clock className="w-5 h-5 text-gray-500" />;
@@ -136,24 +165,24 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
 
   const getStatusColor = () => {
     switch (result.status) {
-      case 'success':
-        return 'bg-green-50 border-green-200';
-      case 'error':
-        return 'bg-red-50 border-red-200';
-      case 'running':
-        return 'bg-blue-50 border-blue-200';
+      case "success":
+        return "bg-green-50 border-green-200";
+      case "error":
+        return "bg-red-50 border-red-200";
+      case "running":
+        return "bg-blue-50 border-blue-200";
       default:
-        return 'bg-gray-50 border-gray-200';
+        return "bg-gray-50 border-gray-200";
     }
   };
 
-  const hasAdvancedFeatures = analytics && (
-    analytics.embedding_stats ||
-    analytics.tensor_visualizations ||
-    analytics.correlation_analysis ||
-    analytics.token_distribution ||
-    analytics.embedding_evaluation
-  );
+  const hasAdvancedFeatures =
+    analytics &&
+    (analytics.embedding_stats ||
+      analytics.tensor_visualizations ||
+      analytics.correlation_analysis ||
+      analytics.token_distribution ||
+      analytics.embedding_evaluation);
 
   return (
     <div className={`space-y-6 ${className}`}>
@@ -164,13 +193,14 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
             {getStatusIcon()}
             <div>
               <h3 className="font-semibold text-lg">
-                Data Preparation {result.status === 'success' ? 'Complete' : 'Status'}
+                Data Preparation{" "}
+                {result.status === "success" ? "Complete" : "Status"}
               </h3>
               <p className="text-muted-foreground mt-1">{result.message}</p>
             </div>
           </div>
-          
-          {result.status === 'success' && (
+
+          {result.status === "success" && (
             <div className="flex space-x-2">
               <button
                 onClick={() => setShowVisualizations(!showVisualizations)}
@@ -178,7 +208,7 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
               >
                 <BarChart3 className="w-4 h-4" />
                 <span className="text-sm">
-                  {showVisualizations ? 'Hide' : 'Show'} Analytics
+                  {showVisualizations ? "Hide" : "Show"} Analytics
                 </span>
               </button>
             </div>
@@ -186,7 +216,7 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
         </div>
 
         {/* File Paths */}
-        {result.status === 'success' && result.train_path && (
+        {result.status === "success" && result.train_path && (
           <div className="mt-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white rounded-lg border p-3">
@@ -202,7 +232,7 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                   <span>Download</span>
                 </button>
               </div>
-              
+
               {result.val_path && (
                 <div className="bg-white rounded-lg border p-3">
                   <div className="flex items-center space-x-2 mb-2">
@@ -230,22 +260,28 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
                   <div className="text-muted-foreground">Format</div>
-                  <div className="font-medium">{result.optimization_info.format_applied}</div>
+                  <div className="font-medium">
+                    {result.optimization_info.format_applied}
+                  </div>
                 </div>
                 <div>
                   <div className="text-muted-foreground">Total Samples</div>
-                  <div className="font-medium">{result.optimization_info.total_samples}</div>
+                  <div className="font-medium">
+                    {result.optimization_info.total_samples}
+                  </div>
                 </div>
                 <div>
                   <div className="text-muted-foreground">Unsloth Optimized</div>
                   <div className="font-medium">
-                    {result.optimization_info.unsloth_optimized ? 'Yes' : 'No'}
+                    {result.optimization_info.unsloth_optimized ? "Yes" : "No"}
                   </div>
                 </div>
                 <div>
                   <div className="text-muted-foreground">Packing</div>
                   <div className="font-medium">
-                    {result.optimization_info.packing_recommended ? 'Recommended' : 'Standard'}
+                    {result.optimization_info.packing_recommended
+                      ? "Recommended"
+                      : "Standard"}
                   </div>
                 </div>
                 {result.optimization_info.has_embeddings && (
@@ -259,7 +295,9 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                     </div>
                     <div>
                       <div className="text-muted-foreground">Embedding Dim</div>
-                      <div className="font-medium">{result.optimization_info.embedding_dimension}</div>
+                      <div className="font-medium">
+                        {result.optimization_info.embedding_dimension}
+                      </div>
                     </div>
                   </>
                 )}
@@ -280,15 +318,24 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                 {analytics.quality_metrics && (
                   <div>
                     <div className="text-muted-foreground">Quality Score</div>
-                    <div className={`font-medium ${
-                      analytics.quality_metrics.overall_quality_score >= 0.8 ? 'text-green-600' :
-                      analytics.quality_metrics.overall_quality_score >= 0.6 ? 'text-yellow-600' : 'text-red-600'
-                    }`}>
-                      {(analytics.quality_metrics.overall_quality_score * 100).toFixed(0)}%
+                    <div
+                      className={`font-medium ${
+                        analytics.quality_metrics.overall_quality_score >= 0.8
+                          ? "text-green-600"
+                          : analytics.quality_metrics.overall_quality_score >=
+                            0.6
+                          ? "text-yellow-600"
+                          : "text-red-600"
+                      }`}
+                    >
+                      {(
+                        analytics.quality_metrics.overall_quality_score * 100
+                      ).toFixed(0)}
+                      %
                     </div>
                   </div>
                 )}
-                
+
                 {analytics.preprocessing_time_ms && (
                   <div>
                     <div className="text-muted-foreground">Processing Time</div>
@@ -297,21 +344,27 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                     </div>
                   </div>
                 )}
-                
+
                 {analytics.duplicate_removal_stats && (
                   <div>
-                    <div className="text-muted-foreground">Duplicates Removed</div>
+                    <div className="text-muted-foreground">
+                      Duplicates Removed
+                    </div>
                     <div className="font-medium">
                       {analytics.duplicate_removal_stats.duplicates_removed}
                     </div>
                   </div>
                 )}
-                
+
                 {analytics.token_distribution && (
                   <div>
-                    <div className="text-muted-foreground">Avg Tokens/Sample</div>
+                    <div className="text-muted-foreground">
+                      Avg Tokens/Sample
+                    </div>
                     <div className="font-medium">
-                      {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(0)}
+                      {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
+                        0
+                      )}
                     </div>
                   </div>
                 )}
@@ -333,33 +386,44 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                 <h5 className="font-medium text-sm mb-2">Intrinsic Metrics</h5>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                   <div>
-                    <div className="text-muted-foreground">Cosine Similarity</div>
+                    <div className="text-muted-foreground">
+                      Cosine Similarity
+                    </div>
                     <div className="font-medium text-green-600">
-                      {analytics.embedding_evaluation.intrinsic_metrics.cosine_similarity.toFixed(3)}
+                      {analytics.embedding_evaluation.intrinsic_metrics.cosine_similarity.toFixed(
+                        3
+                      )}
                     </div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">Alignment</div>
                     <div className="font-medium text-blue-600">
-                      {analytics.embedding_evaluation.intrinsic_metrics.alignment.toFixed(3)}
+                      {analytics.embedding_evaluation.intrinsic_metrics.alignment.toFixed(
+                        3
+                      )}
                     </div>
                   </div>
                   <div>
                     <div className="text-muted-foreground">Uniformity</div>
                     <div className="font-medium text-purple-600">
-                      {analytics.embedding_evaluation.intrinsic_metrics.uniformity.toFixed(3)}
+                      {analytics.embedding_evaluation.intrinsic_metrics.uniformity.toFixed(
+                        3
+                      )}
                     </div>
                   </div>
                 </div>
                 <div className="text-xs text-muted-foreground mt-2">
-                  Higher values indicate better embedding quality (cosine: 0-1, alignment/uniformity: 0-1)
+                  Higher values indicate better embedding quality (cosine: 0-1,
+                  alignment/uniformity: 0-1)
                 </div>
               </div>
 
               {/* Downstream Evaluation */}
               {analytics.embedding_evaluation.downstream_evals && (
                 <div>
-                  <h5 className="font-medium text-sm mb-2">Downstream Task Performance</h5>
+                  <h5 className="font-medium text-sm mb-2">
+                    Downstream Task Performance
+                  </h5>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <div className="text-muted-foreground">Task</div>
@@ -370,13 +434,19 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                     <div>
                       <div className="text-muted-foreground">Accuracy</div>
                       <div className="font-medium text-green-600">
-                        {(analytics.embedding_evaluation.downstream_evals.classification_accuracy * 100).toFixed(1)}%
+                        {(
+                          analytics.embedding_evaluation.downstream_evals
+                            .classification_accuracy * 100
+                        ).toFixed(1)}
+                        %
                       </div>
                     </div>
                     <div>
                       <div className="text-muted-foreground">F1 Score</div>
                       <div className="font-medium text-blue-600">
-                        {analytics.embedding_evaluation.downstream_evals.f1_score.toFixed(3)}
+                        {analytics.embedding_evaluation.downstream_evals.f1_score.toFixed(
+                          3
+                        )}
                       </div>
                     </div>
                   </div>
@@ -392,13 +462,15 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
                   >
                     <Eye className="w-4 h-4" />
                     <span>
-                      {showVisualizations ? 'Hide' : 'Show'} Embedding Visualizations
+                      {showVisualizations ? "Hide" : "Show"} Embedding
+                      Visualizations
                     </span>
                   </button>
                   {showVisualizations && (
                     <div className="mt-3 p-3 bg-gray-50 rounded">
                       <p className="text-xs text-muted-foreground">
-                        PCA and t-SNE projections of embedding space available in the visualization dashboard below.
+                        PCA and t-SNE projections of embedding space available
+                        in the visualization dashboard below.
                       </p>
                     </div>
                   )}
@@ -418,7 +490,8 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
               </span>
             </div>
             <div className="text-xs text-blue-600 mt-1">
-              Embedding analysis, tensor visualizations, and detailed metrics are ready to view.
+              Embedding analysis, tensor visualizations, and detailed metrics
+              are ready to view.
             </div>
             <div className="flex space-x-2 mt-2">
               {analytics.embedding_stats && (
@@ -446,38 +519,43 @@ export const PreprocessingResultsViewer: React.FC<PreprocessingResultsViewerProp
         )}
 
         {/* Visualization URLs */}
-        {result.status === 'success' && result.optimization_info?.visualization_urls && (
-          <div className="mt-4">
-            <h4 className="font-medium mb-2">Available Visualizations</h4>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(result.optimization_info.visualization_urls).map(([type, url]) => (
-                <a
-                  key={type}
-                  href={url as string}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center space-x-2 px-3 py-2 bg-white border rounded-md hover:bg-gray-50 transition-colors text-sm"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  <span className="capitalize">{type.replace('_', ' ')}</span>
-                </a>
-              ))}
+        {result.status === "success" &&
+          result.optimization_info?.visualization_urls && (
+            <div className="mt-4">
+              <h4 className="font-medium mb-2">Available Visualizations</h4>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(
+                  result.optimization_info.visualization_urls
+                ).map(([type, url]) => (
+                  <a
+                    key={type}
+                    href={url as string}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center space-x-2 px-3 py-2 bg-white border rounded-md hover:bg-gray-50 transition-colors text-sm"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span className="capitalize">{type.replace("_", " ")}</span>
+                  </a>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
       </div>
 
       {/* Visualization Dashboard */}
-      {showVisualizations && result.status === 'success' && result.train_path && (
-        <PreprocessingVisualizationDashboard
-          datasetPath={result.train_path}
-          analytics={analytics || undefined}
-          className="animate-in slide-in-from-top-5 duration-200"
-        />
-      )}
+      {showVisualizations &&
+        result.status === "success" &&
+        result.train_path && (
+          <PreprocessingVisualizationDashboard
+            datasetPath={result.train_path}
+            analytics={analytics || undefined}
+            className="animate-in slide-in-from-top-5 duration-200"
+          />
+        )}
 
       {/* Error Details */}
-      {result.status === 'error' && (
+      {result.status === "error" && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4">
           <div className="flex items-center space-x-2 mb-2">
             <AlertCircle className="w-4 h-4 text-red-500" />
