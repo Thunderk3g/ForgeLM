@@ -32,6 +32,28 @@ export const PreprocessingResultsViewer: React.FC<
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const loadAnalytics = async () => {
+      if (!result.train_path) return;
+
+      try {
+        setLoading(true);
+        const response = await fetch(
+          `/api/data-generation/preprocessing/status/${encodeURIComponent(
+            result.train_path
+          )}`
+        );
+        if (response.ok) {
+          const data = await response.json();
+          if (data.analytics) {
+            setAnalytics(data.analytics);
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load analytics:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
     if (result.status === "success" && result.train_path) {
       if (isPreview) {
         // Mock analytics for preview mode to show visualizations
@@ -125,30 +147,7 @@ export const PreprocessingResultsViewer: React.FC<
         loadAnalytics();
       }
     }
-  }, [result]);
-
-  const loadAnalytics = async () => {
-    if (!result.train_path) return;
-
-    try {
-      setLoading(true);
-      const response = await fetch(
-        `/api/data-generation/preprocessing/status/${encodeURIComponent(
-          result.train_path
-        )}`
-      );
-      if (response.ok) {
-        const data = await response.json();
-        if (data.analytics) {
-          setAnalytics(data.analytics);
-        }
-      }
-    } catch (error) {
-      console.error("Failed to load analytics:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [result, isPreview]);
 
   const getStatusIcon = () => {
     switch (result.status) {
@@ -166,13 +165,13 @@ export const PreprocessingResultsViewer: React.FC<
   const getStatusColor = () => {
     switch (result.status) {
       case "success":
-        return "bg-green-50 border-green-200";
+        return "bg-card border-green-200";
       case "error":
-        return "bg-red-50 border-red-200";
+        return "bg-card border-red-200";
       case "running":
-        return "bg-blue-50 border-blue-200";
+        return "bg-card border-blue-200";
       default:
-        return "bg-gray-50 border-gray-200";
+        return "bg-card border-border";
     }
   };
 
@@ -204,7 +203,7 @@ export const PreprocessingResultsViewer: React.FC<
             <div className="flex space-x-2">
               <button
                 onClick={() => setShowVisualizations(!showVisualizations)}
-                className="flex items-center space-x-2 px-3 py-2 bg-white border rounded-md hover:bg-gray-50 transition-colors"
+                className="flex items-center space-x-2 px-3 py-2 bg-primary text-primary-foreground border border-primary rounded-md hover:bg-primary/90 transition-colors"
               >
                 <BarChart3 className="w-4 h-4" />
                 <span className="text-sm">
@@ -219,7 +218,7 @@ export const PreprocessingResultsViewer: React.FC<
         {result.status === "success" && result.train_path && (
           <div className="mt-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-white rounded-lg border p-3">
+              <div className="bg-card border rounded-lg p-3">
                 <div className="flex items-center space-x-2 mb-2">
                   <FileText className="w-4 h-4 text-blue-500" />
                   <span className="font-medium text-sm">Training Data</span>
@@ -227,14 +226,14 @@ export const PreprocessingResultsViewer: React.FC<
                 <div className="font-mono text-xs text-muted-foreground break-all">
                   {result.train_path}
                 </div>
-                <button className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center space-x-1">
+                <button className="mt-2 text-xs text-primary hover:text-primary/80 flex items-center space-x-1">
                   <Download className="w-3 h-3" />
                   <span>Download</span>
                 </button>
               </div>
 
               {result.val_path && (
-                <div className="bg-white rounded-lg border p-3">
+                <div className="bg-card border rounded-lg p-3">
                   <div className="flex items-center space-x-2 mb-2">
                     <FileText className="w-4 h-4 text-green-500" />
                     <span className="font-medium text-sm">Validation Data</span>
@@ -242,7 +241,7 @@ export const PreprocessingResultsViewer: React.FC<
                   <div className="font-mono text-xs text-muted-foreground break-all">
                     {result.val_path}
                   </div>
-                  <button className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center space-x-1">
+                  <button className="mt-2 text-xs text-primary hover:text-primary/80 flex items-center space-x-1">
                     <Download className="w-3 h-3" />
                     <span>Download</span>
                   </button>
@@ -256,7 +255,7 @@ export const PreprocessingResultsViewer: React.FC<
         {result.optimization_info && (
           <div className="mt-4">
             <h4 className="font-medium mb-2">Optimization Information</h4>
-            <div className="bg-white rounded-lg border p-3">
+            <div className="bg-card border rounded-lg p-3">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                 <div>
                   <div className="text-muted-foreground">Format</div>
@@ -313,7 +312,7 @@ export const PreprocessingResultsViewer: React.FC<
               <Sparkles className="w-4 h-4 text-purple-500" />
               <span>Processing Summary</span>
             </h4>
-            <div className="bg-white rounded-lg border p-3">
+            <div className="bg-card border rounded-lg p-3">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
                 {analytics.quality_metrics && (
                   <div>
@@ -380,7 +379,7 @@ export const PreprocessingResultsViewer: React.FC<
               <Brain className="w-4 h-4 text-purple-500" />
               <span>Embedding Evaluation</span>
             </h4>
-            <div className="bg-white rounded-lg border p-4 space-y-4">
+            <div className="bg-card border rounded-lg p-4 space-y-4">
               {/* Intrinsic Metrics */}
               <div>
                 <h5 className="font-medium text-sm mb-2">Intrinsic Metrics</h5>
@@ -458,7 +457,7 @@ export const PreprocessingResultsViewer: React.FC<
                 <div className="pt-3 border-t">
                   <button
                     onClick={() => setShowVisualizations(!showVisualizations)}
-                    className="flex items-center space-x-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors text-sm"
+                    className="flex items-center space-x-2 px-3 py-2 bg-primary/10 text-primary border border-primary/20 rounded-md hover:bg-primary/20 transition-colors text-sm"
                   >
                     <Eye className="w-4 h-4" />
                     <span>
@@ -467,7 +466,7 @@ export const PreprocessingResultsViewer: React.FC<
                     </span>
                   </button>
                   {showVisualizations && (
-                    <div className="mt-3 p-3 bg-gray-50 rounded">
+                    <div className="mt-3 p-3 bg-muted rounded">
                       <p className="text-xs text-muted-foreground">
                         PCA and t-SNE projections of embedding space available
                         in the visualization dashboard below.
@@ -482,35 +481,35 @@ export const PreprocessingResultsViewer: React.FC<
 
         {/* Advanced Features Available */}
         {hasAdvancedFeatures && (
-          <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <div className="mt-4 p-3 bg-card border border-primary/20 rounded-lg">
             <div className="flex items-center space-x-2">
-              <Brain className="w-4 h-4 text-blue-500" />
-              <span className="font-medium text-sm text-blue-800">
+              <Brain className="w-4 h-4 text-primary" />
+              <span className="font-medium text-sm text-primary">
                 Advanced Analytics Available
               </span>
             </div>
-            <div className="text-xs text-blue-600 mt-1">
+            <div className="text-xs text-muted-foreground mt-1">
               Embedding analysis, tensor visualizations, and detailed metrics
               are ready to view.
             </div>
             <div className="flex space-x-2 mt-2">
               {analytics.embedding_stats && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded">
                   Embeddings
                 </span>
               )}
               {analytics.tensor_visualizations && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded">
                   Tensors
                 </span>
               )}
               {analytics.correlation_analysis && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded">
                   Correlations
                 </span>
               )}
               {analytics.token_distribution && (
-                <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
+                <span className="px-2 py-1 bg-primary/10 text-primary text-xs rounded">
                   Token Analysis
                 </span>
               )}
@@ -532,7 +531,7 @@ export const PreprocessingResultsViewer: React.FC<
                     href={url as string}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center space-x-2 px-3 py-2 bg-white border rounded-md hover:bg-gray-50 transition-colors text-sm"
+                    className="flex items-center space-x-2 px-3 py-2 bg-card border rounded-md hover:bg-accent transition-colors text-sm"
                   >
                     <ExternalLink className="w-3 h-3" />
                     <span className="capitalize">{type.replace("_", " ")}</span>

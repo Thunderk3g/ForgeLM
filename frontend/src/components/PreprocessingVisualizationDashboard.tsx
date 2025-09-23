@@ -88,7 +88,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Quality Metrics Card */}
       {analytics?.quality_metrics && (
-        <div className="bg-card border rounded-lg p-4">
+        <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <Target className="w-5 h-5 text-green-500" />
             <h4 className="font-medium">Dataset Quality</h4>
@@ -149,7 +149,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
 
       {/* Embedding Info Card */}
       {analytics?.embedding_stats && (
-        <div className="bg-card border rounded-lg p-4">
+        <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <Brain className="w-5 h-5 text-blue-500" />
             <h4 className="font-medium">Embedding Statistics</h4>
@@ -185,7 +185,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
 
       {/* Token Statistics Card */}
       {analytics?.token_distribution && (
-        <div className="bg-card border rounded-lg p-4">
+        <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <TrendingUp className="w-5 h-5 text-purple-500" />
             <h4 className="font-medium">Token Distribution</h4>
@@ -217,7 +217,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
 
       {/* Processing Time Card */}
       {analytics?.preprocessing_time_ms && (
-        <div className="bg-card border rounded-lg p-4">
+        <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <RefreshCw className="w-5 h-5 text-orange-500" />
             <h4 className="font-medium">Processing Statistics</h4>
@@ -263,7 +263,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
       {analytics?.tensor_visualizations ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Tensor Stats */}
-          <div className="bg-card border rounded-lg p-4">
+          <div className="bg-card border rounded-lg p-4 shadow-sm">
             <h4 className="font-medium mb-3">Tensor Statistics</h4>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between">
@@ -294,7 +294,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
           </div>
 
           {/* Visualization Placeholder */}
-          <div className="bg-card border rounded-lg p-4">
+          <div className="bg-card border rounded-lg p-4 shadow-sm">
             <h4 className="font-medium mb-3">PCA Visualization</h4>
             <div className="aspect-square bg-muted rounded flex items-center justify-center">
               <div className="text-center text-muted-foreground">
@@ -306,7 +306,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
           </div>
         </div>
       ) : (
-        <div className="bg-card border rounded-lg p-8 text-center">
+        <div className="bg-card border rounded-lg p-8 text-center shadow-sm">
           <Brain className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
           <h4 className="font-medium mb-2">No Embedding Data</h4>
           <p className="text-sm text-muted-foreground">
@@ -563,19 +563,19 @@ export const PreprocessingVisualizationDashboard: React.FC<
       <div className="p-4 border-b">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-2">
-            <BarChart3 className="w-5 h-5 text-blue-500" />
+            <BarChart3 className="w-5 h-5 text-primary" />
             <h3 className="font-semibold">Preprocessing Analytics</h3>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={loadVisualizationData}
-              className="p-2 hover:bg-accent rounded transition-colors"
+              className="p-2 hover:bg-accent rounded transition-colors text-muted-foreground hover:text-foreground"
               title="Refresh"
             >
               <RefreshCw className="w-4 h-4" />
             </button>
             <button
-              className="p-2 hover:bg-accent rounded transition-colors"
+              className="p-2 hover:bg-accent rounded transition-colors text-muted-foreground hover:text-foreground"
               title="Export Data"
             >
               <Download className="w-4 h-4" />
