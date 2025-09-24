@@ -24,7 +24,7 @@ export const PreprocessingResultsViewer: React.FC<
 > = ({ result, className = "" }) => {
   const isPreview = result.message.includes("Preview");
   const [showVisualizations, setShowVisualizations] = useState(
-    isPreview || result.status === "success"
+    !isPreview && result.status === "success"
   );
   const [analytics, setAnalytics] = useState<PreprocessingAnalytics | null>(
     null
@@ -547,7 +547,7 @@ export const PreprocessingResultsViewer: React.FC<
         result.status === "success" &&
         result.train_path && (
           <PreprocessingVisualizationDashboard
-            datasetPath={result.train_path}
+            datasetPath={result.train_path.replace(/\/(train|val)$/, '')}
             analytics={analytics || undefined}
             className="animate-in slide-in-from-top-5 duration-200"
           />

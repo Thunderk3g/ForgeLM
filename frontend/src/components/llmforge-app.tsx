@@ -64,6 +64,11 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
     data: false,
     training: false,
   })
+  const [dataPreparationResult, setDataPreparationResult] = useState<{
+    status: "success" | "error" | "running";
+    message: string;
+    train_path?: string;
+  } | null>(null)
 
   // Check API health on mount
   useEffect(() => {
@@ -255,14 +260,17 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
 
   const handlePrepareData = async (request: PrepareDataRequest) => {
     setLoading((prev) => ({ ...prev, data: true }))
+    setDataPreparationResult({ status: "running", message: "Preparing data..." })
     try {
       const response = await prepareData(request)
+      setDataPreparationResult(response)
       if (response.status === "success") {
         toast.success("Data prepared successfully!")
       } else {
         toast.error(response.message)
       }
     } catch (error) {
+      setDataPreparationResult({ status: "error", message: "Failed to prepare data" })
       toast.error("Failed to prepare data")
     } finally {
       setLoading((prev) => ({ ...prev, data: false }))
@@ -582,7 +590,11 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
                 selectedModel={selectedModel || undefined}
               />
 
-              <DataPreparation onPrepareData={handlePrepareData} isLoading={loading.data} />
+              <DataPreparation 
+                onPrepareData={handlePrepareData} 
+                isLoading={loading.data}
+                preprocessingResult={dataPreparationResult}
+              />
 
               <TrainingForm
                 onStartTraining={handleStartTraining}

@@ -21,11 +21,17 @@ import { PreprocessingResultsViewer } from "./PreprocessingResultsViewer";
 interface DataPreparationProps {
   onPrepareData: (request: PrepareDataRequest) => void;
   isLoading: boolean;
+  preprocessingResult?: {
+    status: "success" | "error" | "running";
+    message: string;
+    train_path?: string;
+  } | null;
 }
 
 export const DataPreparation: React.FC<DataPreparationProps> = ({
   onPrepareData,
   isLoading,
+  preprocessingResult: externalResult,
 }) => {
   const [inputFile, setInputFile] = useState("/app/data/input/dataset.csv");
   const [task, setTask] = useState<
@@ -36,35 +42,12 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({
   const [testSize, setTestSize] = useState(0.2);
   const [maxLength, setMaxLength] = useState(512);
   const [showVisualizations, setShowVisualizations] = useState(false);
-  const [preprocessingResult, setPreprocessingResult] = useState<{
-    status: "success" | "error" | "running";
-    message: string;
-    train_path?: string;
-  } | null>(null);
   const [isPreprocessingComplete, setIsPreprocessingComplete] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Set preprocessing as running
-    setPreprocessingResult({
-      status: "running",
-      message: "Preprocessing data...",
-      train_path: inputFile,
-    });
     setIsPreprocessingComplete(false);
     setShowVisualizations(false);
-
-    // Simulate preprocessing completion after a delay
-    setTimeout(() => {
-      setPreprocessingResult({
-        status: "success",
-        message: "Data Preparation Complete",
-        train_path: inputFile,
-      });
-      setIsPreprocessingComplete(true);
-      setShowVisualizations(true); // Auto-show analytics when complete
-    }, 2000);
 
     onPrepareData({
       input_file: inputFile,
@@ -211,14 +194,14 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({
       </Card>
 
       {/* Analytics Section */}
-      {preprocessingResult && (
+      {externalResult && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <Button
               type="button"
               variant="outline"
               onClick={() => setShowVisualizations(!showVisualizations)}
-              disabled={!isPreprocessingComplete}
+              disabled={externalResult.status !== "success"}
               className="flex items-center space-x-2"
             >
               <Eye className="w-4 h-4" />
@@ -227,19 +210,21 @@ export const DataPreparation: React.FC<DataPreparationProps> = ({
             <div className="flex items-center space-x-2 text-sm text-muted-foreground">
               <BarChart3 className="w-4 h-4" />
               <span>
-                {preprocessingResult.status === "running"
+                {externalResult.status === "running"
                   ? "Preprocessing..."
-                  : isPreprocessingComplete
+                  : externalResult.status === "success"
                   ? "Preprocessing Complete"
+                  : externalResult.status === "error"
+                  ? "Error"
                   : "Ready"}
               </span>
             </div>
           </div>
 
-          {showVisualizations && isPreprocessingComplete && (
+          {showVisualizations && externalResult.status === "success" && (
             <div className="animate-in slide-in-from-top-5 duration-200">
               <PreprocessingResultsViewer
-                result={preprocessingResult}
+                result={externalResult}
                 className="border rounded-lg"
               />
             </div>

@@ -294,6 +294,10 @@ class VisualizationService:
             # Load dataset
             dataset = load_from_disk(dataset_path)
             
+            # Handle DatasetDict (with train/val splits) vs single Dataset
+            if hasattr(dataset, 'keys'):
+                dataset = dataset['train']
+            
             # Basic statistics
             total_samples = len(dataset)
             
@@ -1101,6 +1105,10 @@ class VisualizationService:
             
             # Load dataset
             dataset = load_from_disk(str(dataset_path_obj))
+            
+            # Handle DatasetDict (with train/val splits) vs single Dataset
+            if hasattr(dataset, 'keys'):
+                dataset = dataset['train']
             
             # Convert to pandas for correlation analysis
             df = dataset.to_pandas()

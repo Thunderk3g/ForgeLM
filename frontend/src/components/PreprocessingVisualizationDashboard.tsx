@@ -37,7 +37,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
       setError(null);
 
       const response = await fetch(
-        "/api/visualization/preprocessing/visualize",
+        "http://localhost:8000/api/v1/visualization/preprocessing/visualize",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -50,10 +50,12 @@ export const PreprocessingVisualizationDashboard: React.FC<
           }),
         }
       );
+      console.log('VISUALIZATION REQUEST PATH:', datasetPath);
 
       if (response.ok) {
         const data = await response.json();
-        setVisualizations(data.visualizations);
+        console.log('VISUALIZATION API RESPONSE:', data);
+        setVisualizations(data);
       } else {
         setError("Failed to load visualization data");
       }
@@ -65,17 +67,20 @@ export const PreprocessingVisualizationDashboard: React.FC<
   }, [datasetPath]);
 
   useEffect(() => {
-    // If analytics are provided as props, use them directly
-    if (analytics) {
-      setLoading(false);
-      return;
-    }
-
-    // Otherwise, try to fetch from API
     if (datasetPath) {
       loadVisualizationData();
     }
-  }, [datasetPath, analytics, loadVisualizationData]);
+  }, [datasetPath, loadVisualizationData]);
+  
+  const mergedAnalytics: PreprocessingAnalytics | undefined = visualizations?.visualizations ? {
+    embedding_stats: visualizations.visualizations.embedding_stats,
+    correlation_analysis: visualizations.visualizations.correlation_analysis,
+    tensor_visualizations: visualizations.visualizations.tensor_visualizations,
+    quality_metrics: visualizations.visualizations.quality_metrics,
+    token_distribution: visualizations.visualizations.token_distribution,
+    preprocessing_time_ms: visualizations.visualizations.preprocessing_time_ms,
+    duplicate_removal_stats: visualizations.visualizations.duplicate_removal_stats,
+  } : analytics;
 
   const tabs = [
     { id: "overview", label: "Overview", icon: BarChart3 },
@@ -87,7 +92,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
   const renderOverviewTab = () => (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       {/* Quality Metrics Card */}
-      {analytics?.quality_metrics && (
+      {mergedAnalytics?.quality_metrics && (
         <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <Target className="w-5 h-5 text-green-500" />
@@ -101,16 +106,16 @@ export const PreprocessingVisualizationDashboard: React.FC<
               <div className="flex items-center space-x-2">
                 <div
                   className={`w-16 h-2 rounded-full ${
-                    analytics.quality_metrics.overall_quality_score >= 0.8
+                    mergedAnalytics.quality_metrics.overall_quality_score >= 0.8
                       ? "bg-green-500"
-                      : analytics.quality_metrics.overall_quality_score >= 0.6
+                      : mergedAnalytics.quality_metrics.overall_quality_score >= 0.6
                       ? "bg-yellow-500"
                       : "bg-red-500"
                   }`}
                 />
                 <span className="font-medium">
                   {(
-                    analytics.quality_metrics.overall_quality_score * 100
+                    mergedAnalytics.quality_metrics.overall_quality_score * 100
                   ).toFixed(1)}
                   %
                 </span>
@@ -121,14 +126,14 @@ export const PreprocessingVisualizationDashboard: React.FC<
               <div>
                 <div className="text-muted-foreground">Avg Text Length</div>
                 <div className="font-medium">
-                  {analytics.quality_metrics.avg_text_length.toFixed(0)} chars
+                  {mergedAnalytics.quality_metrics.avg_text_length.toFixed(0)} chars
                 </div>
               </div>
               <div>
                 <div className="text-muted-foreground">Vocabulary Richness</div>
                 <div className="font-medium">
                   {(
-                    analytics.quality_metrics.vocabulary_richness * 100
+                    mergedAnalytics.quality_metrics.vocabulary_richness * 100
                   ).toFixed(1)}
                   %
                 </div>
@@ -136,7 +141,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
               <div>
                 <div className="text-muted-foreground">Data Completeness</div>
                 <div className="font-medium">
-                  {(analytics.quality_metrics.data_completeness * 100).toFixed(
+                  {(mergedAnalytics.quality_metrics.data_completeness * 100).toFixed(
                     1
                   )}
                   %
@@ -148,7 +153,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
       )}
 
       {/* Embedding Info Card */}
-      {analytics?.embedding_stats && (
+      {mergedAnalytics?.embedding_stats && (
         <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <Brain className="w-5 h-5 text-blue-500" />
@@ -158,25 +163,25 @@ export const PreprocessingVisualizationDashboard: React.FC<
             <div className="flex justify-between">
               <span className="text-muted-foreground">Model</span>
               <span className="font-mono text-xs">
-                {analytics.embedding_stats.model_name.split("/").pop()}
+                {mergedAnalytics.embedding_stats.model_name.split("/").pop()}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Dimension</span>
               <span className="font-medium">
-                {analytics.embedding_stats.embedding_dimension}
+                {mergedAnalytics.embedding_stats.embedding_dimension}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Shape</span>
               <span className="font-mono text-xs">
-                [{analytics.embedding_stats.embedding_shape.join(", ")}]
+                [{mergedAnalytics.embedding_stats.embedding_shape.join(", ")}]
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Mean Norm</span>
               <span className="font-medium">
-                {analytics.embedding_stats.mean_norm.toFixed(3)}
+                {mergedAnalytics.embedding_stats.mean_norm.toFixed(3)}
               </span>
             </div>
           </div>
@@ -184,7 +189,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
       )}
 
       {/* Token Statistics Card */}
-      {analytics?.token_distribution && (
+      {mergedAnalytics?.token_distribution && (
         <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <TrendingUp className="w-5 h-5 text-purple-500" />
@@ -194,7 +199,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
             <div className="flex justify-between">
               <span className="text-muted-foreground">Mean Tokens/Sample</span>
               <span className="font-medium">
-                {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
+                {mergedAnalytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
                   0
                 )}
               </span>
@@ -202,13 +207,13 @@ export const PreprocessingVisualizationDashboard: React.FC<
             <div className="flex justify-between">
               <span className="text-muted-foreground">Total Tokens</span>
               <span className="font-medium">
-                {analytics.token_distribution.token_statistics.total_estimated_tokens.toLocaleString()}
+                {mergedAnalytics.token_distribution.token_statistics.total_estimated_tokens.toLocaleString()}
               </span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Vocabulary Size</span>
               <span className="font-medium">
-                {analytics.token_distribution.vocabulary_stats.total_unique_words.toLocaleString()}
+                {mergedAnalytics.token_distribution.vocabulary_stats.total_unique_words.toLocaleString()}
               </span>
             </div>
           </div>
@@ -216,7 +221,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
       )}
 
       {/* Processing Time Card */}
-      {analytics?.preprocessing_time_ms && (
+      {mergedAnalytics?.preprocessing_time_ms && (
         <div className="bg-card border rounded-lg p-4 shadow-sm">
           <div className="flex items-center space-x-2 mb-3">
             <RefreshCw className="w-5 h-5 text-orange-500" />
@@ -226,25 +231,25 @@ export const PreprocessingVisualizationDashboard: React.FC<
             <div className="flex justify-between">
               <span className="text-muted-foreground">Processing Time</span>
               <span className="font-medium">
-                {(analytics.preprocessing_time_ms / 1000).toFixed(1)}s
+                {(mergedAnalytics.preprocessing_time_ms / 1000).toFixed(1)}s
               </span>
             </div>
-            {analytics.duplicate_removal_stats && (
+            {mergedAnalytics.duplicate_removal_stats && (
               <>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">
                     Duplicates Removed
                   </span>
                   <span className="font-medium">
-                    {analytics.duplicate_removal_stats.duplicates_removed}
+                    {mergedAnalytics.duplicate_removal_stats.duplicates_removed}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Retention Rate</span>
                   <span className="font-medium">
                     {(
-                      (analytics.duplicate_removal_stats.final_count /
-                        analytics.duplicate_removal_stats.original_count) *
+                      (mergedAnalytics.duplicate_removal_stats.final_count /
+                        mergedAnalytics.duplicate_removal_stats.original_count) *
                       100
                     ).toFixed(1)}
                     %
@@ -260,7 +265,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
 
   const renderEmbeddingsTab = () => (
     <div className="space-y-6">
-      {analytics?.tensor_visualizations ? (
+      {mergedAnalytics?.tensor_visualizations ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Tensor Stats */}
           <div className="bg-card border rounded-lg p-4 shadow-sm">
@@ -269,25 +274,25 @@ export const PreprocessingVisualizationDashboard: React.FC<
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Shape</span>
                 <span className="font-mono text-xs">
-                  [{analytics.tensor_visualizations.tensor_shape.join(", ")}]
+                  [{mergedAnalytics.tensor_visualizations.tensor_shape.join(", ")}]
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Mean</span>
                 <span className="font-medium">
-                  {analytics.tensor_visualizations.tensor_stats.mean.toFixed(6)}
+                  {mergedAnalytics.tensor_visualizations.tensor_stats.mean.toFixed(6)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Std</span>
                 <span className="font-medium">
-                  {analytics.tensor_visualizations.tensor_stats.std.toFixed(6)}
+                  {mergedAnalytics.tensor_visualizations.tensor_stats.std.toFixed(6)}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Norm</span>
                 <span className="font-medium">
-                  {analytics.tensor_visualizations.tensor_stats.norm.toFixed(3)}
+                  {mergedAnalytics.tensor_visualizations.tensor_stats.norm.toFixed(3)}
                 </span>
               </div>
             </div>
@@ -320,7 +325,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
 
   const renderQualityTab = () => (
     <div className="space-y-6">
-      {analytics?.quality_metrics ? (
+      {mergedAnalytics?.quality_metrics ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Quality Score */}
           <div className="bg-card border rounded-lg p-4">
@@ -328,15 +333,15 @@ export const PreprocessingVisualizationDashboard: React.FC<
             <div className="text-center">
               <div
                 className={`text-3xl font-bold mb-2 ${
-                  analytics.quality_metrics.overall_quality_score >= 0.8
+                  mergedAnalytics.quality_metrics.overall_quality_score >= 0.8
                     ? "text-green-500"
-                    : analytics.quality_metrics.overall_quality_score >= 0.6
+                    : mergedAnalytics.quality_metrics.overall_quality_score >= 0.6
                     ? "text-yellow-500"
                     : "text-red-500"
                 }`}
               >
                 {(
-                  analytics.quality_metrics.overall_quality_score * 100
+                  mergedAnalytics.quality_metrics.overall_quality_score * 100
                 ).toFixed(0)}
                 %
               </div>
@@ -353,7 +358,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
               <div className="flex justify-between">
                 <span>Average</span>
                 <span className="font-medium">
-                  {analytics.quality_metrics.avg_text_length.toFixed(0)}
+                  {mergedAnalytics.quality_metrics.avg_text_length.toFixed(0)}
                 </span>
               </div>
               <div className="w-full bg-muted rounded-full h-2">
@@ -361,7 +366,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
                   className="bg-blue-500 h-2 rounded-full"
                   style={{
                     width: `${Math.min(
-                      (analytics.quality_metrics.avg_text_length / 1000) * 100,
+                      (mergedAnalytics.quality_metrics.avg_text_length / 1000) * 100,
                       100
                     )}%`,
                   }}
@@ -381,14 +386,14 @@ export const PreprocessingVisualizationDashboard: React.FC<
                 <span className="text-sm">Data Complete</span>
                 <CheckCircle2
                   className={`w-4 h-4 ${
-                    analytics.quality_metrics.data_completeness >= 0.95
+                    mergedAnalytics.quality_metrics.data_completeness >= 0.95
                       ? "text-green-500"
                       : "text-yellow-500"
                   }`}
                 />
               </div>
               <div className="text-2xl font-bold">
-                {(analytics.quality_metrics.data_completeness * 100).toFixed(1)}
+                {(mergedAnalytics.quality_metrics.data_completeness * 100).toFixed(1)}
                 %
               </div>
               <div className="text-xs text-muted-foreground">
@@ -423,7 +428,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
                   Mean per Sample
                 </span>
                 <span className="font-medium">
-                  {analytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
+                  {mergedAnalytics.token_distribution.token_statistics.mean_tokens_per_sample.toFixed(
                     0
                   )}
                 </span>
@@ -433,7 +438,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
                   Median per Sample
                 </span>
                 <span className="font-medium">
-                  {analytics.token_distribution.token_statistics.median_tokens_per_sample.toFixed(
+                  {mergedAnalytics.token_distribution.token_statistics.median_tokens_per_sample.toFixed(
                     0
                   )}
                 </span>
@@ -443,7 +448,7 @@ export const PreprocessingVisualizationDashboard: React.FC<
                   Total Estimated
                 </span>
                 <span className="font-medium">
-                  {analytics.token_distribution.token_statistics.total_estimated_tokens.toLocaleString()}
+                  {mergedAnalytics.token_distribution.token_statistics.total_estimated_tokens.toLocaleString()}
                 </span>
               </div>
             </div>
@@ -458,18 +463,18 @@ export const PreprocessingVisualizationDashboard: React.FC<
                   Unique Words
                 </span>
                 <span className="font-medium">
-                  {analytics.token_distribution.vocabulary_stats.total_unique_words.toLocaleString()}
+                  {mergedAnalytics.token_distribution.vocabulary_stats.total_unique_words.toLocaleString()}
                 </span>
               </div>
 
-              {analytics.token_distribution.vocabulary_stats
+              {mergedAnalytics.token_distribution.vocabulary_stats
                 .most_frequent_words && (
                 <div>
                   <div className="text-sm text-muted-foreground mb-2">
                     Most Frequent
                   </div>
                   <div className="space-y-1">
-                    {analytics.token_distribution.vocabulary_stats.most_frequent_words
+                    {mergedAnalytics.token_distribution.vocabulary_stats.most_frequent_words
                       .slice(0, 5)
                       .map(([word, count], index) => (
                         <div

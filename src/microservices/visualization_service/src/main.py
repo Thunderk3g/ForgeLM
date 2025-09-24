@@ -583,19 +583,45 @@ async def generate_preprocessing_visualizations(request: PreprocessingVisualizat
         visualizations = {}
         summary_statistics = {}
         recommendations = []
+        preprocessing_analytics = {}
         
-        # Generate tensor visualizations if requested
+        try:
+            import json
+            from pathlib import Path
+            analytics_path = Path(request.dataset_path) / "preprocessing_analytics.json"
+            if analytics_path.exists():
+                with open(analytics_path, 'r') as f:
+                    preprocessing_analytics = json.load(f)
+                logger.info(f"Loaded preprocessing analytics from {analytics_path}")
+        except Exception as e:
+            logger.warning(f"Could not load preprocessing analytics: {e}")
+        
         if request.include_embeddings:
             embeddings_path = f"{request.dataset_path}/embeddings.npy"
-            tensor_result = await visualization_service.generate_tensor_visualization(
-                dataset_path=request.dataset_path,
-                embeddings_path=embeddings_path
-            )
-            if tensor_result.get("status") == "success":
-                visualizations["tensor_analysis"] = tensor_result["visualization_data"]
-                recommendations.append("Embeddings generated successfully - consider using for similarity analysis")
+            from pathlib import Path
+            if Path(embeddings_path).exists():
+                tensor_result = await visualization_service.generate_tensor_visualization(
+                    dataset_path=request.dataset_path,
+                    embeddings_path=embeddings_path
+                )
+                if tensor_result.get("status") == "success":
+                    vis_data = tensor_result.get("visualization_data", {})
+                    preprocessing_summary = vis_data.get("preprocessing_summary", {})
+                    
+                    if preprocessing_summary.get("tensor_visualizations"):
+                        visualizations["tensor_visualizations"] = preprocessing_summary["tensor_visualizations"]
+                    
+                    if preprocessing_summary.get("embedding_stats"):
+                        visualizations["embedding_stats"] = preprocessing_summary["embedding_stats"]
+                    elif preprocessing_analytics.get("embedding_stats"):
+                        visualizations["embedding_stats"] = preprocessing_analytics["embedding_stats"]
+                    
+                    recommendations.append("Embeddings generated successfully - consider using for similarity analysis")
+            else:
+                logger.warning(f"Embeddings file not found at {embeddings_path}")
+                if preprocessing_analytics.get("embedding_stats"):
+                    visualizations["embedding_stats"] = preprocessing_analytics["embedding_stats"]
         
-        # Generate correlation analysis if requested
         if request.include_correlations:
             correlation_result = await visualization_service.generate_correlation_matrix_visualization(
                 dataset_path=request.dataset_path
@@ -604,32 +630,35 @@ async def generate_preprocessing_visualizations(request: PreprocessingVisualizat
                 visualizations["correlation_analysis"] = correlation_result
                 recommendations.append("Correlation matrix shows feature relationships")
         
-        # Generate token analysis if requested
         if request.include_token_analysis:
-            token_result = await visualization_service.generate_token_distribution_visualization(
-                dataset_path=request.dataset_path
-            )
-            if token_result.get("status") == "success":
-                visualizations["token_analysis"] = token_result["visualization_data"]
-                token_stats = token_result["visualization_data"].get("token_statistics", {})
+            if preprocessing_analytics.get("token_distribution"):
+                visualizations["token_distribution"] = preprocessing_analytics["token_distribution"]
+                token_stats = preprocessing_analytics["token_distribution"].get("token_statistics", {})
                 if token_stats.get("mean_tokens_per_sample", 0) > 512:
                     recommendations.append("Average token length is high - consider sequence length adjustments")
+            else:
+                token_result = await visualization_service.generate_token_distribution_visualization(
+                    dataset_path=request.dataset_path
+                )
+                if token_result.get("status") == "success"):
+                    token_vis_data = token_result.get("visualization_data", {})
+                    visualizations["token_distribution"] = {
+                        "token_statistics": token_vis_data.get("token_statistics", {}),
+                        "vocabulary_stats": token_vis_data.get("vocabulary_statistics", {})
+                    }
         
-        # Add quality metrics if requested
         if request.include_quality_metrics:
-            # This would load preprocessing analytics if available
-            try:
-                import json
-                from pathlib import Path
-                analytics_path = Path(request.dataset_path) / "preprocessing_analytics.json"
-                if analytics_path.exists():
-                    with open(analytics_path, 'r') as f:
-                        analytics = json.load(f)
-                    summary_statistics = analytics.get("quality_metrics", {})
-                    if summary_statistics.get("overall_quality_score", 0) < 0.7:
-                        recommendations.append("Dataset quality score is below recommended threshold")
-            except Exception as e:
-                logger.warning(f"Could not load quality metrics: {e}")
+            if preprocessing_analytics.get("quality_metrics"):
+                visualizations["quality_metrics"] = preprocessing_analytics["quality_metrics"]
+                summary_statistics = preprocessing_analytics["quality_metrics"]
+                if summary_statistics.get("overall_quality_score", 0) < 0.7:
+                    recommendations.append("Dataset quality score is below recommended threshold")
+        
+        if preprocessing_analytics.get("preprocessing_time_ms"):
+            visualizations["preprocessing_time_ms"] = preprocessing_analytics["preprocessing_time_ms"]
+        
+        if preprocessing_analytics.get("duplicate_removal_stats"):
+            visualizations["duplicate_removal_stats"] = preprocessing_analytics["duplicate_removal_stats"]
         
         return PreprocessingVisualizationResponse(
             status="success",

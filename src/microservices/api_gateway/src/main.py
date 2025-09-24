@@ -55,6 +55,7 @@ SERVICE_ROUTES = {
     '/api/v1/templates': 'llmforge-data-generation',
     '/api/v1/data-generation': 'llmforge-data-generation',
     '/api/v1/prepare-data': 'llmforge-data-generation',
+    '/api/data-generation': 'llmforge-data-generation',
     '/data-generation': 'llmforge-data-generation',  # Backward compatibility
     '/prepare-data': 'llmforge-data-generation',  # Backward compatibility
     
@@ -62,6 +63,7 @@ SERVICE_ROUTES = {
     '/api/v1/analytics': 'llmforge-visualization',
     '/api/v1/dashboard': 'llmforge-visualization',
     '/api/v1/visualization': 'llmforge-visualization',
+    '/api/visualization': 'llmforge-visualization',
     '/visualization': 'llmforge-visualization',  # Backward compatibility
     
     # Model management service routes
@@ -201,6 +203,7 @@ async def lifespan(app: FastAPI):
     
     # Startup
     logger.info("Starting LLMForge API Gateway...")
+    logger.info(f"Configured routes: {list(SERVICE_ROUTES.keys())}")
     
     orchestrator_url = os.getenv('ORCHESTRATOR_URL', 'http://localhost:8080')
     service_discovery = ServiceDiscoveryClient(orchestrator_url)
@@ -246,9 +249,12 @@ def get_service_name(path: str) -> Optional[str]:
     if re.match(locale_pattern, path):
         path = re.sub(locale_pattern, '/', path)
     
+    logger.info(f"[ROUTE DEBUG] Checking path: '{path}'")
     for route_prefix, service_name in SERVICE_ROUTES.items():
         if path.startswith(route_prefix):
+            logger.info(f"[ROUTE DEBUG] Matched '{route_prefix}' -> '{service_name}'")
             return service_name
+    logger.warning(f"[ROUTE DEBUG] No match for path: '{path}'")
     return None
 
 
@@ -371,18 +377,62 @@ async def proxy_request(
         active_connections.dec()
 
 
-# Dynamic route handler for all API routes
-@app.api_route("/api/v1/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def api_proxy(path: str, request: Request):
-    """Proxy API requests to appropriate microservices"""
+# Handler for /api/{path} routes (without version prefix) - must come before /api/v1
+@app.api_route("/api/{version}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def api_versioned_proxy(version: str, path: str, request: Request):
+    """Proxy versioned API requests to appropriate microservices"""
+    # Only handle v1 for now
+    if version != "v1":
+        # Try as a non-versioned /api/ route
+        full_path = f"/api/{version}/{path}" if path else f"/api/{version}"
+        logger.debug(f"Looking for service for path: {full_path}")
+        service_name = get_service_name(full_path)
+        
+        if not service_name:
+            # Also try with just /api/{version}
+            full_path = f"/api/{version}"
+            logger.debug(f"Trying shorter path: {full_path}")
+            service_name = get_service_name(full_path)
+            if not service_name:
+                logger.error(f"No service found for path: {full_path}")
+                raise HTTPException(status_code=404, detail=f"No service found for path: {full_path}")
+            # For routes like /api/visualization, strip the matched prefix and forward the rest
+            target_path = f"/{path}" if path else ""
+        else:
+            # For routes like /api/visualization/something, strip /api/visualization and forward /something
+            target_path = f"/{path}" if path else ""
+        
+        return await proxy_request(request, service_name, target_path)
+    
+    # Handle v1 routes
     full_path = f"/api/v1/{path}"
     service_name = get_service_name(full_path)
     
     if not service_name:
         raise HTTPException(status_code=404, detail=f"No service found for path: {full_path}")
     
-    # Remove the /api/v1 prefix for the target service
-    target_path = path
+    # Find the matched route to strip its suffix from the path
+    matched_route = None
+    for route_prefix, svc_name in SERVICE_ROUTES.items():
+        if full_path.startswith(route_prefix) and svc_name == service_name:
+            matched_route = route_prefix
+            break
+    
+    # Strip the matched route prefix and keep what comes after
+    if matched_route:
+        # Remove /api/v1/<service> prefix, keep the rest
+        # e.g., /api/v1/visualization/preprocessing/visualize -> /preprocessing/visualize
+        prefix_to_remove = matched_route.replace('/api/v1/', '')
+        logger.info(f"[PATH DEBUG] matched_route={matched_route}, prefix_to_remove={prefix_to_remove}, path={path}")
+        if path.startswith(prefix_to_remove):
+            target_path = '/' + path[len(prefix_to_remove):].lstrip('/')
+            logger.info(f"[PATH DEBUG] Stripped prefix, target_path={target_path}")
+        else:
+            target_path = f"/{path}" if path else ""
+            logger.info(f"[PATH DEBUG] No prefix match, target_path={target_path}")
+    else:
+        target_path = f"/{path}" if path else ""
+        logger.info(f"[PATH DEBUG] No matched route, target_path={target_path}")
     
     return await proxy_request(request, service_name, target_path)
 
@@ -391,8 +441,8 @@ async def api_proxy(path: str, request: Request):
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
 async def legacy_proxy(path: str, request: Request):
     """Proxy legacy API requests to appropriate microservices for backward compatibility"""
-    # Skip internal routes
-    if path in ["health", "services", "routes", "metrics"] or path.startswith("api/v1/"):
+    # Skip internal routes and routes handled by other handlers
+    if path in ["health", "services", "routes", "metrics"] or path.startswith("api/"):
         raise HTTPException(status_code=404, detail="Not found")
     
     full_path = f"/{path}"
