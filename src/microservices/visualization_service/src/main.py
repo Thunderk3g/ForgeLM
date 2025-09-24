@@ -640,7 +640,7 @@ async def generate_preprocessing_visualizations(request: PreprocessingVisualizat
                 token_result = await visualization_service.generate_token_distribution_visualization(
                     dataset_path=request.dataset_path
                 )
-                if token_result.get("status") == "success"):
+                if token_result.get("status") == "success":
                     token_vis_data = token_result.get("visualization_data", {})
                     visualizations["token_distribution"] = {
                         "token_statistics": token_vis_data.get("token_statistics", {}),
