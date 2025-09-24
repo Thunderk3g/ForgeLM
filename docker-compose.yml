@@ -1,5 +1,4 @@
 services:
-
   # Shared Base - Common dependencies for all microservices
   base:
     build:
@@ -105,7 +104,7 @@ services:
         BUILDKIT_INLINE_CACHE: 1
     container_name: llmforge-training
     restart: unless-stopped
-    init: true  # FIXED: Handle PID 1 properly
+    init: true # FIXED: Handle PID 1 properly
     ports:
       - "8001:8001"
     environment:
@@ -136,9 +135,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 14G  # Safe for 15.5GB host, room for patching/optimizer
+          memory: 14G # Safe for 15.5GB host, room for patching/optimizer
         reservations:
-          memory: 12G  # Guarantee for stability
+          memory: 12G # Guarantee for stability
           devices:
             - driver: nvidia
               count: 1
@@ -239,9 +238,12 @@ services:
       - SERVICE_PORT=8004
       - SERVICE_ADVERTISED_HOST=llmforge-visualization
       - ORCHESTRATOR_URL=http://orchestrator:8080
+      - MPLCONFIGDIR=/home/llmforge/.config/matplotlib
+      - MATPLOTLIB_CACHE_DIR=/home/llmforge/.cache/matplotlib
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
+      - matplotlib_cache:/home/llmforge/.cache
     depends_on:
       - base
       - orchestrator
@@ -297,6 +299,8 @@ services:
 
 volumes:
   model_cache:
+    driver: local
+  matplotlib_cache:
     driver: local
 
 networks:

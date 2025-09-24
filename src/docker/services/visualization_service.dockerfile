@@ -11,11 +11,15 @@ RUN pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-vi
 # Set working directory
 WORKDIR /app
 
-# Create required directories
-RUN mkdir -p /app/logs /app/data
+# Create required directories and set up user environment
+RUN mkdir -p /app/logs /app/data /home/llmforge/.config /home/llmforge/.cache /home/llmforge/.config/matplotlib
 
-# Set ownership
-RUN chown -R llmforge:llmforge /app
+# Set ownership for all directories
+RUN chown -R llmforge:llmforge /app /home/llmforge
+
+# Set environment variables for matplotlib to use proper cache directory
+ENV MPLCONFIGDIR=/home/llmforge/.config/matplotlib
+ENV MATPLOTLIB_CACHE_DIR=/home/llmforge/.cache/matplotlib
 
 # Switch to non-root user
 USER llmforge
