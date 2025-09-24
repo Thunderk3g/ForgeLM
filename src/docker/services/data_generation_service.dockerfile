@@ -5,7 +5,7 @@ FROM llmforge-base:latest
 COPY src/microservices/data_generation_service/ /app/
 
 # Set working directory
-WORKDIR /app
+WORKDIR /app/src
 
 # Install service-specific dependencies
 RUN pip install -r requirements.txt
@@ -23,4 +23,4 @@ USER llmforge
 EXPOSE 8003
 
 # Command to run the service
-CMD ["python", "src/main.py"]
+CMD ["python", "main.py"]
