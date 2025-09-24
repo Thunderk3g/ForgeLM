@@ -31,7 +31,7 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({
   const [batchSize, setBatchSize] = useState(20)
   const [learningRate, setLearningRate] = useState(0.0001)
   const [gradientAccumulation, setGradientAccumulation] = useState(4)
-  const [maxSeqLength, setMaxSeqLength] = useState(256)
+  const [maxSeqLength, setMaxSeqLength] = useState(1024)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()

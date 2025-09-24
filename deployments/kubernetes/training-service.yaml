@@ -1,0 +1,339 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmforge-training
+  namespace: llmforge
+  labels:
+    app: llmforge-training
+    component: training-service
+    app.kubernetes.io/name: training-service
+    app.kubernetes.io/part-of: llmforge-platform
+spec:
+  replicas: 1  # Training jobs are typically single-instance
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: llmforge-training
+  template:
+    metadata:
+      labels:
+        app: llmforge-training
+        component: training-service
+        app.kubernetes.io/name: training-service
+        app.kubernetes.io/part-of: llmforge-platform
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      nodeSelector:
+        nvidia.com/gpu: "true"  # Ensure deployment on GPU nodes
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      containers:
+      - name: training-service
+        image: llmforge/training-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+          name: http
+        env:
+        - name: SERVICE_HOST
+          value: "0.0.0.0"
+        - name: SERVICE_PORT
+          value: "8001"
+        - name: ORCHESTRATOR_URL
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: ORCHESTRATOR_URL
+        - name: CUDA_VISIBLE_DEVICES
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: CUDA_VISIBLE_DEVICES
+        - name: TOKENIZERS_PARALLELISM
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: TOKENIZERS_PARALLELISM
+        - name: CUDA_LAUNCH_BLOCKING
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: CUDA_LAUNCH_BLOCKING
+        - name: MAX_TRAINING_JOBS
+          valueFrom:
+            configMapKeyRef:
+              name: training-config
+              key: MAX_TRAINING_JOBS
+        - name: HUGGINGFACE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: llmforge-secrets
+              key: huggingface-token
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: llmforge-config
+              key: REDIS_PORT
+        resources:
+          requests:
+            cpu: "4"
+            memory: "12Gi"
+            nvidia.com/gpu: "1"
+          limits:
+            cpu: "16"
+            memory: "32Gi"
+            nvidia.com/gpu: "1"
+        volumeMounts:
+        - name: training-data
+          mountPath: /app/data
+        - name: training-models
+          mountPath: /app/models
+        - name: training-logs
+          mountPath: /app/logs
+        - name: model-cache
+          mountPath: /home/llmforge/.cache
+        - name: shm
+          mountPath: /dev/shm
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+      volumes:
+      - name: training-data
+        persistentVolumeClaim:
+          claimName: training-data-pvc
+      - name: training-models
+        persistentVolumeClaim:
+          claimName: training-models-pvc
+      - name: training-logs
+        persistentVolumeClaim:
+          claimName: training-logs-pvc
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache-pvc
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 8Gi
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - llmforge-training
+              topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmforge-training
+  namespace: llmforge
+  labels:
+    app: llmforge-training
+    component: training-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8001
+    targetPort: 8001
+    protocol: TCP
+    name: http
+  selector:
+    app: llmforge-training
+
+---
+# Horizontal Pod Autoscaler (disabled for training service - typically single instance)
+# apiVersion: autoscaling/v2
+# kind: HorizontalPodAutoscaler
+# metadata:
+#   name: llmforge-training-hpa
+#   namespace: llmforge
+# spec:
+#   scaleTargetRef:
+#     apiVersion: apps/v1
+#     kind: Deployment
+#     name: llmforge-training
+#   minReplicas: 1
+#   maxReplicas: 2
+#   metrics:
+#   - type: Resource
+#     resource:
+#       name: cpu
+#       target:
+#         type: Utilization
+#         averageUtilization: 70
+#   - type: Resource
+#     resource:
+#       name: memory
+#       target:
+#         type: Utilization
+#         averageUtilization: 80
+
+---
+# Training Job Custom Resource Definition
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: trainingjobs.llmforge.io
+spec:
+  group: llmforge.io
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              baseModel:
+                type: string
+                description: "Base model path or identifier"
+              dataset:
+                type: string
+                description: "Dataset path or identifier"
+              outputDir:
+                type: string
+                description: "Output directory for fine-tuned model"
+              trainingConfig:
+                type: object
+                properties:
+                  epochs:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+                    default: 1
+                  batchSize:
+                    type: integer
+                    minimum: 1
+                    maximum: 128
+                    default: 4
+                  learningRate:
+                    type: number
+                    minimum: 0.00001
+                    maximum: 0.01
+                    default: 0.0002
+                  gradientAccumulationSteps:
+                    type: integer
+                    minimum: 1
+                    maximum: 64
+                    default: 4
+                  maxSeqLength:
+                    type: integer
+                    minimum: 128
+                    maximum: 8192
+                    default: 2048
+                  peftMethod:
+                    type: string
+                    enum: ["lora", "qlora", "dora", "oft", "pissa"]
+                    default: "qlora"
+              priority:
+                type: string
+                enum: ["low", "normal", "high", "critical"]
+                default: "normal"
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+                enum: ["pending", "running", "succeeded", "failed", "cancelled"]
+              startTime:
+                type: string
+                format: date-time
+              completionTime:
+                type: string
+                format: date-time
+              progress:
+                type: object
+                properties:
+                  currentEpoch:
+                    type: integer
+                  totalEpochs:
+                    type: integer
+                  currentStep:
+                    type: integer
+                  totalSteps:
+                    type: integer
+                  loss:
+                    type: number
+                  accuracy:
+                    type: number
+              message:
+                type: string
+              logs:
+                type: array
+                items:
+                  type: string
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Status
+      type: string
+      description: The status of the training job
+      jsonPath: .status.phase
+    - name: Progress
+      type: string
+      description: Current progress
+      jsonPath: .status.progress
+    - name: Started
+      type: date
+      description: When the job was started
+      jsonPath: .status.startTime
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: trainingjobs
+    singular: trainingjob
+    kind: TrainingJob
+    shortNames:
+    - tj

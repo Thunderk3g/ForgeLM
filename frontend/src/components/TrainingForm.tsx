@@ -1,15 +1,46 @@
 import React, { useState } from 'react';
-import { Play, Settings } from 'lucide-react';
-import type { FineTuneRequest, ModelInfo } from '../types/api';
+import { Play, Settings, Database, Eye, ChevronDown, ChevronRight } from 'lucide-react';
+import type { FineTuneRequest, ModelInfo, PreprocessingConfig, PreprocessingAnalytics } from '../types/api';
+import { PreprocessingConfigPanel } from './PreprocessingConfigPanel';
+import { PreprocessingResultsViewer } from './PreprocessingResultsViewer';
 
 interface TrainingFormProps {
   onStartTraining: (request: FineTuneRequest) => void;
   isLoading: boolean;
   selectedModel: string | null;
   selectedModelInfo?: ModelInfo | null;
+  datasetPath?: string;
+  preprocessingConfig?: PreprocessingConfig;
+  analytics?: PreprocessingAnalytics;
+  onUpdateConfig?: (config: PreprocessingConfig) => void;
 }
 
-export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isLoading, selectedModel, selectedModelInfo }) => {
+export const TrainingForm: React.FC<TrainingFormProps> = ({ 
+  onStartTraining, 
+  isLoading, 
+  selectedModel, 
+  selectedModelInfo,
+  datasetPath = '/app/data/prepared',
+  preprocessingConfig = {
+    enable_embeddings: false,
+    text_cleaning_level: 'standard',
+    cleaning_options: {
+      deduplication_method: 'hash',
+      normalize_whitespace: true,
+      language_detection: false,
+      utf8_sanitization: true
+    },
+    remove_duplicates_by_embedding: false,
+    similarity_threshold: 0.95,
+    generate_correlations: false,
+    create_tensor_visualizations: false,
+    quality_analysis: true,
+    token_analysis: true,
+    preview_samples: 10
+  },
+  analytics,
+  onUpdateConfig
+}) => {
   const [ftType, setFtType] = useState<string>('instruction');
   const [peftMethod, setPeftMethod] = useState<string>('qlora');
   const [alignment, setAlignment] = useState<string>('none');
@@ -18,6 +49,10 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
   const [learningRate, setLearningRate] = useState(0.0001);
   const [gradientAccumulation, setGradientAccumulation] = useState(4);
   const [maxSeqLength, setMaxSeqLength] = useState(1024);
+
+  const [showDatasetPrep, setShowDatasetPrep] = useState(true);
+  const [showVizPreview, setShowVizPreview] = useState(false);
+  const [currentDatasetPath, setCurrentDatasetPath] = useState(datasetPath);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,7 +63,7 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
     
     onStartTraining({
       base_model_dir: selectedModelInfo?.path || '/app/models/base',
-      dataset_dir: '/app/data/prepared',
+      dataset_dir: currentDatasetPath,
       output_dir: '/app/models/fine_tuned',
       ft_type: ftType,
       peft_method: peftMethod,
@@ -38,6 +73,7 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
       learning_rate: learningRate,
       gradient_accumulation_steps: gradientAccumulation,
       max_seq_length: maxSeqLength,
+      preprocessing_config: preprocessingConfig,
     });
   };
 
@@ -109,6 +145,68 @@ export const TrainingForm: React.FC<TrainingFormProps> = ({ onStartTraining, isL
                   </label>
                 ))}
               </div>
+            </div>
+
+            {/* Dataset Preparation Section */}
+            <div className="space-y-4">
+              <button
+                type="button"
+                onClick={() => setShowDatasetPrep(!showDatasetPrep)}
+                className="flex items-center justify-between w-full p-3 border rounded-lg hover:bg-accent transition-colors"
+              >
+                <div className="flex items-center space-x-2">
+                  <Database className="w-4 h-4 text-blue-500" />
+                  <span className="font-medium">Dataset Preparation & Embeddings</span>
+                </div>
+                {showDatasetPrep ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              </button>
+
+              {showDatasetPrep && (
+                <div className="space-y-4 ml-4 p-4 border rounded-lg bg-muted/50">
+                  {/* Dataset Path */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Dataset Path</label>
+                    <input
+                      type="text"
+                      value={currentDatasetPath}
+                      onChange={(e) => setCurrentDatasetPath(e.target.value)}
+                      className="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500"
+                      placeholder="/app/data/prepared"
+                    />
+                  </div>
+
+                  {/* Embedding Configuration */}
+                  <div>
+                    <PreprocessingConfigPanel
+                      config={preprocessingConfig}
+                      onConfigChange={(config) => onUpdateConfig?.(config)}
+                      className="border rounded"
+                    />
+                  </div>
+
+                  {/* Visualization Preview Toggle */}
+                  {analytics && (
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setShowVizPreview(!showVizPreview)}
+                        className="flex items-center space-x-2 text-sm text-blue-600 hover:text-blue-800"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>{showVizPreview ? 'Hide' : 'Show'} Visualization Preview</span>
+                      </button>
+                      {showVizPreview && (
+                        <div className="mt-3">
+                          <PreprocessingResultsViewer
+                            result={{ status: 'success', message: 'Preview', train_path: currentDatasetPath }}
+                            className="border rounded p-4"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

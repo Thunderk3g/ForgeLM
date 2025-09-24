@@ -6,7 +6,7 @@ import HomePage from './components/HomePage'
 import WorkflowPage from './components/workflow-page'
 import DocsPage from './components/DocsPage'
 import LLMForgeApp from './components/llmforge-app'
-import ComparisonChatInterface from './components/comparison-chat-interface'
+import { ComparisonChatInterface } from './components/ComparisonChatInterface'
 import { VisualizationDashboard } from './components/VisualizationDashboard'
 
 // API

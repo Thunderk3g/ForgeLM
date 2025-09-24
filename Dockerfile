@@ -1,57 +1,55 @@
-FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+# Multi-stage Dockerfile for LLMForge
+# This builds a development environment with all services
+FROM nvidia/cuda:12.1-devel-ubuntu22.04
 
-# Environment variables
+# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-ENV CUDA_HOME=/usr/local/cuda
-ENV PIP_NO_CACHE_DIR=1
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1
-ENV TRANSFORMERS_NO_FLASH_ATTENTION=1
+ENV CUDA_LAUNCH_BLOCKING=0
+ENV TOKENIZERS_PARALLELISM=false
 
-# Install system dependencies (cached layer - rarely changes)
+# Create user for security
+RUN groupadd -r llmforge && useradd -r -g llmforge llmforge
+
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
-    python3.10 \
-    python3.10-dev \
+    python3 \
     python3-pip \
+    python3-dev \
     git \
-    wget \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && ln -s /usr/bin/python3.10 /usr/bin/python
+    wget \
+    vim \
+    htop \
+    build-essential \
+    software-properties-common \
+    && rm -rf /var/lib/apt/lists/*
 
+# Create app directory
 WORKDIR /app
 
-# Create directory structure early (cached layer)
-RUN mkdir -p /app/data/input /app/data/prepared /app/models/base /app/models/finetuned
+# Copy requirements files
+COPY requirements*.txt ./
 
-# Upgrade pip (small, stable layer)
-RUN pip install --no-cache-dir --upgrade pip
+# Install Python dependencies
+RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements-app.txt
+RUN pip3 install --no-cache-dir -r requirements-base.txt
+RUN pip3 install --no-cache-dir -r requirements-ml.txt
 
-# Layer 1: Base stable dependencies (rarely change)
-COPY requirements-base.txt .
-RUN pip install --no-cache-dir -r requirements-base.txt
+# Copy application code
+COPY . .
 
-# Layer 2: Heavy ML/AI dependencies (change less frequently than app deps)
-COPY requirements-ml.txt .
-# Install build dependencies first for packages that need compilation
-RUN pip install --no-cache-dir packaging wheel ninja
-RUN pip install --no-cache-dir -r requirements-ml.txt
+# Create necessary directories
+RUN mkdir -p /app/logs /app/data /app/models /app/datasets
+RUN chown -R llmforge:llmforge /app
 
-# Layer 3: Application and web framework dependencies (moderate change frequency)
-COPY requirements-app.txt .
-RUN pip install --no-cache-dir -r requirements-app.txt
+# Switch to non-root user
+USER llmforge
 
-# Download language models (cached layer - only when ML deps change)
-RUN python -m spacy download en_core_web_sm
-RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('stopwords', quiet=True)"
+# Expose ports for all services
+EXPOSE 8000 8001 8002 8003 8004 8005 8080 3000
 
-# Copy application code last (changes most frequently)
-COPY *.py ./
-COPY --chown=root:root . .
-
-EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+# Default command (can be overridden)
+CMD ["python3", "-c", "print('LLMForge container ready. Use docker-compose to start services.')"]

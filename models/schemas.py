@@ -2,7 +2,7 @@
 Pydantic schemas for API request/response models
 """
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import uuid
@@ -127,3 +127,122 @@ class ResearchLogEntry(BaseModel):
         if 'timestamp' not in data or data['timestamp'] is None:
             data['timestamp'] = datetime.now().isoformat()
         super().__init__(**data)
+
+
+# ============================
+# Configuration Schemas for Chat Configuration Panel
+# ============================
+
+class GenerationConfig(BaseModel):
+    """Configuration for model generation parameters"""
+    temperature: float = Field(0.7, ge=0.1, le=2.0, description="Controls randomness in generation")
+    top_p: float = Field(0.9, ge=0.1, le=1.0, description="Nucleus sampling threshold")
+    top_k: Optional[int] = Field(50, ge=1, le=100, description="Top-k sampling limit")
+    max_tokens: int = Field(256, ge=50, le=4096, description="Maximum response length")
+    presence_penalty: float = Field(0.0, ge=-2.0, le=2.0, description="Penalty for token presence")
+    frequency_penalty: float = Field(0.0, ge=-2.0, le=2.0, description="Penalty for token frequency")
+    repetition_penalty: float = Field(1.0, ge=0.5, le=2.0, description="Repetition penalty (transformers)")
+    do_sample: bool = Field(True, description="Use sampling vs greedy decoding")
+    early_stopping: bool = Field(False, description="Stop early when possible")
+    seed: Optional[int] = Field(None, description="Random seed for reproducible generation")
+    pad_token_id: Optional[int] = Field(None, description="Override padding token ID")
+    eos_token_id: Optional[int] = Field(None, description="Override end-of-sequence token ID")
+
+
+class ModelSpecificConfig(BaseModel):
+    """Configuration specific to a single model in the pair"""
+    system_prompt: str = Field("", description="Custom system prompt for this model")
+    context_length: int = Field(2048, ge=512, le=8192, description="Maximum context length")
+    generation_config: GenerationConfig = Field(default_factory=GenerationConfig)
+    model_id: Optional[str] = Field(None, description="Identifier for this model")
+    enabled: bool = Field(True, description="Whether this model is enabled for generation")
+
+
+class DualModelConfig(BaseModel):
+    """Configuration for both models in a comparison pair"""
+    session_id: str = Field(..., description="Chat session identifier")
+    base_model: ModelSpecificConfig = Field(default_factory=ModelSpecificConfig)
+    finetuned_model: ModelSpecificConfig = Field(default_factory=ModelSpecificConfig)
+    sync_parameters: bool = Field(False, description="Sync generation parameters between models")
+    config_name: Optional[str] = Field(None, description="Name for this configuration")
+    created_at: Optional[str] = Field(None, description="Configuration creation timestamp")
+    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+    
+    def __init__(self, **data):
+        if 'created_at' not in data or data['created_at'] is None:
+            data['created_at'] = datetime.now().isoformat()
+        if 'updated_at' not in data or data['updated_at'] is None:
+            data['updated_at'] = datetime.now().isoformat()
+        super().__init__(**data)
+
+
+class ConfigPreset(BaseModel):
+    """Predefined configuration preset"""
+    preset_id: str = Field(..., description="Unique preset identifier")
+    name: str = Field(..., description="Human-readable preset name")
+    description: str = Field("", description="Description of this preset's purpose")
+    category: str = Field("general", description="Preset category (creative, factual, code, etc.)")
+    base_config: GenerationConfig = Field(default_factory=GenerationConfig)
+    finetuned_config: GenerationConfig = Field(default_factory=GenerationConfig)
+    system_prompts: Dict[str, str] = Field(default_factory=dict, description="Default system prompts")
+    is_built_in: bool = Field(False, description="Whether this is a built-in preset")
+    created_by: Optional[str] = Field(None, description="User who created this preset")
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    usage_count: int = Field(0, description="Number of times this preset has been used")
+
+
+class ModelCapabilities(BaseModel):
+    """Information about what a model can do and its constraints"""
+    model_id: str
+    model_type: str  # "base", "finetuned", "unknown"
+    max_context_length: int
+    supports_system_prompt: bool
+    default_parameters: GenerationConfig
+    parameter_constraints: Dict[str, Dict[str, Any]]  # min/max values for each param
+    recommended_presets: List[str]
+    memory_usage_mb: Optional[int] = None
+    estimated_tokens_per_second: Optional[float] = None
+
+
+# Request/Response schemas for configuration endpoints
+
+class ModelConfigRequest(BaseModel):
+    """Request to update model configuration"""
+    session_id: str
+    config: DualModelConfig
+
+
+class ConfigPresetRequest(BaseModel):
+    """Request to create or update a configuration preset"""
+    name: str
+    description: Optional[str] = ""
+    category: str = "general"
+    base_config: GenerationConfig
+    finetuned_config: GenerationConfig
+    system_prompts: Optional[Dict[str, str]] = None
+
+
+class ConfigValidationResponse(BaseModel):
+    """Response for configuration validation"""
+    is_valid: bool
+    warnings: List[str] = []
+    errors: List[str] = []
+    estimated_performance: Optional[Dict[str, Any]] = None
+    memory_requirements: Optional[Dict[str, int]] = None
+
+
+class ConfigPresetListResponse(BaseModel):
+    """Response containing list of available presets"""
+    presets: List[ConfigPreset]
+    categories: List[str]
+    total_count: int
+
+
+# Enhanced comparison request with configuration support
+class EnhancedComparisonRequest(BaseModel):
+    """Enhanced comparison request with full configuration support"""
+    session_id: str
+    messages: List[ChatMessage]
+    config: Optional[DualModelConfig] = None
+    use_agent_orchestrator: bool = False
+    return_debug_info: bool = False

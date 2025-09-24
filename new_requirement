@@ -1,0 +1,409 @@
+{
+    "status": "success",
+    "dataset_path": "/app/data/prepared",
+    "visualizations": {
+        "tensor_analysis": {
+            "preprocessing_summary": {
+                "embedding_stats": null,
+                "correlation_analysis": null,
+                "tensor_visualizations": null,
+                "quality_metrics": {
+                    "avg_text_length": 169.67381974248926,
+                    "median_text_length": 165.0,
+                    "text_length_std": 76.82210935582131,
+                    "min_text_length": 15,
+                    "max_text_length": 1021,
+                    "avg_word_count": 26.863831447522436,
+                    "vocabulary_size": 18366,
+                    "vocabulary_richness": 0.1333730320106896,
+                    "avg_words_per_sample": 26.863831447522436,
+                    "empty_rows_ratio": 0.0,
+                    "data_completeness": 1.0,
+                    "overall_quality_score": 0.7800238192064137
+                },
+                "token_distribution": {
+                    "token_statistics": {
+                        "mean_tokens_per_sample": 17.00214592274678,
+                        "median_tokens_per_sample": 16.0,
+                        "std_tokens_per_sample": 8.601451850460368,
+                        "min_tokens": 1,
+                        "max_tokens": 45,
+                        "total_estimated_tokens": 87153
+                    },
+                    "token_distribution_histogram": [
+                        {
+                            "range": "1-3",
+                            "count": 168,
+                            "percentage": 3.2774092859929773
+                        },
+                        {
+                            "range": "3-5",
+                            "count": 159,
+                            "percentage": 3.1018337885290674
+                        },
+                        {
+                            "range": "5-8",
+                            "count": 526,
+                            "percentage": 10.261412407335154
+                        },
+                        {
+                            "range": "8-10",
+                            "count": 305,
+                            "percentage": 5.950058525165821
+                        },
+                        {
+                            "range": "10-12",
+                            "count": 569,
+                            "percentage": 11.1002731174405
+                        },
+                        {
+                            "range": "12-14",
+                            "count": 527,
+                            "percentage": 10.280920795942256
+                        },
+                        {
+                            "range": "14-16",
+                            "count": 538,
+                            "percentage": 10.495513070620367
+                        },
+                        {
+                            "range": "16-19",
+                            "count": 223,
+                            "percentage": 4.350370659383535
+                        },
+                        {
+                            "range": "19-21",
+                            "count": 437,
+                            "percentage": 8.52516582130316
+                        },
+                        {
+                            "range": "21-23",
+                            "count": 191,
+                            "percentage": 3.7261022239563015
+                        },
+                        {
+                            "range": "23-25",
+                            "count": 395,
+                            "percentage": 7.705813499804916
+                        },
+                        {
+                            "range": "25-27",
+                            "count": 336,
+                            "percentage": 6.554818571985955
+                        },
+                        {
+                            "range": "27-30",
+                            "count": 319,
+                            "percentage": 6.223175965665236
+                        },
+                        {
+                            "range": "30-32",
+                            "count": 122,
+                            "percentage": 2.380023410066329
+                        },
+                        {
+                            "range": "32-34",
+                            "count": 185,
+                            "percentage": 3.609051892313695
+                        },
+                        {
+                            "range": "34-36",
+                            "count": 89,
+                            "percentage": 1.7362465860319938
+                        },
+                        {
+                            "range": "36-38",
+                            "count": 22,
+                            "percentage": 0.4291845493562232
+                        },
+                        {
+                            "range": "38-41",
+                            "count": 11,
+                            "percentage": 0.2145922746781116
+                        },
+                        {
+                            "range": "41-43",
+                            "count": 3,
+                            "percentage": 0.058525165821303154
+                        },
+                        {
+                            "range": "43-45",
+                            "count": 1,
+                            "percentage": 0.019508388607101055
+                        }
+                    ],
+                    "vocabulary_stats": {
+                        "total_unique_words": 16947,
+                        "total_word_occurrences": 68852,
+                        "most_frequent_words": [
+                            [
+                                "a",
+                                1713
+                            ],
+                            [
+                                "i",
+                                1383
+                            ],
+                            [
+                                "the",
+                                1332
+                            ],
+                            [
+                                "you",
+                                1317
+                            ],
+                            [
+                                "bitch",
+                                1302
+                            ],
+                            [
+                                "to",
+                                932
+                            ],
+                            [
+                                "and",
+                                739
+                            ],
+                            [
+                                "that",
+                                702
+                            ],
+                            [
+                                "my",
+                                621
+                            ],
+                            [
+                                "is",
+                                546
+                            ],
+                            [
+                                "in",
+                                541
+                            ],
+                            [
+                                "like",
+                                491
+                            ],
+                            [
+                                "of",
+                                475
+                            ],
+                            [
+                                "on",
+                                474
+                            ],
+                            [
+                                "be",
+                                424
+                            ],
+                            [
+                                "me",
+                                417
+                            ],
+                            [
+                                "pussy",
+                                411
+                            ],
+                            [
+                                "for",
+                                392
+                            ],
+                            [
+                                "im",
+                                381
+                            ],
+                            [
+                                "this",
+                                366
+                            ]
+                        ]
+                    },
+                    "estimated_training_tokens": 87153
+                },
+                "preprocessing_time_ms": 430.4232597351074,
+                "duplicate_removal_stats": {
+                    "duplicates_removed": 0,
+                    "original_count": 5126
+                }
+            }
+        },
+        "correlation_analysis": {
+            "status": "success",
+            "correlation_matrix": {
+                "Unnamed: 0": {
+                    "Unnamed: 0": 1.0,
+                    "count": 0.003083123336241654,
+                    "hate_speech": 0.10542218856377483,
+                    "offensive_language": -0.07516538111291825,
+                    "neither": 0.030430401720964662,
+                    "class": -0.030823673295315723
+                },
+                "count": {
+                    "Unnamed: 0": 0.003083123336241654,
+                    "count": 1.0,
+                    "hate_speech": 0.05647854772577855,
+                    "offensive_language": 0.5048520848903121,
+                    "neither": 0.08980841901044789,
+                    "class": 0.012243511187958175
+                },
+                "hate_speech": {
+                    "Unnamed: 0": 0.10542218856377483,
+                    "count": 0.05647854772577855,
+                    "hate_speech": 1.0,
+                    "offensive_language": -0.3140751251950095,
+                    "neither": -0.18348592335664843,
+                    "class": -0.5760497573475692
+                },
+                "offensive_language": {
+                    "Unnamed: 0": -0.07516538111291825,
+                    "count": 0.5048520848903121,
+                    "hate_speech": -0.3140751251950095,
+                    "offensive_language": 1.0,
+                    "neither": -0.6644162081000585,
+                    "class": -0.33641706245849057
+                },
+                "neither": {
+                    "Unnamed: 0": 0.030430401720964662,
+                    "count": 0.08980841901044789,
+                    "hate_speech": -0.18348592335664843,
+                    "offensive_language": -0.6644162081000585,
+                    "neither": 1.0,
+                    "class": 0.777883196124991
+                },
+                "class": {
+                    "Unnamed: 0": -0.030823673295315723,
+                    "count": 0.012243511187958175,
+                    "hate_speech": -0.5760497573475692,
+                    "offensive_language": -0.33641706245849057,
+                    "neither": 0.777883196124991,
+                    "class": 1.0
+                }
+            },
+            "feature_names": [
+                "Unnamed: 0",
+                "count",
+                "hate_speech",
+                "offensive_language",
+                "neither",
+                "class"
+            ],
+            "plot": null,
+            "timestamp": "2025-09-24T14:43:00.859197"
+        },
+        "token_analysis": {
+            "token_statistics": {
+                "mean_tokens_per_sample": 17.00214592274678,
+                "median_tokens_per_sample": 16.0,
+                "std_tokens_per_sample": 8.601451850460368,
+                "min_tokens": 1,
+                "max_tokens": 45,
+                "total_estimated_tokens": 87153
+            },
+            "vocabulary_statistics": {
+                "total_unique_words": 16947,
+                "total_word_occurrences": 68852,
+                "most_frequent_words": [
+                    [
+                        "a",
+                        1713
+                    ],
+                    [
+                        "i",
+                        1383
+                    ],
+                    [
+                        "the",
+                        1332
+                    ],
+                    [
+                        "you",
+                        1317
+                    ],
+                    [
+                        "bitch",
+                        1302
+                    ],
+                    [
+                        "to",
+                        932
+                    ],
+                    [
+                        "and",
+                        739
+                    ],
+                    [
+                        "that",
+                        702
+                    ],
+                    [
+                        "my",
+                        621
+                    ],
+                    [
+                        "is",
+                        546
+                    ],
+                    [
+                        "in",
+                        541
+                    ],
+                    [
+                        "like",
+                        491
+                    ],
+                    [
+                        "of",
+                        475
+                    ],
+                    [
+                        "on",
+                        474
+                    ],
+                    [
+                        "be",
+                        424
+                    ],
+                    [
+                        "me",
+                        417
+                    ],
+                    [
+                        "pussy",
+                        411
+                    ],
+                    [
+                        "for",
+                        392
+                    ],
+                    [
+                        "im",
+                        381
+                    ],
+                    [
+                        "this",
+                        366
+                    ]
+                ]
+            }
+        }
+    },
+    "summary_statistics": {
+        "avg_text_length": 169.67381974248926,
+        "median_text_length": 165.0,
+        "text_length_std": 76.82210935582131,
+        "min_text_length": 15,
+        "max_text_length": 1021,
+        "avg_word_count": 26.863831447522436,
+        "vocabulary_size": 18366,
+        "vocabulary_richness": 0.1333730320106896,
+        "avg_words_per_sample": 26.863831447522436,
+        "empty_rows_ratio": 0.0,
+        "data_completeness": 1.0,
+        "overall_quality_score": 0.7800238192064137
+    },
+    "recommendations": [
+        "Embeddings generated successfully - consider using for similarity analysis",
+        "Correlation matrix shows feature relationships"
+    ],
+    "timestamp": "2025-09-24T14:43:00.866502"
+}

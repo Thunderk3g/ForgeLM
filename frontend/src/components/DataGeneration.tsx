@@ -396,7 +396,7 @@ const DataGeneration: React.FC<DataGenerationProps> = ({ onDatasetGenerated }) =
                     onChange={(e) => setConfig(prev => ({ ...prev, max_tokens: parseInt(e.target.value) }))}
                     className="w-full p-2 border rounded-md"
                   >
-                    <option value={256}>256 (Short)</option>
+                    <option value={1024}>1024 (Short)</option>
                     <option value={512}>512 (Medium)</option>
                     <option value={1024}>1024 (Long)</option>
                     <option value={2048}>2048 (Very Long)</option>

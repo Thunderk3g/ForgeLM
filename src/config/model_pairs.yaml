@@ -1,0 +1,126 @@
+# Model pair configurations for LLMForge
+# Auto-discovery is enabled by default - no manual configuration needed
+
+model_pairs:
+  # Auto-discovery is the primary method
+  - pair_id: "auto_discovery"
+    name: "Auto-discovered pairs"
+    description: "Automatically discovered model pairs from directory structure"
+    enabled: true
+    auto_discover: true
+
+# Common model naming patterns for intelligent pairing
+naming_patterns:
+  base_suffixes: ["-base", "_base", "-chat", "_chat"]
+  instruct_suffixes: ["-instruct", "_instruct", "-sft", "_sft", "-chat", "_chat"]
+  
+# Model loading preferences
+loading:
+  prefer_unsloth: true
+  fallback_to_transformers: true
+  enable_4bit: true
+  max_seq_length: 2048
+  device_map: "auto"
+
+# Hardware-specific model configurations
+hardware_configs:
+  # RTX 4060 Laptop (8GB VRAM) - Your current hardware
+  rtx_4060_laptop:
+    max_model_size: "7B"
+    preferred_quantization: "4bit"
+    batch_size: 1
+    gradient_accumulation_steps: 8
+    max_seq_length: 2048
+    precision: "bf16"
+    
+  # Generic configurations for different GPU tiers
+  low_vram:  # < 6GB
+    max_model_size: "3B"
+    preferred_quantization: "4bit"
+    batch_size: 1
+    gradient_accumulation_steps: 16
+    max_seq_length: 1024
+    precision: "fp16"
+    
+  mid_vram:  # 6-12GB
+    max_model_size: "7B"
+    preferred_quantization: "4bit"
+    batch_size: 2
+    gradient_accumulation_steps: 8
+    max_seq_length: 2048
+    precision: "bf16"
+    
+  high_vram:  # 12GB+
+    max_model_size: "13B"
+    preferred_quantization: "8bit"
+    batch_size: 4
+    gradient_accumulation_steps: 4
+    max_seq_length: 4096
+    precision: "bf16"
+
+# Training type specific configurations
+training_types:
+  instruction:
+    description: "Standard instruction following fine-tuning"
+    batch_size_multiplier: 1.0
+    gradient_accumulation_multiplier: 1.0
+    learning_rate_multiplier: 1.0
+    scheduler: "linear"
+    
+  chat:
+    description: "Conversational chat model training"
+    batch_size_multiplier: 0.5
+    gradient_accumulation_multiplier: 2.0
+    learning_rate_multiplier: 0.8
+    scheduler: "cosine"
+    max_seq_length: 4096
+    
+  reasoning:
+    description: "Chain-of-thought reasoning training"
+    batch_size_multiplier: 0.25
+    gradient_accumulation_multiplier: 4.0
+    learning_rate_multiplier: 0.5
+    scheduler: "cosine"
+    max_seq_length: 8192
+
+# Model-specific optimizations for common architectures
+model_optimizations:
+  qwen:
+    precision: "bf16"  # Qwen models work best with bf16
+    tokenizer_fix: true  # Apply Qwen tokenizer fixes
+    attention_implementation: "flash_attention_2"
+    
+  llama:
+    precision: "bf16"
+    attention_implementation: "flash_attention_2"
+    rope_scaling: true
+    
+  mistral:
+    precision: "fp16"  # Mistral often works well with fp16
+    attention_implementation: "flash_attention_2"
+    
+  gemma:
+    precision: "bf16"
+    attention_implementation: "eager"  # Gemma sometimes has issues with flash attention
+
+# Unsloth-specific configurations
+unsloth:
+  enable_optimization: true
+  patch_computer: true  # Enable "2x faster training"
+  adaptive_precision: true
+  gradient_checkpointing: "unsloth"
+  memory_optimization: "aggressive"
+  
+  # Model-specific Unsloth settings
+  model_settings:
+    qwen:
+      use_unsloth_chat_template: true
+      fix_tokenizer: true
+      enable_4bit: true
+      
+    llama:
+      use_unsloth_chat_template: true
+      enable_4bit: true
+      
+    mistral:
+      enable_4bit: true

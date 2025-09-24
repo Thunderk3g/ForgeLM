@@ -4,6 +4,56 @@ export interface SelectModelRequest {
   quantization?: string;
 }
 
+// Enhanced preprocessing types
+export interface EmbeddingModelConfig {
+  model_name: string;
+  model_type: string;
+  max_sequence_length: number;
+  normalize_embeddings: boolean;
+  batch_size: number;
+  device?: string;
+  embedding_dimension?: number;
+}
+
+export interface PreprocessingConfig {
+  enable_embeddings: boolean;
+  embedding_config?: EmbeddingModelConfig;
+  text_cleaning_level: 'minimal' | 'standard' | 'aggressive';
+  cleaning_options?: {
+    deduplication_method: 'none' | 'hash' | 'similarity';
+    normalize_whitespace: boolean;
+    language_detection: boolean;
+    utf8_sanitization: boolean;
+  };
+  tokenization_and_chunking?: {
+    method: 'bpe' | 'sentencepiece' | 'custom';
+    chunking_strategy: 'fixed' | 'sliding_window' | 'semantic';
+    chunk_size: number;
+    overlap: number;
+    max_length_handling: 'truncate' | 'pad' | 'split';
+  };
+  data_augmentation?: {
+    enabled: boolean;
+    techniques: ('back_translation' | 'synonym_replacement' | 'paraphrasing' | 'noise_injection')[];
+    ratio: number;
+    preview: boolean;
+  };
+  class_balancing?: {
+    enabled: boolean;
+    method: 'smote' | 'upsample' | 'downsample' | 'none';
+    target_ratio: number;
+    stratified_split: boolean;
+    k_neighbors: number;
+  };
+  remove_duplicates_by_embedding: boolean;
+  similarity_threshold: number;
+  generate_correlations: boolean;
+  create_tensor_visualizations: boolean;
+  quality_analysis: boolean;
+  token_analysis: boolean;
+  preview_samples: number;
+}
+
 export interface PrepareDataRequest {
   input_file: string;
   output_dir?: string;
@@ -12,6 +62,108 @@ export interface PrepareDataRequest {
   balance?: boolean;
   test_size?: number;
   max_length?: number;
+  preprocessing_config?: PreprocessingConfig;
+}
+
+export interface TensorVisualizationData {
+  tensor_shape: number[];
+  tensor_stats: {
+    mean: number;
+    std: number;
+    min: number;
+    max: number;
+    norm: number;
+  };
+  visualization_data: any;
+  correlation_matrix?: number[][];
+  embedding_projections?: {
+    pca_2d?: number[][];
+    pca_3d?: number[][];
+  };
+}
+
+export interface PreprocessingAnalytics {
+  embedding_stats?: {
+    model_name: string;
+    embedding_shape: number[];
+    mean_norm: number;
+    embedding_dimension: number;
+  };
+  correlation_analysis?: any;
+  tensor_visualizations?: TensorVisualizationData;
+  quality_metrics?: {
+    avg_text_length: number;
+    vocabulary_richness: number;
+    data_completeness: number;
+    overall_quality_score: number;
+  };
+  token_distribution?: {
+    token_statistics: {
+      mean_tokens_per_sample: number;
+      median_tokens_per_sample: number;
+      total_estimated_tokens: number;
+    };
+    vocabulary_stats: {
+      total_unique_words: number;
+      most_frequent_words: [string, number][];
+    };
+  };
+  preprocessing_time_ms?: number;
+  duplicate_removal_stats?: {
+    duplicates_removed: number;
+    original_count: number;
+    final_count: number;
+  };
+  embedding_evaluation?: {
+    intrinsic_metrics: {
+      cosine_similarity: number;
+      alignment: number;
+      uniformity: number;
+    };
+    downstream_evals?: {
+      classification_accuracy: number;
+      f1_score: number;
+      task: string;
+    };
+    visualization_available: boolean;
+  };
+}
+
+export interface EmbeddingModelInfo {
+  model_name: string;
+  model_type: string;
+  description: string;
+  max_sequence_length: number;
+  embedding_dimension: number;
+  supported_tasks: string[];
+  performance_metrics?: {
+    accuracy: number;
+    speed: number;
+  };
+  memory_requirements?: string;
+  is_available: boolean;
+}
+
+export interface EmbeddingModelListResponse {
+  models: EmbeddingModelInfo[];
+  total_count: number;
+  categories: string[];
+}
+
+export interface PreprocessingPreviewRequest {
+  input_file: string;
+  sample_size: number;
+  preprocessing_config: PreprocessingConfig;
+}
+
+export interface PreprocessingPreviewResponse {
+  status: string;
+  message: string;
+  preview_samples: any[];
+  estimated_processing_time?: number;
+  estimated_output_size?: string;
+  validation_warnings: string[];
+  preprocessing_summary: any;
 }
 
 export interface FineTuneRequest {
@@ -27,6 +179,7 @@ export interface FineTuneRequest {
   gradient_accumulation_steps: number;
   max_seq_length: number;
   reasoning_effort?: string;
+  preprocessing_config?: PreprocessingConfig;
 }
 
 export interface ApiResponse {

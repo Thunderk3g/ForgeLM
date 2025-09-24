@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llmforge
+  labels:
+    name: llmforge
+    app.kubernetes.io/name: llmforge
+    app.kubernetes.io/part-of: llmforge-platform
+---
+# Resource quotas for the namespace
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: llmforge-quota
+  namespace: llmforge
+spec:
+  hard:
+    requests.cpu: "64"
+    requests.memory: 200Gi
+    requests.nvidia.com/gpu: "8"
+    limits.cpu: "128"
+    limits.memory: 400Gi
+    limits.nvidia.com/gpu: "8"
+    persistentvolumeclaims: "20"
+    services: "20"
+    secrets: "20"
+    configmaps: "20"
+---
+# Network policy for microservices
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: llmforge-network-policy
+  namespace: llmforge
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: llmforge-platform
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/part-of: llmforge-platform
+  - to: []  # Allow all egress for external dependencies
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+    - protocol: UDP
+      port: 53

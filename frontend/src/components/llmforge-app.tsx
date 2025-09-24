@@ -28,7 +28,7 @@ import {
 } from "../lib/api"
 import type { LogEntry } from "../lib/api"
 
-import type { SelectModelRequest, PrepareDataRequest, FineTuneRequest, TrainingStatus, ModelInfo } from "../lib/types"
+import type { SelectModelRequest, PrepareDataRequest, FineTuneRequest, TrainingStatus, ModelInfo, PreprocessingConfig, PreprocessingAnalytics } from "../types/api"
 
 interface MetricData {
   epoch: number
@@ -64,6 +64,11 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
     data: false,
     training: false,
   })
+  const [dataPreparationResult, setDataPreparationResult] = useState<{
+    status: "success" | "error" | "running";
+    message: string;
+    train_path?: string;
+  } | null>(null)
 
   // Check API health on mount
   useEffect(() => {
@@ -255,14 +260,17 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
 
   const handlePrepareData = async (request: PrepareDataRequest) => {
     setLoading((prev) => ({ ...prev, data: true }))
+    setDataPreparationResult({ status: "running", message: "Preparing data..." })
     try {
       const response = await prepareData(request)
+      setDataPreparationResult(response)
       if (response.status === "success") {
         toast.success("Data prepared successfully!")
       } else {
         toast.error(response.message)
       }
     } catch (error) {
+      setDataPreparationResult({ status: "error", message: "Failed to prepare data" })
       toast.error("Failed to prepare data")
     } finally {
       setLoading((prev) => ({ ...prev, data: false }))
@@ -582,13 +590,37 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
                 selectedModel={selectedModel || undefined}
               />
 
-              <DataPreparation onPrepareData={handlePrepareData} isLoading={loading.data} />
+              <DataPreparation 
+                onPrepareData={handlePrepareData} 
+                isLoading={loading.data}
+                preprocessingResult={dataPreparationResult}
+              />
 
               <TrainingForm
                 onStartTraining={handleStartTraining}
                 isLoading={loading.training}
                 selectedModel={selectedModel}
                 selectedModelInfo={selectedModelInfo}
+                datasetPath="/app/data/prepared"
+                preprocessingConfig={{
+                  enable_embeddings: false,
+                  text_cleaning_level: 'standard',
+                  cleaning_options: {
+                    deduplication_method: 'hash',
+                    normalize_whitespace: true,
+                    language_detection: false,
+                    utf8_sanitization: true
+                  },
+                  remove_duplicates_by_embedding: false,
+                  similarity_threshold: 0.95,
+                  generate_correlations: false,
+                  create_tensor_visualizations: false,
+                  quality_analysis: true,
+                  token_analysis: true,
+                  preview_samples: 10
+                }}
+                analytics={undefined}
+                onUpdateConfig={() => {}}
               />
             </div>
 
