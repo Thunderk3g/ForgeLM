@@ -1,4 +1,4 @@
-services:
+`xservices:
   # Shared Base - Common dependencies for all microservices
   base:
     build:
@@ -62,6 +62,24 @@ services:
     networks:
       - llmforge-network
 
+  redis:
+    image: redis:7-alpine
+    container_name: llmforge-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - llmforge-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
   # API Gateway - Lightweight self-contained service
   api-gateway:
     build:
@@ -123,6 +141,10 @@ services:
       - TRITON_CACHE_DIR=/tmp/.triton_cache
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256,expandable_segments:True
       - OMP_NUM_THREADS=1
+      # GPU Orchestration
+      - GPU_ORCHESTRATION_ENABLED=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -132,6 +154,7 @@ services:
     depends_on:
       - ml-base
       - orchestrator
+      - redis
     deploy:
       resources:
         limits:
@@ -169,6 +192,10 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - MAX_CACHED_PAIRS=${MAX_CACHED_PAIRS:-10}
       - MAX_HBM_GB=${MAX_HBM_GB:-12}
+      # GPU Orchestration
+      - GPU_ORCHESTRATION_ENABLED=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - ./models:/app/models
       - ./logs:/app/logs
@@ -176,6 +203,7 @@ services:
     depends_on:
       - ml-base
       - orchestrator
+      - redis
     deploy:
       resources:
         reservations:
@@ -274,6 +302,10 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - MAX_CACHED_MODELS=${MAX_CACHED_MODELS:-5}
       - CACHE_SIZE_GB=${CACHE_SIZE_GB:-20}
+      # GPU Orchestration
+      - GPU_ORCHESTRATION_ENABLED=true
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     volumes:
       - ./models:/app/models
       - ./logs:/app/logs
@@ -281,6 +313,7 @@ services:
     depends_on:
       - ml-base
       - orchestrator
+      - redis
     deploy:
       resources:
         reservations:
@@ -303,6 +336,9 @@ volumes:
   matplotlib_cache:
     driver: local
 
+  redis_data:
+    driver: local
+ 
 networks:
   llmforge-network:
     driver: bridge

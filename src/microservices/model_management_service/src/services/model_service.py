@@ -24,6 +24,10 @@ from utils.logging import get_logger
 from utils.model_config import model_config
 from config.settings import settings
 
+# Import GPU orchestration
+from common.gpu_inference_wrapper import GPUInferenceManager, gpu_orchestrated
+from common.gpu_client import GPUOperationType, GPULockPriority, get_service_id
+
 # Import Agent Orchestrator (will be imported when needed to avoid circular imports)
 
 # Import Unsloth with proper error handling
@@ -184,6 +188,11 @@ class ModelService:
         self.max_hbm_gb = max_hbm_gb or settings.max_hbm_gb
         self.max_cached_pairs = max_cached_pairs or settings.max_cached_pairs
         self.logger = get_logger(__name__)
+        
+        # Initialize GPU orchestration
+        self.service_id = get_service_id()
+        self.gpu_inference_manager = GPUInferenceManager(self.service_id)
+        self.logger.info(f"GPU orchestration initialized for service: {self.service_id}")
         
         # Core storage
         self.base_models: Dict[str, Tuple[Any, Any]] = {}  # name -> (model, tokenizer)
@@ -1874,7 +1883,21 @@ class ModelService:
             raise RuntimeError(f"Model download failed: {str(e)}")
     
     async def load_model(self, model_path: str, model_config: Dict[str, Any] = None, force_reload: bool = False) -> Dict[str, Any]:
-        """Load a model into memory"""
+        """Load a model into memory with GPU orchestration"""
+        
+        # Use GPU orchestration for model loading
+        async def _load_model():
+            return await self._load_model_internal(model_path, model_config, force_reload)
+        
+        return await self.gpu_inference_manager.run_inference_with_gpu_lock(
+            _load_model,
+            estimated_time=300,  # 5 minutes for model loading
+            priority=GPULockPriority.HIGH,
+            metadata={"operation": "model_loading", "model": model_path}
+        )
+    
+    async def _load_model_internal(self, model_path: str, model_config: Dict[str, Any] = None, force_reload: bool = False) -> Dict[str, Any]:
+        """Internal model loading without GPU lock (called by GPU orchestrator)"""
         try:
             model_name = Path(model_path).name
             

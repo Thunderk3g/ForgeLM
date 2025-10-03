@@ -29,6 +29,11 @@ from utils.logging import get_logger
 from utils.performance import performance_monitor, timing_context, timed
 from config.settings import settings
 
+# Import GPU orchestration
+import sys
+sys.path.append('/app/src')
+from common.gpu_client import GPUClient, GPULockManager, GPUOperationType, GPULockPriority, get_service_id
+
 # Setup proper Triton cache directory with correct permissions
 import tempfile
 
@@ -346,11 +351,20 @@ class TrainingService:
         self.active_trainings: Dict[str, Dict[str, Any]] = {}
         self.cleanup_lock = threading.Lock()
 
+        # Initialize GPU orchestration
+        self.service_id = get_service_id()
+        self.gpu_lock_manager = GPULockManager(self.service_id)
+        self.logger.info(f"GPU orchestration initialized for service: {self.service_id}")
+
         # Initialize hardware detection and adaptive configuration
         from utils.hardware_detection import hardware_detector, AdaptiveTrainingConfig
 
         self.hardware_profile = hardware_detector.detect_full_profile()
         self.adaptive_config = AdaptiveTrainingConfig(self.hardware_profile)
+
+        # Log GPU memory at service init
+        if torch.cuda.is_available():
+            self.logger.info(f"GPU memory at service init: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
 
         # Register cleanup
         register_cleanup(self.cleanup_all_trainings)
@@ -375,7 +389,54 @@ class TrainingService:
                 os.environ[env_var] = value
                 self.logger.info(f"Applied system optimization: {env_var}={value}")
 
-    @timed("fine_tune")
+    # GPU lock methods removed - now using GPULockManager
+
+    @timed("fine_tune") 
+    async def start_fine_tuning(self, request: FineTuneRequest) -> str:
+        """Async wrapper for fine_tune method with GPU orchestration"""
+        task_id = str(uuid.uuid4())
+        
+        # Estimate training duration based on request
+        estimated_duration = self._estimate_training_duration(request)
+        
+        # Use GPU lock manager for training
+        def fine_tune_wrapper():
+            return self.fine_tune(request, task_id)
+        
+        try:
+            await self.gpu_lock_manager.with_gpu_for_training(
+                fine_tune_wrapper,
+                estimated_duration=estimated_duration,
+                priority=GPULockPriority.HIGH
+            )
+            return task_id
+        except Exception as e:
+            self.logger.error(f"Fine-tuning with GPU lock failed: {e}")
+            raise
+    
+    def _estimate_training_duration(self, request: FineTuneRequest) -> int:
+        """Estimate training duration in seconds based on request parameters"""
+        base_time_per_epoch = 900  # 15 minutes per epoch base estimate
+        
+        # Adjust based on batch size and sequence length
+        batch_factor = max(1.0, 4.0 / request.batch_size)
+        seq_factor = max(1.0, request.max_seq_length / 1024.0) 
+        epochs_factor = request.epochs
+        
+        # Apply optimization factors
+        unsloth_factor = 0.5 if UNSLOTH_AVAILABLE else 1.0
+        
+        estimated_seconds = int(
+            base_time_per_epoch * batch_factor * seq_factor * 
+            epochs_factor * unsloth_factor
+        )
+        
+        # Add buffer and cap at reasonable limits
+        estimated_seconds = max(1800, min(estimated_seconds * 1.2, 14400))  # 30 min to 4 hours
+        
+        self.logger.info(f"Estimated training duration: {estimated_seconds}s ({estimated_seconds//60} minutes)")
+        return estimated_seconds
+
     def fine_tune(
         self, request: FineTuneRequest, task_id: str = None
     ) -> Dict[str, Any]:
@@ -730,6 +791,10 @@ class TrainingService:
             model_config = adaptive_config["model_loading"]
             lora_config = adaptive_config["lora_config"]
 
+            # Log memory before model load
+            if torch.cuda.is_available():
+                self.logger.info(f"GPU memory before model load: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
+
             # Load model and tokenizer with adaptive optimization
             model, tokenizer = FastLanguageModel.from_pretrained(
                 model_name=request.base_model_dir,
@@ -743,32 +808,47 @@ class TrainingService:
                 trust_remote_code=model_config["trust_remote_code"],
             )
 
+            # Log memory after model load
+            if torch.cuda.is_available():
+                self.logger.info(f"GPU memory after model load: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB, max={torch.cuda.max_memory_allocated()/1024**3:.2f}GB")
+
             # CRITICAL FIX: Fix Qwen2.5 tokenizer configuration
             tokenizer = self.fix_qwen_tokenizer(tokenizer)
 
-            # Apply adaptive LoRA configuration with explicit dropout enforcement
-            enforced_dropout = 0.0  # CRITICAL: Must be 0.0 for Unsloth QKV optimization
+            # Apply adaptive LoRA configuration with 2025 Unsloth optimizations
+            enforced_dropout = 0.0  # CRITICAL: Must be 0.0 for Unsloth kernel acceleration
             self.logger.info(
-                f"Applying LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, "
-                f"dropout={enforced_dropout} (enforced for Unsloth), targets={len(lora_config['target_modules'])}"
+                f"Applying Unsloth 2025 LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, "
+                f"dropout={enforced_dropout} (required for Unsloth), targets={len(lora_config['target_modules'])}"
             )
-            self.logger.info(f"LoRA target modules: {lora_config['target_modules']}")
-            self.logger.warning(f"CRITICAL: LoRA dropout ENFORCED to {enforced_dropout} for Unsloth QKV optimization")
+            self.logger.info(f"LoRA target modules (QLoRA-All approach): {lora_config['target_modules']}")
+            if lora_config.get('use_rslora', False):
+                self.logger.info("✅ Using Rank-Stabilized LoRA (RSLoRA) for improved training stability")
+            if lora_config.get('use_dora', False):
+                self.logger.info("✅ Using DoRA for enhanced accuracy (2025 feature)")
+            self.logger.warning(f"CRITICAL: LoRA dropout ENFORCED to {enforced_dropout} for maximum Unsloth acceleration")
             
-            model = FastLanguageModel.get_peft_model(
-                model,
-                r=lora_config["r"],
-                target_modules=lora_config["target_modules"],
-                lora_alpha=lora_config["lora_alpha"],
-                lora_dropout=enforced_dropout,  # Explicitly enforce 0.0
-                bias="none",
-                use_gradient_checkpointing=(
+            # Enhanced LoRA configuration with 2025 Unsloth features
+            peft_kwargs = {
+                "r": lora_config["r"],
+                "target_modules": lora_config["target_modules"],
+                "lora_alpha": lora_config["lora_alpha"],
+                "lora_dropout": enforced_dropout,  # CRITICAL: 0.0 for Unsloth kernels
+                "bias": lora_config.get("bias", "none"),
+                "use_gradient_checkpointing": (
                     "unsloth" if gpu_opts.get("gradient_checkpointing", True) else "no"
                 ),
-                random_state=3407,
-                use_rslora=False,
-                loftq_config=None,
-            )
+                "random_state": 3407,
+                "use_rslora": lora_config.get("use_rslora", False),  # 2025: RSLoRA support
+                "loftq_config": None,  # Standard setting
+            }
+            
+            # Add DoRA support for 2025 if enabled and memory allows
+            if lora_config.get("use_dora", False) and adaptive_config["effective_memory_gb"] > 8:
+                peft_kwargs["use_dora"] = True
+                self.logger.info("🚀 DoRA enabled for enhanced accuracy (Unsloth 2025)")
+            
+            model = FastLanguageModel.get_peft_model(model, **peft_kwargs)
             
             # Validate dropout was applied correctly
             self._validate_lora_dropout(model, enforced_dropout)
@@ -850,17 +930,33 @@ class TrainingService:
                 import gc
                 gc.collect()
                 if torch.cuda.is_available():
+                    self.logger.info(f"GPU memory before pre-training cleanup: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
                     torch.cuda.empty_cache()
                     torch.cuda.ipc_collect()
                     torch.cuda.synchronize()
+                    self.logger.info(f"GPU memory after pre-training cleanup: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
                 self.logger.info("Pre-training memory cleanup completed")
             except Exception as e:
                 self.logger.warning(f"Pre-training cleanup failed: {e}")
             
             try:
                 self.logger.info("About to call trainer.train() - monitoring for hangs")
-                trainer.train()
-                self.logger.info("trainer.train() completed successfully")
+                try:
+                    trainer.train()
+                    self.logger.info("trainer.train() completed successfully")
+                except RuntimeError as e:
+                    if "out of memory" in str(e).lower():
+                        self.logger.error(f"CUDA OOM during training: {e}")
+                        self.logger.info(f"GPU memory at OOM: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
+                        # Emergency cleanup
+                        torch.cuda.empty_cache()
+                        gc.collect()
+                        raise
+                    else:
+                        raise
+                except Exception as e:
+                    self.logger.error(f"Unexpected error during training: {e}")
+                    raise
             except torch.cuda.OutOfMemoryError as oom_error:
                 self.logger.error(f"OOM Error during training: {oom_error}")
                 # Emergency memory cleanup
@@ -1536,6 +1632,13 @@ class TrainingService:
         with self.cleanup_lock:
             for task_id in list(self.active_trainings.keys()):
                 self._cleanup_training_resources(task_id)
+        
+        # Cleanup GPU locks
+        try:
+            asyncio.create_task(self.gpu_lock_manager.client.cleanup_all_locks())
+            self.logger.info("GPU locks cleanup initiated")
+        except Exception as e:
+            self.logger.error(f"Error cleaning up GPU locks: {e}")
 
     def get_active_sessions(self) -> Dict[str, Dict[str, Any]]:
         """Get information about active training sessions"""

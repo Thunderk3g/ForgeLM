@@ -340,6 +340,21 @@ class ServiceOrchestrator:
         # Service mesh configuration
         self.service_mesh_enabled = self.config.get('service_mesh_enabled', False)
         
+        # Redis client for distributed locking
+        if REDIS_AVAILABLE:
+            self.redis_client = redis.Redis(
+                host='redis',
+                port=6379,
+                db=0,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5
+            )
+            self.logger.info("Redis client initialized for GPU locking")
+        else:
+            self.redis_client = None
+            self.logger.warning("Redis not available - GPU locking disabled")
+        
         # Initialize FastAPI app
         self.app = self._create_app()
         
@@ -510,7 +525,91 @@ class ServiceOrchestrator:
                     service_metrics["circuit_breaker_state"] = circuit_breaker.state
                 metrics[service_name] = service_metrics
             
+            # Add GPU lock status if Redis available
+            if self.redis_client:
+                try:
+                    lock_info = self.redis_client.get("gpu_lock")
+                    metrics["gpu_lock"] = {
+                        "locked": lock_info is not None,
+                        "holder": lock_info.decode() if lock_info else None,
+                        "ttl_remaining": self.redis_client.ttl("gpu_lock")
+                    }
+                except Exception as e:
+                    self.logger.error(f"Failed to get GPU lock metrics: {e}")
+                    metrics["gpu_lock"] = {"error": str(e)}
+            
             return metrics
+    
+        @app.post("/gpu/acquire")
+        async def acquire_gpu_lock(request: dict):
+            """Acquire GPU lock with TTL and priority support"""
+            if not self.redis_client:
+                raise HTTPException(status_code=503, detail="Redis not available for locking")
+            
+            operation = request.get("operation", "general")
+            estimated_ttl = request.get("ttl", 3600)  # default 1 hour
+            priority = request.get("priority", 1)  # lower number = higher priority
+            service_id = request.get("service_id")
+            
+            if not service_id:
+                raise HTTPException(status_code=400, detail="service_id required")
+            
+            lock_key = f"gpu_lock:{operation}"
+            lock_value = f"{service_id}:{datetime.now().isoformat()}"
+            
+            # Simple lock: SET if not exists, with EX ttl
+            acquired = self.redis_client.set(
+                lock_key,
+                lock_value,
+                nx=True,  # only set if not exists
+                ex=estimated_ttl
+            )
+            
+            if acquired:
+                self.logger.info(f"GPU lock acquired by {service_id} for {operation}, TTL: {estimated_ttl}s")
+                return {
+                    "acquired": True,
+                    "token": lock_value,
+                    "key": lock_key,
+                    "ttl": estimated_ttl,
+                    "message": "GPU lock acquired successfully"
+                }
+            else:
+                # Check TTL for wait suggestion
+                ttl = self.redis_client.ttl(lock_key)
+                wait_time = max(30, ttl // 2) if ttl > 0 else 30
+                self.logger.info(f"GPU lock busy for {operation}, suggesting wait {wait_time}s")
+                return {
+                    "acquired": False,
+                    "key": lock_key,
+                    "ttl_remaining": ttl,
+                    "retry_after": wait_time,
+                    "message": "GPU lock busy, retry after suggested time"
+                }
+    
+        @app.post("/gpu/release")
+        async def release_gpu_lock(request: dict):
+            """Release GPU lock using token"""
+            if not self.redis_client:
+                raise HTTPException(status_code=503, detail="Redis not available for locking")
+            
+            token = request.get("token")
+            key = request.get("key", "gpu_lock:general")
+            
+            if not token:
+                raise HTTPException(status_code=400, detail="token required")
+            
+            # Verify and delete if matches
+            current_value = self.redis_client.get(key)
+            if current_value and current_value.decode() == token:
+                deleted = self.redis_client.delete(key)
+                if deleted:
+                    self.logger.info(f"GPU lock released for key {key}")
+                    return {"released": True, "message": "GPU lock released successfully"}
+                else:
+                    return {"released": False, "message": "Lock already expired"}
+            else:
+                raise HTTPException(status_code=400, detail="Invalid token or lock not held")
         
         return app
     

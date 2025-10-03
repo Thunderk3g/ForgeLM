@@ -8,6 +8,7 @@ import os
 import logging
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -134,7 +135,20 @@ async def list_services():
     """List all registered services"""
     try:
         orchestrator = await get_orchestrator()
-        return orchestrator.get_service_overview()
+        services = {}
+        for service_name, instances in orchestrator.registry.services.items():
+            services[service_name] = [
+                {
+                    "id": instance.id,
+                    "url": instance.url,
+                    "state": instance.state.value,
+                    "response_time": instance.response_time_ms,
+                    "active_connections": instance.active_connections,
+                    "success_rate": instance.success_rate
+                }
+                for instance in instances
+            ]
+        return {"services": services}
     except Exception as e:
         logger.error(f"Failed to list services: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -194,12 +208,160 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/metrics")
 async def get_metrics():
-    """Get service metrics and performance data"""
+    """Get service metrics and performance data including GPU orchestration"""
     try:
         orchestrator = await get_orchestrator()
-        return orchestrator.get_service_overview()
+        metrics = {}
+        
+        # Service metrics
+        for service_name, instances in orchestrator.registry.services.items():
+            service_metrics = {
+                "instance_count": len(instances),
+                "healthy_instances": len([i for i in instances if i.state.value == "healthy"]),
+                "avg_response_time": sum(i.response_time_ms for i in instances) / len(instances) if instances else 0,
+                "total_requests": sum(i.success_count + i.error_count for i in instances),
+                "success_rate": sum(i.success_rate for i in instances) / len(instances) if instances else 0
+            }
+            circuit_breaker = orchestrator.registry.circuit_breakers.get(service_name)
+            if circuit_breaker:
+                service_metrics["circuit_breaker_state"] = circuit_breaker.state
+            metrics[service_name] = service_metrics
+        
+        # Add GPU lock status if Redis available
+        if orchestrator.redis_client:
+            try:
+                operations = ["training", "inference", "model_loading", "general"]
+                gpu_locks = {}
+                
+                for operation in operations:
+                    key = f"gpu_lock:{operation}"
+                    lock_value = await orchestrator.redis_client.get(key)
+                    ttl = await orchestrator.redis_client.ttl(key)
+                    
+                    if lock_value:
+                        import json as json_lib
+                        lock_data = json_lib.loads(lock_value)
+                        gpu_locks[operation] = {
+                            "locked": True,
+                            "holder": lock_data.get("service_id"),
+                            "ttl_seconds": ttl,
+                            "acquired_at": lock_data.get("acquired_at"),
+                            "expires_at": lock_data.get("expires_at")
+                        }
+                    else:
+                        gpu_locks[operation] = {
+                            "locked": False,
+                            "available": True
+                        }
+                
+                metrics["gpu_lock"] = gpu_locks
+                
+            except Exception as e:
+                logger.error(f"Failed to get GPU lock metrics: {e}")
+                metrics["gpu_lock"] = {"error": str(e)}
+        
+        return metrics
     except Exception as e:
         logger.error(f"Failed to get metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/gpu/acquire")
+async def acquire_gpu_lock(request: dict):
+    """Acquire GPU lock with TTL and priority support"""
+    try:
+        orchestrator = await get_orchestrator()
+        if not orchestrator.redis_client:
+            raise HTTPException(status_code=503, detail="Redis not available for locking")
+        
+        operation = request.get("operation", "general")
+        estimated_ttl = request.get("ttl", 3600)  # default 1 hour
+        priority = request.get("priority", 1)  # lower number = higher priority
+        service_id = request.get("service_id")
+        
+        if not service_id:
+            raise HTTPException(status_code=400, detail="service_id required")
+        
+        lock_key = f"gpu_lock:{operation}"
+        from datetime import datetime
+        lock_value = f"{service_id}:{datetime.now().isoformat()}"
+        
+        # Create lock data
+        import json as json_lib
+        lock_data = {
+            "token": lock_value,
+            "service_id": service_id,
+            "operation": operation,
+            "acquired_at": datetime.now().isoformat(),
+            "expires_at": (datetime.now() + timedelta(seconds=estimated_ttl)).isoformat(),
+            "priority": priority,
+            "metadata": request.get("metadata", {})
+        }
+        
+        # Simple lock: SET if not exists, with EX ttl
+        acquired = await orchestrator.redis_client.set(
+            lock_key,
+            json_lib.dumps(lock_data),
+            nx=True,  # only set if not exists
+            ex=estimated_ttl
+        )
+        
+        if acquired:
+            logger.info(f"GPU lock acquired by {service_id} for {operation}, TTL: {estimated_ttl}s")
+            return {
+                "acquired": True,
+                "token": lock_value,
+                "key": lock_key,
+                "ttl": estimated_ttl,
+                "message": "GPU lock acquired successfully"
+            }
+        else:
+            # Check TTL for wait suggestion
+            ttl = await orchestrator.redis_client.ttl(lock_key)
+            wait_time = max(30, ttl // 2) if ttl > 0 else 30
+            logger.info(f"GPU lock busy for {operation}, suggesting wait {wait_time}s")
+            return {
+                "acquired": False,
+                "key": lock_key,
+                "ttl_remaining": ttl,
+                "retry_after": wait_time,
+                "message": "GPU lock busy, retry after suggested time"
+            }
+    except Exception as e:
+        logger.error(f"GPU lock acquisition failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/gpu/release")
+async def release_gpu_lock(request: dict):
+    """Release GPU lock using token"""
+    try:
+        orchestrator = await get_orchestrator()
+        if not orchestrator.redis_client:
+            raise HTTPException(status_code=503, detail="Redis not available for locking")
+        
+        token = request.get("token")
+        key = request.get("key", "gpu_lock:general")
+        
+        if not token:
+            raise HTTPException(status_code=400, detail="token required")
+        
+        # Verify and delete if matches
+        current_value = await orchestrator.redis_client.get(key)
+        if current_value:
+            import json as json_lib
+            lock_data = json_lib.loads(current_value)
+            if lock_data.get("token") == token:
+                deleted = await orchestrator.redis_client.delete(key)
+                if deleted:
+                    logger.info(f"GPU lock released for key {key}")
+                    return {"released": True, "message": "GPU lock released successfully"}
+                else:
+                    return {"released": False, "message": "Lock already expired"}
+            else:
+                raise HTTPException(status_code=400, detail="Invalid token or lock not held")
+        else:
+            raise HTTPException(status_code=400, detail="Lock not found or already expired")
+    except Exception as e:
+        logger.error(f"GPU lock release failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

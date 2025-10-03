@@ -24,6 +24,10 @@ from utils.logging import get_logger
 from utils.model_config import model_config
 from config.settings import settings
 
+# Import GPU orchestration
+from common.gpu_inference_wrapper import GPUInferenceManager, gpu_orchestrated
+from common.gpu_client import GPUOperationType, GPULockPriority, get_service_id
+
 # Import Agent Orchestrator (will be imported when needed to avoid circular imports)
 
 # Import Unsloth with proper error handling
@@ -193,6 +197,11 @@ class ModelService:
         self.max_hbm_gb = max_hbm_gb or settings.max_hbm_gb
         self.max_cached_pairs = max_cached_pairs or settings.max_cached_pairs
         self.logger = get_logger(__name__)
+        
+        # Initialize GPU orchestration
+        self.service_id = get_service_id()
+        self.gpu_inference_manager = GPUInferenceManager(self.service_id)
+        self.logger.info(f"GPU orchestration initialized for service: {self.service_id}")
         
         # Core storage
         self.base_models: Dict[str, Tuple[Any, Any]] = {}  # name -> (model, tokenizer)
@@ -722,34 +731,53 @@ class ModelService:
     async def load_model_pair(self, pair: ModelPair, session_id: str) -> Tuple[Any, Any, Any, Any]:
         """Load base model + LoRA adapter pair with KV cache optimization"""
         
-        with self.model_lock:
-            try:
-                # Load base model (shared across adapters)
-                base_model, tokenizer = await self._load_base_model(pair.base_model_name, pair.base_model_path)
-                
-                # Load LoRA adapter with caching
-                finetuned_model, adapter_tokenizer = await self._load_lora_adapter(
-                    pair.adapter_path, pair.base_model_name, pair.adapter_name
-                )
-                
-                # Update pair status
-                pair.status = "loaded"
-                pair.memory_usage_mb = pair.base_model_size_mb + pair.adapter_size_mb
-                
-                # Register active pair
-                self.active_pairs[session_id] = pair
-                
-                # Update dependency graph
-                self.dependency_graph.add_dependency(pair.pair_id, f"kv_cache_{session_id}")
-                
-                self.logger.info(f"Model pair loaded: {pair.pair_id}")
-                
-                return base_model, tokenizer, finetuned_model, adapter_tokenizer
-                
-            except Exception as e:
-                pair.status = "error"
-                self.logger.error(f"Failed to load model pair {pair.pair_id}: {e}")
-                raise
+        # Use GPU orchestration for model loading
+        async def _load_models():
+            with self.model_lock:
+                return await self._load_model_pair_internal(pair, session_id)
+        
+        return await self.gpu_inference_manager.run_inference_with_gpu_lock(
+            _load_models,
+            estimated_time=300,  # 5 minutes for model loading
+            priority=GPULockPriority.HIGH,
+            metadata={"operation": "model_loading", "pair": pair.pair_id, "session": session_id}
+        )
+    
+    async def _load_model_pair_internal(self, pair: ModelPair, session_id: str) -> Tuple[Any, Any, Any, Any]:
+        """Internal model loading without GPU lock (called by GPU orchestrator)"""
+        self.logger.info(f"[DEBUG] Inside _load_model_pair_internal for {pair.pair_id}")
+        try:
+            # Load base model (shared across adapters)
+            self.logger.info(f"[DEBUG] Loading base model: {pair.base_model_name}")
+            base_model, tokenizer = await self._load_base_model(pair.base_model_name, pair.base_model_path)
+            self.logger.info(f"[DEBUG] Base model loaded successfully")
+            
+            # Load LoRA adapter with caching
+            self.logger.info(f"[DEBUG] Loading LoRA adapter: {pair.adapter_name}")
+            finetuned_model, adapter_tokenizer = await self._load_lora_adapter(
+                pair.adapter_path, pair.base_model_name, pair.adapter_name
+            )
+            self.logger.info(f"[DEBUG] LoRA adapter loaded successfully")
+            
+            # Update pair status
+            pair.status = "loaded"
+            pair.memory_usage_mb = pair.base_model_size_mb + pair.adapter_size_mb
+            
+            # Register active pair
+            self.active_pairs[session_id] = pair
+            
+            # Update dependency graph
+            self.dependency_graph.add_dependency(pair.pair_id, f"kv_cache_{session_id}")
+            
+            self.logger.info(f"Model pair loaded: {pair.pair_id}")
+            
+            return base_model, tokenizer, finetuned_model, adapter_tokenizer
+            
+        except Exception as e:
+            pair.status = "error"
+            self.logger.error(f"Failed to load model pair {pair.pair_id}: {e}")
+            self.logger.error(f"[DEBUG] Error in _load_model_pair_internal: {e}, type: {type(e)}")
+            raise
     
     async def _load_base_model(self, model_name: str, model_path: str) -> Tuple[Any, Any]:
         """Load base model with caching"""
@@ -878,6 +906,29 @@ class ModelService:
         use_agent_orchestrator: bool = False
     ) -> Dict[str, Any]:
         """Generate responses from both base and fine-tuned models with KV cache optimization"""
+        
+        # Use GPU orchestration for inference
+        async def _generate_responses():
+            return await self._generate_comparison_responses_internal(
+                session_id, messages, generation_params, custom_system_prompt, use_agent_orchestrator
+            )
+        
+        return await self.gpu_inference_manager.run_inference_with_gpu_lock(
+            _generate_responses,
+            estimated_time=120,  # 2 minutes for inference
+            priority=GPULockPriority.NORMAL,
+            metadata={"operation": "inference", "session": session_id, "message_count": len(messages)}
+        )
+    
+    async def _generate_comparison_responses_internal(
+        self, 
+        session_id: str,
+        messages: List[Dict[str, str]], 
+        generation_params: Dict = None,
+        custom_system_prompt: str = None,
+        use_agent_orchestrator: bool = False
+    ) -> Dict[str, Any]:
+        """Internal generation method without GPU lock (called by GPU orchestrator)"""
         
         # Check if model pair is loaded for this session
         if session_id not in self.active_pairs:

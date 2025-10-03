@@ -70,6 +70,9 @@ class HardwareDetector:
     def detect_full_profile(self) -> HardwareProfile:
         """Detect complete hardware profile"""
         try:
+            # Log nvidia-smi for GPU status
+            self._log_nvidia_smi_status()
+
             return HardwareProfile(
                 # GPU Detection
                 gpu_count=self._detect_gpu_count(),
@@ -104,6 +107,30 @@ class HardwareDetector:
             self.logger.error(f"Hardware detection failed: {e}")
             # Return minimal safe profile
             return self._get_safe_fallback_profile()
+
+    def _log_nvidia_smi_status(self):
+        """Log current nvidia-smi status for debugging GPU sharing issues"""
+        try:
+            result = subprocess.run(
+                ['nvidia-smi', '--query-gpu=compute_mode,memory.usage', '--format=csv,noheader'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                for line in lines:
+                    if line:
+                        parts = line.split(',')
+                        if len(parts) >= 2:
+                            compute_mode, mem_usage = parts[0].strip(), parts[1].strip()
+                            self.logger.info(f"GPU compute mode: {compute_mode}, Memory usage: {mem_usage}")
+                            if 'MPS' in compute_mode or 'EXCLUSIVE_PROCESS' in compute_mode:
+                                self.logger.info(f"MPS/Exclusive mode detected - good for sharing")
+                            else:
+                                self.logger.warning(f"GPU in {compute_mode} mode - may cause sharing issues")
+            else:
+                self.logger.warning("nvidia-smi query failed - GPU status unknown")
+        except Exception as e:
+            self.logger.warning(f"Error querying nvidia-smi: {e}")
     
     def _detect_gpu_count(self) -> int:
         """Detect number of available GPUs"""
@@ -318,15 +345,30 @@ class AdaptiveTrainingConfig:
     def generate_optimal_config(self, base_request) -> Dict[str, Any]:
         """Generate optimal training configuration for detected hardware"""
         
-        # FIXED: GPU-aware effective memory: cap at GPU memory * 1.25 (overhead for CPU offload), not container RAM
-        gpu_effective = self.profile.gpu_memory_gb * 1.25 if self.profile.cuda_available else 0
-        container_effective = self.profile.container_memory_gb or min(self.profile.available_memory_gb, self.profile.system_memory_gb * 0.8)
-        effective_memory_gb = min(gpu_effective, container_effective)  # GPU is primary bottleneck for training
+        # Enhanced GPU memory calculation for RTX 4060 8GB optimization
         if self.profile.gpu_memory_gb <= 8:
-            self.logger.warning(f"GPU-limited config: capping effective memory at {effective_memory_gb:.1f}GB (GPU={self.profile.gpu_memory_gb}GB)")
+            # RTX 4060 8GB specific optimizations based on Unsloth 2025 benchmarks
+            gpu_effective = self.profile.gpu_memory_gb * 0.70  # More conservative for stability
+            self.logger.info(f"RTX 4060 8GB detected - applying Unsloth 2025 memory optimizations")
+            self.logger.info(f"GPU memory allocation: {gpu_effective:.1f}GB / {self.profile.gpu_memory_gb}GB (70% for QLoRA-All)")
+        elif self.profile.gpu_memory_gb <= 12:
+            gpu_effective = self.profile.gpu_memory_gb * 0.80  # 80% for mid-range GPUs
+        else:
+            gpu_effective = self.profile.gpu_memory_gb * 0.85  # 85% for high-end GPUs
+            
+        # Use actual GPU memory as primary constraint for GPU-bound workloads
+        gpu_effective = gpu_effective if self.profile.cuda_available else 0
+        container_effective = self.profile.container_memory_gb or min(self.profile.available_memory_gb, self.profile.system_memory_gb * 0.8)
+        
+        # For RTX 4060 8GB, prioritize GPU memory as the limiting factor
+        if self.profile.gpu_memory_gb <= 8:
+            effective_memory_gb = gpu_effective  # GPU memory is the bottleneck
+            self.logger.warning(f"GPU-optimized config: using {effective_memory_gb:.1f}GB GPU memory as primary constraint")
+        else:
+            effective_memory_gb = min(gpu_effective, container_effective)
         
         # Extract model name from request for precision optimization
-        model_name = getattr(base_request, 'model_name', None) or getattr(base_request, 'base_model', None)
+        model_name = getattr(base_request, 'model_name', None) or getattr(base_request, 'base_model', None) or getattr(base_request, 'base_model_dir', None)
         
         # Base configuration with model-aware optimizations
         config = {
@@ -335,7 +377,7 @@ class AdaptiveTrainingConfig:
             "gpu_optimizations": self._get_gpu_optimizations(model_name),
             "training_args": self._get_adaptive_training_args(base_request, effective_memory_gb),
             "model_loading": self._get_model_loading_config(effective_memory_gb),
-            "lora_config": self._get_adaptive_lora_config(effective_memory_gb),
+            "lora_config": self._get_adaptive_lora_config(effective_memory_gb, model_name),
             "system_optimizations": self._get_system_optimizations(),
             "precision_info": self._get_precision_info(model_name),
         }
@@ -554,16 +596,28 @@ class AdaptiveTrainingConfig:
     def _get_adaptive_training_args(self, base_request, memory_gb: float) -> Dict[str, Any]:
         """Get adaptive training arguments based on hardware"""
         
-        # FIXED: For GPU-limited (<=8GB), enforce conservative settings to prevent OOM hangs
+        # Enhanced RTX 4060 8GB optimization with Unsloth 2025 techniques
         gpu_memory = self.profile.gpu_memory_gb
         if gpu_memory <= 8:
-            self.logger.info(f"Applying GPU-limited (8GB) conservative training args to prevent OOM hangs")
-            per_device_batch = 1  # FIXED: Reduce from 2 to 1 for first batch safety
-            grad_accum = max(base_request.gradient_accumulation_steps, 16)  # FIXED: Increase to maintain effective batch ~16
-            max_seq = 1024  # FIXED: Reduce from 2048 to fit in 8GB with activations
-            eval_strategy = "no"  # FIXED: Disable eval to save VRAM
-        else:
+            self.logger.info(f"Applying RTX 4060 8GB Unsloth 2025 optimizations")
+            # Ultra-conservative settings for maximum stability
+            per_device_batch = 1  # Single batch for maximum memory safety
+            grad_accum = max(base_request.gradient_accumulation_steps, 24)  # Larger accumulation for QLoRA-All
+            max_seq = 1024  # Optimal sequence length for 8GB with QLoRA-All
+            eval_strategy = "no"  # Disable evaluation to maximize training VRAM
+            
+            # Log specific RTX 4060 optimizations
+            self.logger.info(f"RTX 4060 8GB config: batch=1, grad_accum={grad_accum}, seq_len={max_seq}")
+            self.logger.info(f"Effective batch size: {per_device_batch * grad_accum} (optimized for QLoRA-All)")
+        elif gpu_memory <= 12:
+            # RTX 3060 12GB / RTX 4060 Ti optimizations
             per_device_batch = min(base_request.batch_size, 2)
+            grad_accum = max(base_request.gradient_accumulation_steps, 12)
+            max_seq = 1536  # Slightly longer sequences for 12GB
+            eval_strategy = "steps" if hasattr(base_request, 'eval_steps') else "no"
+        else:
+            # High-end GPU configurations
+            per_device_batch = min(base_request.batch_size, 4)
             grad_accum = max(base_request.gradient_accumulation_steps, 8)
             max_seq = 2048
             eval_strategy = "steps" if hasattr(base_request, 'eval_steps') else "no"
@@ -604,55 +658,110 @@ class AdaptiveTrainingConfig:
             
         return config
     
-    def _get_qwen_optimized_target_modules(self, memory_gb: float) -> List[str]:
-        """Get Qwen2.5-optimized target modules for better QKV layer patching"""
-        # Based on Unsloth 2025 community findings for Qwen models
+    def _get_unsloth_2025_target_modules(self, memory_gb: float, model_name: Optional[str] = None) -> List[str]:
+        """Get Unsloth 2025-optimized target modules based on latest research and model architecture"""
+        # Based on Unsloth 2025 official recommendations and QLoRA-All approach
+        model_family = self._get_model_family(model_name)
+        
         if memory_gb <= 4:
-            return ["q_proj", "v_proj", "embed_tokens"]  # Minimal for very low memory
+            # Ultra-low memory configuration - focus on attention
+            return ["q_proj", "v_proj", "gate_proj"]  # Minimal but effective
         elif memory_gb <= 8:
-            # RTX 4060 8GB optimized configuration for Qwen2.5 QKV patching
-            return [
-                "q_proj", "k_proj", "v_proj", "o_proj",  # Attention - order critical
-                "gate_proj", "up_proj", "down_proj"       # MLP for better accuracy
-            ]
-        else:
-            # Full configuration for higher memory
+            # RTX 4060 8GB optimized - QLoRA-All approach for best performance
+            if model_family in ["qwen", "llama", "mistral", "gemma"]:
+                # 2025 Unsloth recommendation: Apply LoRA to all FFN/MLP and Attention layers
+                return [
+                    # Attention layers (critical for all models)
+                    "q_proj", "k_proj", "v_proj", "o_proj",
+                    # MLP/FFN layers (essential for QLoRA-All performance)
+                    "gate_proj", "up_proj", "down_proj"
+                    # Note: embed_tokens and lm_head excluded for 8GB VRAM efficiency
+                ]
+            else:
+                # Generic transformer architecture
+                return [
+                    "q_proj", "k_proj", "v_proj", "o_proj",
+                    "fc1", "fc2"  # Standard MLP naming
+                ]
+        elif memory_gb <= 16:
+            # High memory - full QLoRA-All with embedding layers
             return [
                 "q_proj", "k_proj", "v_proj", "o_proj",  # Attention
                 "gate_proj", "up_proj", "down_proj",      # MLP
-                "embed_tokens", "lm_head"                 # Embedding layers
+                "embed_tokens"  # Embedding (excluding lm_head for stability)
+            ]
+        else:
+            # Maximum configuration for 24GB+ VRAM
+            return [
+                "q_proj", "k_proj", "v_proj", "o_proj",  # Attention
+                "gate_proj", "up_proj", "down_proj",      # MLP
+                "embed_tokens", "lm_head"                 # Full embedding layers
             ]
 
-    def _get_adaptive_lora_config(self, memory_gb: float) -> Dict[str, Any]:
-        """Get LoRA configuration based on available memory"""
+    def _get_adaptive_lora_config(self, memory_gb: float, model_name: Optional[str] = None) -> Dict[str, Any]:
+        """Get LoRA configuration based on available memory using Unsloth 2025 optimizations"""
         
-        if memory_gb <= 4:  # Very constrained - minimal LoRA
+        # Get model-specific target modules using 2025 recommendations
+        target_modules = self._get_unsloth_2025_target_modules(memory_gb, model_name)
+        model_family = self._get_model_family(model_name)
+        
+        if memory_gb <= 4:  # Ultra-constrained - efficient minimal LoRA
             return {
                 "r": 8,
-                "lora_alpha": 16,
-                "lora_dropout": 0.0,  # Optimized for Unsloth fast patching
-                "target_modules": self._get_qwen_optimized_target_modules(memory_gb)
+                "lora_alpha": 16,  # 2x ratio maintained
+                "lora_dropout": 0.0,  # CRITICAL: Must be 0.0 for Unsloth kernel optimizations
+                "target_modules": target_modules,
+                "use_rslora": True,  # 2025: Rank-Stabilized LoRA for better stability
+                "use_dora": False,  # Disabled for memory constraints
             }
-        elif memory_gb <= 8:  # RTX 4060 8GB optimized LoRA
-            return {
-                "r": 16,  # Proven optimal for 8GB VRAM in Unsloth benchmarks
-                "lora_alpha": 32,  # 2x ratio for stability
-                "lora_dropout": 0.0,  # Optimized for Unsloth fast patching - MUST be 0.0 for QKV optimization
-                "target_modules": self._get_qwen_optimized_target_modules(memory_gb)
+        elif memory_gb <= 8:  # RTX 4060 8GB - 2025 optimized configuration
+            # Enhanced configuration based on Unsloth 2025 QLoRA-All research
+            base_config = {
+                "r": 16,  # Optimal for 8GB VRAM with QLoRA-All
+                "lora_alpha": 32,  # Maintains 2x ratio for stability
+                "lora_dropout": 0.0,  # CRITICAL: 0.0 for maximum Unsloth acceleration
+                "target_modules": target_modules,
+                "use_rslora": True,  # 2025: Improved training stability
+                "use_dora": False,  # Memory-intensive, disabled for 8GB
+                "fan_in_fan_out": False,  # Standard setting for most models
+                "bias": "none",  # No bias for efficiency
             }
-        elif memory_gb <= 16:  # Moderate - full LoRA
+            
+            # Model-specific optimizations for 2025
+            if model_family in ["qwen", "llama"]:
+                base_config.update({
+                    "r": 20,  # Slightly higher rank for these model families
+                    "lora_alpha": 40,  # Maintain 2x ratio
+                })
+            elif model_family == "gemma":
+                base_config.update({
+                    "r": 14,  # Lower rank for Gemma efficiency
+                    "lora_alpha": 28,
+                })
+            
+            return base_config
+            
+        elif memory_gb <= 16:  # High memory - advanced LoRA features
             return {
                 "r": 32,
                 "lora_alpha": 64,
-                "lora_dropout": 0.0,  # Optimized for Unsloth fast patching
-                "target_modules": self._get_qwen_optimized_target_modules(memory_gb)
+                "lora_dropout": 0.0,  # Still 0.0 for Unsloth optimization
+                "target_modules": target_modules,
+                "use_rslora": True,  # Rank-Stabilized LoRA
+                "use_dora": True,   # 2025: DoRA for better accuracy (when memory allows)
+                "fan_in_fan_out": False,
+                "bias": "none",
             }
-        else:  # High memory - high-rank LoRA
+        else:  # Maximum memory - full feature set
             return {
                 "r": 64,
                 "lora_alpha": 128,
-                "lora_dropout": 0.0,  # Optimized for Unsloth fast patching
-                "target_modules": self._get_qwen_optimized_target_modules(memory_gb)
+                "lora_dropout": 0.0,  # Unsloth optimization requirement
+                "target_modules": target_modules,
+                "use_rslora": True,  # All advanced features enabled
+                "use_dora": True,
+                "fan_in_fan_out": False,
+                "bias": "none",
             }
     
     def _get_system_optimizations(self) -> Dict[str, Any]:
