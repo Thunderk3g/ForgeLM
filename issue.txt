@@ -1,0 +1,1498 @@
+# GPU Sharing Implementation for LLM Forge Platform - Complete Integration Guide
+
+## MISSION
+You are tasked with implementing a production-ready GPU sharing solution for the LLM Forge fine-tuning platform. This platform has THREE GPU-dependent microservices that currently cause container restarts and fine-tuning failures due to improper GPU resource management. Your mission is to diagnose, implement, and verify a complete solution that ensures all three services function reliably without conflicts.
+
+**DO NOT STOP until all three microservices are operational, tested, and verified to work correctly with GPU sharing.**
+
+---
+
+## CURRENT ARCHITECTURE ANALYSIS
+
+### Existing Microservices
+The platform has the following GPU-dependent services:
+
+1. **Training Service** (Port 8001)
+   - Dockerfile: `training_service.dockerfile`
+   - Base: `llmforge-ml-base:latest`
+   - Purpose: LLM fine-tuning operations
+   - Resource needs: HIGH GPU memory, compute-intensive
+
+2. **Chat Comparison Service** (Port 8002)
+   - Dockerfile: `chat_comparison_service.dockerfile`
+   - Base: `llmforge-ml-base:latest`
+   - Purpose: Fast inference for model comparisons
+   - Resource needs: MODERATE GPU memory, inference-optimized
+
+3. **Model Management Service** (Port 8005)
+   - Dockerfile: `model_management_service.dockerfile`
+   - Base: `llmforge-ml-base:latest`
+   - Purpose: Model loading, inference, management
+   - Resource needs: MODERATE GPU memory
+
+### Current Issues
+- Containers restart unexpectedly during fine-tuning
+- GPU memory contention between services
+- No resource isolation or QoS guarantees
+- Potential OOM (Out of Memory) kills
+- Lack of proper GPU allocation strategy
+
+---
+
+## IMPLEMENTATION PHASES
+
+### PHASE 1: DIAGNOSTIC & DISCOVERY
+**Objective:** Understand the current GPU setup and system configuration
+
+**Tasks:**
+1. **Analyze GPU Configuration**
+   ```bash
+   # Check available GPUs
+   nvidia-smi
+   nvidia-smi -L  # List all GPUs
+   nvidia-smi --query-gpu=index,name,memory.total,compute_cap --format=csv
+   ```
+   
+   Document:
+   - Number of GPUs available
+   - GPU models (check if A30/A100/H100 for MIG support)
+   - Total memory per GPU
+   - Compute capability
+
+2. **Check Current Docker/NVIDIA Setup**
+   ```bash
+   # Verify NVIDIA Container Toolkit
+   docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+   
+   # Check Docker runtime configuration
+   cat /etc/docker/daemon.json
+   
+   # Verify MIG capability (if applicable)
+   nvidia-smi mig --help
+   nvidia-smi -q | grep MIG
+   ```
+
+3. **Analyze Existing docker-compose.yml**
+   - Locate and read the current docker-compose.yml file
+   - Document current GPU allocation (if any)
+   - Identify resource limits and restart policies
+   - Check for any existing GPU configuration
+
+4. **Review Dockerfile Resource Requirements**
+   - Examine all three GPU service Dockerfiles
+   - Identify dependencies (PyTorch, TensorFlow, CUDA versions)
+   - Check for any hardcoded memory settings
+   - Document Triton/cache directory configurations
+
+**Decision Point:** Based on GPU count and model, choose implementation strategy:
+- **3+ GPUs:** Implement Option A (Dedicated GPU per service)
+- **1-2 A100/H100 GPUs:** Implement Option B (MIG partitioning)
+- **1-2 Other GPUs:** Implement Option C (MPS with resource management)
+
+---
+
+### PHASE 2: SOLUTION IMPLEMENTATION
+
+#### OPTION A: DEDICATED GPU PER SERVICE (3+ GPUs Available)
+
+**Tasks:**
+
+1. **Create Enhanced docker-compose.yml**
+   ```yaml
+   version: '3.8'
+   
+   services:
+     # API Gateway (No GPU needed)
+     api_gateway:
+       build:
+         context: .
+         dockerfile: api_gateway.dockerfile
+       container_name: llmforge-api-gateway
+       ports:
+         - "8000:8000"
+       restart: unless-stopped
+       networks:
+         - llmforge-network
+       healthcheck:
+         test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+         interval: 30s
+         timeout: 10s
+         retries: 3
+   
+     # Training Service - GPU 0 (Primary/Largest workload)
+     training_service:
+       build:
+         context: .
+         dockerfile: training_service.dockerfile
+       container_name: llmforge-training
+       ports:
+         - "8001:8001"
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 device_ids: ['0']  # Dedicated GPU 0
+                 capabilities: [gpu]
+           limits:
+             memory: 24G  # Adjust based on available RAM
+       mem_limit: 24G
+       mem_reservation: 20G
+       memswap_limit: 24G
+       shm_size: '8gb'  # Important for PyTorch multiprocessing
+       environment:
+         - CUDA_VISIBLE_DEVICES=0
+         - NVIDIA_VISIBLE_DEVICES=0
+         - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+         - CUDA_LAUNCH_BLOCKING=0
+       volumes:
+         - ./data:/app/data
+         - ./models:/app/models
+         - training-cache:/home/llmforge/.cache
+       restart: on-failure:3
+       networks:
+         - llmforge-network
+       healthcheck:
+         test: ["CMD", "python", "-c", "import torch; assert torch.cuda.is_available()"]
+         interval: 60s
+         timeout: 30s
+         retries: 5
+         start_period: 120s
+   
+     # Chat Comparison Service - GPU 1
+     chat_comparison_service:
+       build:
+         context: .
+         dockerfile: chat_comparison_service.dockerfile
+       container_name: llmforge-chat-comparison
+       ports:
+         - "8002:8002"
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 device_ids: ['1']  # Dedicated GPU 1
+                 capabilities: [gpu]
+           limits:
+             memory: 16G
+       mem_limit: 16G
+       mem_reservation: 12G
+       memswap_limit: 16G
+       shm_size: '4gb'
+       environment:
+         - CUDA_VISIBLE_DEVICES=0  # Appears as GPU 0 inside container
+         - NVIDIA_VISIBLE_DEVICES=1  # But uses host GPU 1
+         - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256
+       volumes:
+         - ./models:/app/models
+         - chat-cache:/home/llmforge/.cache
+       restart: on-failure:3
+       networks:
+         - llmforge-network
+       healthcheck:
+         test: ["CMD", "python", "-c", "import torch; assert torch.cuda.is_available()"]
+         interval: 60s
+         timeout: 30s
+         retries: 5
+         start_period: 120s
+   
+     # Model Management Service - GPU 2
+     model_management_service:
+       build:
+         context: .
+         dockerfile: model_management_service.dockerfile
+       container_name: llmforge-model-management
+       ports:
+         - "8005:8005"
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 device_ids: ['2']  # Dedicated GPU 2
+                 capabilities: [gpu]
+           limits:
+             memory: 16G
+       mem_limit: 16G
+       mem_reservation: 12G
+       memswap_limit: 16G
+       shm_size: '4gb'
+       environment:
+         - CUDA_VISIBLE_DEVICES=0
+         - NVIDIA_VISIBLE_DEVICES=2
+         - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256
+       volumes:
+         - ./models:/app/models
+         - model-cache:/home/llmforge/.cache
+       restart: on-failure:3
+       networks:
+         - llmforge-network
+       healthcheck:
+         test: ["CMD", "python", "-c", "import torch; assert torch.cuda.is_available()"]
+         interval: 60s
+         timeout: 30s
+         retries: 5
+         start_period: 120s
+   
+     # Data Generation Service (No GPU needed)
+     data_generation_service:
+       build:
+         context: .
+         dockerfile: data_generation_service.dockerfile
+       container_name: llmforge-data-generation
+       ports:
+         - "8003:8003"
+       restart: unless-stopped
+       networks:
+         - llmforge-network
+   
+     # Visualization Service (No GPU needed)
+     visualization_service:
+       build:
+         context: .
+         dockerfile: visualization_service.dockerfile
+       container_name: llmforge-visualization
+       ports:
+         - "8004:8004"
+       restart: unless-stopped
+       networks:
+         - llmforge-network
+   
+     # Orchestrator (No GPU needed)
+     orchestrator:
+       build:
+         context: .
+         dockerfile: orchestrator.dockerfile
+       container_name: llmforge-orchestrator
+       ports:
+         - "8080:8080"
+       restart: unless-stopped
+       networks:
+         - llmforge-network
+   
+   volumes:
+     training-cache:
+     chat-cache:
+     model-cache:
+   
+   networks:
+     llmforge-network:
+       driver: bridge
+   ```
+
+2. **Create GPU Monitoring Script**
+   Create `scripts/monitor_gpu.sh`:
+   ```bash
+   #!/bin/bash
+   # GPU Monitoring for LLM Forge Services
+   
+   echo "=== LLM Forge GPU Monitor ==="
+   echo "Timestamp: $(date)"
+   echo ""
+   
+   echo "=== GPU Status ==="
+   nvidia-smi --query-gpu=index,name,utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits | while IFS=',' read -r idx name util mem_used mem_total; do
+       echo "GPU $idx ($name): ${util}% util, ${mem_used}MB / ${mem_total}MB"
+   done
+   echo ""
+   
+   echo "=== Container GPU Usage ==="
+   docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" \
+       llmforge-training llmforge-chat-comparison llmforge-model-management 2>/dev/null
+   echo ""
+   
+   echo "=== GPU Processes ==="
+   nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader
+   ```
+   
+   Make executable: `chmod +x scripts/monitor_gpu.sh`
+
+3. **Update Service Code for Graceful GPU Memory Management**
+   
+   Create `src/common/gpu_manager.py`:
+   ```python
+   """
+   GPU Memory Management Utilities for LLM Forge
+   """
+   import torch
+   import gc
+   import logging
+   from functools import wraps
+   
+   logger = logging.getLogger(__name__)
+   
+   def clear_gpu_memory():
+       """Clear GPU memory cache"""
+       if torch.cuda.is_available():
+           torch.cuda.empty_cache()
+           gc.collect()
+           logger.info("GPU memory cache cleared")
+   
+   def gpu_memory_cleanup(func):
+       """Decorator to cleanup GPU memory after function execution"""
+       @wraps(func)
+       def wrapper(*args, **kwargs):
+           try:
+               result = func(*args, **kwargs)
+               return result
+           finally:
+               clear_gpu_memory()
+       return wrapper
+   
+   def get_gpu_memory_info():
+       """Get current GPU memory usage"""
+       if not torch.cuda.is_available():
+           return None
+       
+       device = torch.cuda.current_device()
+       allocated = torch.cuda.memory_allocated(device) / 1024**3  # GB
+       reserved = torch.cuda.memory_reserved(device) / 1024**3    # GB
+       total = torch.cuda.get_device_properties(device).total_memory / 1024**3  # GB
+       
+       return {
+           "device": device,
+           "allocated_gb": round(allocated, 2),
+           "reserved_gb": round(reserved, 2),
+           "total_gb": round(total, 2),
+           "free_gb": round(total - allocated, 2)
+       }
+   
+   def set_gpu_memory_fraction(fraction: float = 0.9):
+       """Set maximum GPU memory fraction"""
+       if torch.cuda.is_available():
+           torch.cuda.set_per_process_memory_fraction(fraction)
+           logger.info(f"Set GPU memory fraction to {fraction}")
+   
+   class GPUMemoryMonitor:
+       """Context manager for monitoring GPU memory usage"""
+       def __init__(self, name: str = "Operation"):
+           self.name = name
+           self.start_mem = None
+       
+       def __enter__(self):
+           if torch.cuda.is_available():
+               clear_gpu_memory()
+               self.start_mem = torch.cuda.memory_allocated() / 1024**3
+               logger.info(f"{self.name} - Starting GPU memory: {self.start_mem:.2f} GB")
+           return self
+       
+       def __exit__(self, exc_type, exc_val, exc_tb):
+           if torch.cuda.is_available():
+               end_mem = torch.cuda.memory_allocated() / 1024**3
+               delta = end_mem - self.start_mem if self.start_mem else 0
+               logger.info(f"{self.name} - Ending GPU memory: {end_mem:.2f} GB (Δ {delta:+.2f} GB)")
+               clear_gpu_memory()
+   ```
+
+4. **Update Each Service's Main Entry Point**
+   
+   Add to training service (`src/microservices/training_service/src/main.py`):
+   ```python
+   import sys
+   import os
+   sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+   
+   from common.gpu_manager import set_gpu_memory_fraction, get_gpu_memory_info, clear_gpu_memory
+   import logging
+   
+   # Configure logging
+   logging.basicConfig(level=logging.INFO)
+   logger = logging.getLogger(__name__)
+   
+   # Set GPU memory management at startup
+   if torch.cuda.is_available():
+       set_gpu_memory_fraction(0.95)  # Use 95% max for training
+       gpu_info = get_gpu_memory_info()
+       logger.info(f"Training Service - GPU Info: {gpu_info}")
+       
+       # Clear any residual memory
+       clear_gpu_memory()
+   else:
+       logger.error("CUDA is not available! Training service requires GPU.")
+       sys.exit(1)
+   
+   # Rest of your service code...
+   ```
+
+---
+
+#### OPTION B: MIG IMPLEMENTATION (A100/H100 GPUs)
+
+**Tasks:**
+
+1. **Check MIG Availability**
+   ```bash
+   # Enable MIG mode (requires root)
+   sudo nvidia-smi -i 0 -mig 1
+   
+   # List available MIG profiles
+   nvidia-smi mig -lgip
+   ```
+
+2. **Create MIG Instances**
+   ```bash
+   # Example: Create 3 balanced instances on single A100
+   # Profile 9: 1g.10gb (7 available per A100-80GB)
+   
+   sudo nvidia-smi mig -cgi 9,9,9 -C
+   
+   # Verify instances
+   nvidia-smi -L
+   ```
+
+3. **Update docker-compose.yml for MIG**
+   ```yaml
+   services:
+     training_service:
+       environment:
+         - CUDA_VISIBLE_DEVICES=MIG-UUID-1  # Get from nvidia-smi -L
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 capabilities: [gpu]
+                 count: 1
+   ```
+
+---
+
+#### OPTION C: MPS IMPLEMENTATION (Single GPU, Non-MIG)
+
+**Tasks:**
+
+1. **Create MPS Control Script**
+   Create `scripts/setup_mps.sh`:
+   ```bash
+   #!/bin/bash
+   # NVIDIA MPS Setup for LLM Forge
+   
+   export CUDA_VISIBLE_DEVICES=0
+   export CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+   export CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
+   
+   # Create directories
+   mkdir -p $CUDA_MPS_PIPE_DIRECTORY
+   mkdir -p $CUDA_MPS_LOG_DIRECTORY
+   
+   # Start MPS daemon
+   nvidia-cuda-mps-control -d
+   
+   echo "MPS daemon started"
+   echo "Pipe directory: $CUDA_MPS_PIPE_DIRECTORY"
+   echo "Log directory: $CUDA_MPS_LOG_DIRECTORY"
+   ```
+
+2. **Update docker-compose.yml for MPS**
+   ```yaml
+   services:
+     training_service:
+       environment:
+         - CUDA_VISIBLE_DEVICES=0
+         - CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
+         - CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
+       volumes:
+         - /tmp/nvidia-mps:/tmp/nvidia-mps
+         - /tmp/nvidia-log:/tmp/nvidia-log
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - driver: nvidia
+                 count: 1
+                 capabilities: [gpu]
+       mem_limit: 12G  # Strict limits crucial for MPS
+       mem_reservation: 10G
+   ```
+
+3. **Configure Resource Limits** (CRITICAL for MPS)
+   Each service needs strict memory limits to prevent one from starving others.
+
+---
+
+### PHASE 3: TESTING & VERIFICATION
+
+**Objective:** Ensure all three services work correctly under load
+
+**Tasks:**
+
+1. **Create Test Suite**
+   Create `tests/test_gpu_services.py`:
+   ```python
+   """
+   Integration tests for GPU-enabled microservices
+   """
+   import requests
+   import time
+   import subprocess
+   import json
+   
+   SERVICES = {
+       "training": "http://localhost:8001",
+       "chat_comparison": "http://localhost:8002",
+       "model_management": "http://localhost:8005"
+   }
+   
+   def test_service_health(service_name, base_url):
+       """Test if service is healthy"""
+       try:
+           response = requests.get(f"{base_url}/health", timeout=10)
+           assert response.status_code == 200, f"{service_name} health check failed"
+           print(f"✓ {service_name} is healthy")
+           return True
+       except Exception as e:
+           print(f"✗ {service_name} health check failed: {e}")
+           return False
+   
+   def test_gpu_availability(service_name, base_url):
+       """Test if GPU is accessible"""
+       try:
+           response = requests.get(f"{base_url}/gpu-info", timeout=10)
+           data = response.json()
+           assert data.get("cuda_available") == True
+           print(f"✓ {service_name} has GPU access")
+           return True
+       except Exception as e:
+           print(f"✗ {service_name} GPU test failed: {e}")
+           return False
+   
+   def test_concurrent_gpu_usage():
+       """Test all services using GPU simultaneously"""
+       print("\n=== Testing Concurrent GPU Usage ===")
+       
+       # Start operations on all services
+       tasks = []
+       for name, url in SERVICES.items():
+           try:
+               # Trigger a test inference/computation
+               response = requests.post(
+                   f"{url}/test-gpu",
+                   json={"test": True},
+                   timeout=30
+               )
+               tasks.append((name, response.status_code))
+           except Exception as e:
+               print(f"✗ {name} concurrent test failed: {e}")
+               tasks.append((name, None))
+       
+       # Check results
+       all_passed = all(status == 200 for _, status in tasks)
+       if all_passed:
+           print("✓ All services handled concurrent GPU usage")
+       else:
+           print("✗ Concurrent GPU usage test failed")
+       
+       return all_passed
+   
+   def check_gpu_memory():
+       """Check GPU memory allocation"""
+       try:
+           result = subprocess.run(
+               ["nvidia-smi", "--query-gpu=memory.used,memory.total", "--format=csv,noheader,nounits"],
+               capture_output=True,
+               text=True
+           )
+           mem_used, mem_total = map(int, result.stdout.strip().split(','))
+           print(f"\nGPU Memory: {mem_used}MB / {mem_total}MB ({mem_used/mem_total*100:.1f}%)")
+           return mem_used, mem_total
+       except Exception as e:
+           print(f"Failed to check GPU memory: {e}")
+           return None, None
+   
+   def run_all_tests():
+       """Run complete test suite"""
+       print("=== LLM Forge GPU Services Test Suite ===\n")
+       
+       results = {}
+       
+       # Test 1: Health checks
+       print("=== Phase 1: Health Checks ===")
+       for name, url in SERVICES.items():
+           results[f"{name}_health"] = test_service_health(name, url)
+           time.sleep(1)
+       
+       # Test 2: GPU availability
+       print("\n=== Phase 2: GPU Availability ===")
+       for name, url in SERVICES.items():
+           results[f"{name}_gpu"] = test_gpu_availability(name, url)
+           time.sleep(1)
+       
+       # Test 3: Concurrent usage
+       results["concurrent"] = test_concurrent_gpu_usage()
+       
+       # Test 4: Memory check
+       print("\n=== Phase 3: GPU Memory Check ===")
+       check_gpu_memory()
+       
+       # Summary
+       print("\n=== Test Summary ===")
+       passed = sum(1 for v in results.values() if v)
+       total = len(results)
+       print(f"Passed: {passed}/{total}")
+       
+       if passed == total:
+           print("✓ ALL TESTS PASSED")
+           return True
+       else:
+           print("✗ SOME TESTS FAILED")
+           failed = [k for k, v in results.items() if not v]
+           print(f"Failed tests: {', '.join(failed)}")
+           return False
+   
+   if __name__ == "__main__":
+       success = run_all_tests()
+       exit(0 if success else 1)
+   ```
+
+2. **Create Load Test**
+   Create `tests/load_test_gpu.py`:
+   ```python
+   """
+   Load testing for GPU services
+   """
+   import concurrent.futures
+   import requests
+   import time
+   import statistics
+   
+   def send_request(service_url, request_num):
+       """Send a single request"""
+       start = time.time()
+       try:
+           response = requests.post(
+               f"{service_url}/inference",
+               json={"text": f"Test request {request_num}"},
+               timeout=60
+           )
+           elapsed = time.time() - start
+           return {
+               "success": response.status_code == 200,
+               "time": elapsed,
+               "request": request_num
+           }
+       except Exception as e:
+           return {
+               "success": False,
+               "time": time.time() - start,
+               "error": str(e),
+               "request": request_num
+           }
+   
+   def load_test(service_name, service_url, num_requests=10, concurrency=3):
+       """Run load test on a service"""
+       print(f"\n=== Load Testing {service_name} ===")
+       print(f"Requests: {num_requests}, Concurrency: {concurrency}")
+       
+       results = []
+       with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+           futures = [
+               executor.submit(send_request, service_url, i)
+               for i in range(num_requests)
+           ]
+           
+           for future in concurrent.futures.as_completed(futures):
+               result = future.result()
+               results.append(result)
+               status = "✓" if result["success"] else "✗"
+               print(f"{status} Request {result['request']}: {result['time']:.2f}s")
+       
+       # Statistics
+       successful = [r for r in results if r["success"]]
+       if successful:
+           times = [r["time"] for r in successful]
+           print(f"\nSuccess Rate: {len(successful)}/{num_requests}")
+           print(f"Avg Time: {statistics.mean(times):.2f}s")
+           print(f"Min Time: {min(times):.2f}s")
+           print(f"Max Time: {max(times):.2f}s")
+       
+       return len(successful) == num_requests
+   
+   if __name__ == "__main__":
+       services = {
+           "Training": "http://localhost:8001",
+           "Chat Comparison": "http://localhost:8002",
+           "Model Management": "http://localhost:8005"
+       }
+       
+       all_passed = True
+       for name, url in services.items():
+           passed = load_test(name, url, num_requests=5, concurrency=2)
+           all_passed = all_passed and passed
+       
+       exit(0 if all_passed else 1)
+   ```
+
+3. **Service-Specific Health Endpoints**
+   Add to each service (example for training service):
+   ```python
+   from fastapi import FastAPI
+   import torch
+   
+   app = FastAPI()
+   
+   @app.get("/health")
+   def health_check():
+       return {
+           "status": "healthy",
+           "service": "training",
+           "cuda_available": torch.cuda.is_available()
+       }
+   
+   @app.get("/gpu-info")
+   def gpu_info():
+       if not torch.cuda.is_available():
+           return {"cuda_available": False}
+       
+       return {
+           "cuda_available": True,
+           "device_count": torch.cuda.device_count(),
+           "current_device": torch.cuda.current_device(),
+           "device_name": torch.cuda.get_device_name(0),
+           "memory_allocated_mb": torch.cuda.memory_allocated() / 1024**2,
+           "memory_reserved_mb": torch.cuda.memory_reserved() / 1024**2
+       }
+   
+   @app.post("/test-gpu")
+   def test_gpu():
+       """Test GPU with a simple computation"""
+       if not torch.cuda.is_available():
+           return {"error": "CUDA not available"}, 500
+       
+       try:
+           # Simple GPU test
+           x = torch.randn(1000, 1000).cuda()
+           y = torch.randn(1000, 1000).cuda()
+           z = torch.matmul(x, y)
+           
+           return {
+               "success": True,
+               "computation_device": str(z.device)
+           }
+       except Exception as e:
+           return {"error": str(e)}, 500
+   ```
+
+4. **Execute Test Plan**
+   ```bash
+   # Step 1: Build and start services
+   docker-compose build
+   docker-compose up -d
+   
+   # Step 2: Wait for services to initialize
+   sleep 60
+   
+   # Step 3: Monitor GPU
+   ./scripts/monitor_gpu.sh
+   
+   # Step 4: Run tests
+   python tests/test_gpu_services.py
+   
+   # Step 5: Load test
+   python tests/load_test_gpu.py
+   
+   # Step 6: Monitor for 5 minutes
+   for i in {1..10}; do
+       ./scripts/monitor_gpu.sh
+       sleep 30
+   done
+   ```
+
+---
+
+### PHASE 4: MONITORING & OPTIMIZATION
+
+**Tasks:**
+
+1. **Create Monitoring Dashboard Script**
+   Create `scripts/dashboard.sh`:
+   ```bash
+   #!/bin/bash
+   # Real-time monitoring dashboard
+   
+   while true; do
+       clear
+       echo "=========================================="
+       echo "  LLM FORGE GPU MONITORING DASHBOARD"
+       echo "  $(date)"
+       echo "=========================================="
+       echo ""
+       
+       echo "=== GPU Status ==="
+       nvidia-smi --query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu --format=csv,noheader
+       echo ""
+       
+       echo "=== Container Status ==="
+       docker ps --filter "name=llmforge" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+       echo ""
+       
+       echo "=== Container Resources ==="
+       docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.MemPerc}}" \
+           $(docker ps --filter "name=llmforge" --format "{{.Names}}")
+       echo ""
+       
+       echo "=== Service Logs (last 5 lines each) ==="
+       for service in training chat-comparison model-management; do
+           echo "--- $service ---"
+           docker logs llmforge-$service --tail 5 2>&1 | tail -5
+           echo ""
+       done
+       
+       sleep 5
+   done
+   ```
+   
+   Make executable: `chmod +x scripts/dashboard.sh`
+
+2. **Create Logging Configuration**
+   Create `config/logging.yaml`:
+   ```yaml
+   version: 1
+   disable_existing_loggers: false
+   
+   formatters:
+     standard:
+       format: '%(asctime)s - %(name)s - %(levelname)s - GPU:%(gpu_device)s - %(message)s'
+     detailed:
+       format: '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - GPU:%(gpu_device)s - %(message)s'
+   
+   handlers:
+     console:
+       class: logging.StreamHandler
+       level: INFO
+       formatter: standard
+       stream: ext://sys.stdout
+     
+     file:
+       class: logging.handlers.RotatingFileHandler
+       level: DEBUG
+       formatter: detailed
+       filename: /app/logs/service.log
+       maxBytes: 10485760  # 10MB
+       backupCount: 5
+     
+     gpu_file:
+       class: logging.handlers.RotatingFileHandler
+       level: INFO
+       formatter: detailed
+       filename: /app/logs/gpu_usage.log
+       maxBytes: 10485760
+       backupCount: 3
+   
+   loggers:
+     gpu_monitor:
+       level: INFO
+       handlers: [console, gpu_file]
+       propagate: false
+   
+   root:
+     level: INFO
+     handlers: [console, file]
+   ```
+
+3. **Add Prometheus Metrics** (Optional but recommended)
+   Create `src/common/metrics.py`:
+   ```python
+   """
+   Prometheus metrics for GPU monitoring
+   """
+   from prometheus_client import Gauge, Counter, Histogram
+   import torch
+   
+   # GPU Metrics
+   gpu_memory_allocated = Gauge(
+       'gpu_memory_allocated_bytes',
+       'GPU memory currently allocated',
+       ['service', 'device']
+   )
+   
+   gpu_memory_reserved = Gauge(
+       'gpu_memory_reserved_bytes',
+       'GPU memory currently reserved',
+       ['service', 'device']
+   )
+   
+   gpu_utilization = Gauge(
+       'gpu_utilization_percent',
+       'GPU utilization percentage',
+       ['service', 'device']
+   )
+   
+   inference_duration = Histogram(
+       'inference_duration_seconds',
+       'Time spent on inference',
+       ['service', 'model']
+   )
+   
+   inference_count = Counter(
+       'inference_total',
+       'Total number of inferences',
+       ['service', 'model', 'status']
+   )
+   
+   def update_gpu_metrics(service_name: str):
+       """Update GPU metrics"""
+       if torch.cuda.is_available():
+           device = torch.cuda.current_device()
+           allocated = torch.cuda.memory_allocated(device)
+           reserved = torch.cuda.memory_reserved(device)
+           
+           gpu_memory_allocated.labels(
+               service=service_name,
+               device=device
+           ).set(allocated)
+           
+           gpu_memory_reserved.labels(
+               service=service_name,
+               device=device
+           ).set(reserved)
+   ```
+
+---
+
+### PHASE 5: DEPLOYMENT & VALIDATION
+
+**Objective:** Deploy the complete solution and ensure stability
+
+**Tasks:**
+
+1. **Create Deployment Script**
+   Create `scripts/deploy.sh`:
+   ```bash
+   #!/bin/bash
+   # Complete deployment script for LLM Forge
+   
+   set -e  # Exit on error
+   
+   echo "=========================================="
+   echo "  LLM FORGE DEPLOYMENT"
+   echo "=========================================="
+   
+   # Step 1: Pre-deployment checks
+   echo "Step 1: Pre-deployment checks..."
+   
+   # Check NVIDIA driver
+   if ! command -v nvidia-smi &> /dev/null; then
+       echo "ERROR: nvidia-smi not found. Install NVIDIA drivers first."
+       exit 1
+   fi
+   
+   # Check Docker
+   if ! command -v docker &> /dev/null; then
+       echo "ERROR: Docker not found."
+       exit 1
+   fi
+   
+   # Check GPU availability
+   GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader | head -1)
+   echo "Detected $GPU_COUNT GPU(s)"
+   
+   # Step 2: Stop existing containers
+   echo "Step 2: Stopping existing containers..."
+   docker-compose down --remove-orphans || true
+   
+   # Step 3: Clean up old volumes (optional)
+   read -p "Clean up old data volumes? (y/N) " -n 1 -r
+   echo
+   if [[ $REPLY =~ ^[Yy]$ ]]; then
+       docker volume rm llmforge_training-cache llmforge_chat-cache llmforge_model-cache 2>/dev/null || true
+   fi
+   
+   # Step 4: Build images
+   echo "Step 3: Building Docker images..."
+   docker-compose build --parallel
+   
+   # Step 5: Start services
+   echo "Step 4: Starting services..."
+   docker-compose up -d
+   
+   # Step 6: Wait for services
+   echo "Step 5: Waiting for services to initialize..."
+   sleep 30
+   
+   # Step 7: Health checks
+   echo "Step 6: Running health checks..."
+   
+   for service in api-gateway training chat-comparison model-management; do
+       echo "Checking $service..."
+       if docker ps | grep -q "llmforge-$service"; then
+           echo "  ✓ $service is running"
+       else
+           echo "  ✗ $service failed to start"
+           docker logs llmforge-$service --tail 50
+           exit 1
+       fi
+   done
+   
+   # Step 8: GPU verification
+   echo "Step 7: Verifying GPU allocation..."
+   ./scripts/monitor_gpu.sh
+   
+   # Step 9: Run tests
+   echo "Step 8: Running integration tests..."
+   python tests/test_gpu_services.py
+   
+   if [ $? -eq 0 ]; then
+       echo ""
+       echo "=========================================="
+       echo "  ✓ DEPLOYMENT SUCCESSFUL"
+       echo "=========================================="
+       echo ""
+       echo "Services running:"
+       docker-compose ps
+       echo ""
+       echo "Monitor dashboard: ./scripts/dashboard.sh"
+       echo "View logs: docker-compose logs -f [service-name]"
+   else
+       echo ""
+       echo "=========================================="
+       echo "  ✗ DEPLOYMENT TESTS FAILED"
+       echo "=========================================="
+       exit 1
+   fi
+   ```
+   
+   Make executable: `chmod +x scripts/deploy.sh`
+
+2. **Create Rollback Script**
+   Create `scripts/rollback.sh`:
+   ```bash
+   #!/bin/bash
+   # Rollback script
+   
+   echo "Rolling back to previous version..."
+   docker-compose down
+   git checkout HEAD~1 docker-compose.yml
+   docker-compose up -d
+   echo "Rollback complete"
+   ```
+
+3. **Full Deployment Test**
+   ```bash
+   # Execute full deployment
+   ./scripts/deploy.sh
+   
+   # Monitor for 10 minutes
+   ./scripts/dashboard.sh
+   ```
+
+---
+
+### PHASE 6: STRESS TESTING & FINE-TUNING
+
+**Objective:** Validate system under production-like load
+
+**Tasks:**
+
+1. **Create Stress Test**
+   Create `tests/stress_test.py`:
+   ```python
+   """
+   Stress test for GPU services
+   """
+   import concurrent.futures
+   import requests
+   import time
+   import random
+   
+   def stress_training_service(duration_minutes=10):
+       """Stress test training service"""
+       print(f"Stress testing Training Service for {duration_minutes} minutes...")
+       
+       end_time = time.time() + (duration_minutes * 60)
+       request_count = 0
+       errors = 0
+       
+       while time.time() < end_time:
+           try:
+               response = requests.post(
+                   "http://localhost:8001/train",
+                   json={
+                       "model": "test-model",
+                       "epochs": 1,
+                       "batch_size": random.choice([8, 16, 32])
+                   },
+                   timeout=120
+               )
+               
+               if response.status_code == 200:
+                   request_count += 1
+               else:
+                   errors += 1
+                   print(f"Error response: {response.status_code}")
+                   
+           except Exception as e:
+               errors += 1
+               print(f"Request failed: {e}")
+           
+           time.sleep(random.uniform(1, 5))  # Random delay
+       
+       print(f"Training Service - Requests: {request_count}, Errors: {errors}")
+       return errors == 0
+   
+   def stress_all_services(duration_minutes=10):
+       """Stress test all services concurrently"""
+       print(f"\n=== STRESS TEST - {duration_minutes} minutes ===\n")
+       
+       with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+           futures = [
+               executor.submit(stress_training_service, duration_minutes),
+               executor.submit(stress_inference_service, "chat-comparison", duration_minutes),
+               executor.submit(stress_inference_service, "model-management", duration_minutes)
+           ]
+           
+           results = [f.result() for f in concurrent.futures.as_completed(futures)]
+       
+       if all(results):
+           print("\n✓ STRESS TEST PASSED")
+           return True
+       else:
+           print("\n✗ STRESS TEST FAILED")
+           return False
+   
+   def stress_inference_service(service_name, duration_minutes):
+       """Stress test inference services"""
+       port_map = {
+           "chat-comparison": 8002,
+           "model-management": 8005
+       }
+       
+       port = port_map.get(service_name)
+       if not port:
+           return False
+       
+       print(f"Stress testing {service_name} for {duration_minutes} minutes...")
+       
+       end_time = time.time() + (duration_minutes * 60)
+       request_count = 0
+       errors = 0
+       
+       while time.time() < end_time:
+           try:
+               response = requests.post(
+                   f"http://localhost:{port}/inference",
+                   json={"text": f"Test inference {request_count}"},
+                   timeout=30
+               )
+               
+               if response.status_code == 200:
+                   request_count += 1
+               else:
+                   errors += 1
+                   
+           except Exception as e:
+               errors += 1
+               print(f"{service_name} request failed: {e}")
+           
+           time.sleep(random.uniform(0.5, 2))
+       
+       print(f"{service_name} - Requests: {request_count}, Errors: {errors}")
+       return errors < (request_count * 0.05)  # Allow 5% error rate
+   
+   if __name__ == "__main__":
+       success = stress_all_services(duration_minutes=15)
+       exit(0 if success else 1)
+   ```
+
+2. **Memory Leak Detection**
+   Create `tests/memory_leak_test.py`:
+   ```python
+   """
+   Detect GPU memory leaks
+   """
+   import subprocess
+   import time
+   import requests
+   
+   def get_gpu_memory():
+       """Get current GPU memory usage"""
+       result = subprocess.run(
+           ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
+           capture_output=True,
+           text=True
+       )
+       return int(result.stdout.strip())
+   
+   def test_memory_leak(service_url, num_iterations=100):
+       """Test for memory leaks"""
+       print(f"Testing memory leak for {service_url}")
+       
+       memory_readings = []
+       
+       for i in range(num_iterations):
+           # Get memory before
+           mem_before = get_gpu_memory()
+           
+           # Make request
+           try:
+               requests.post(
+                   f"{service_url}/inference",
+                   json={"text": f"Test {i}"},
+                   timeout=30
+               )
+           except Exception as e:
+               print(f"Request {i} failed: {e}")
+           
+           time.sleep(1)
+           
+           # Get memory after
+           mem_after = get_gpu_memory()
+           
+           memory_readings.append(mem_after)
+           
+           if i % 10 == 0:
+               print(f"Iteration {i}: {mem_after}MB")
+       
+       # Analyze trend
+       start_mem = sum(memory_readings[:10]) / 10
+       end_mem = sum(memory_readings[-10:]) / 10
+       
+       leak_threshold = 100  # MB
+       
+       if end_mem - start_mem > leak_threshold:
+           print(f"✗ MEMORY LEAK DETECTED: {end_mem - start_mem:.2f}MB increase")
+           return False
+       else:
+           print(f"✓ No memory leak detected ({end_mem - start_mem:.2f}MB change)")
+           return True
+   
+   if __name__ == "__main__":
+       services = {
+           "Training": "http://localhost:8001",
+           "Chat Comparison": "http://localhost:8002",
+           "Model Management": "http://localhost:8005"
+       }
+       
+       all_passed = True
+       for name, url in services.items():
+           print(f"\n=== Testing {name} ===")
+           passed = test_memory_leak(url, num_iterations=50)
+           all_passed = all_passed and passed
+       
+       exit(0 if all_passed else 1)
+   ```
+
+3. **Run Complete Test Suite**
+   ```bash
+   # Integration tests
+   python tests/test_gpu_services.py
+   
+   # Load tests
+   python tests/load_test_gpu.py
+   
+   # Memory leak tests
+   python tests/memory_leak_test.py
+   
+   # Stress tests (15 minutes)
+   python tests/stress_test.py
+   ```
+
+---
+
+## SUCCESS CRITERIA
+
+The implementation is considered successful when ALL of the following are met:
+
+### 1. Service Availability
+- [ ] All three GPU services (training, chat_comparison, model_management) start without errors
+- [ ] All services remain running for at least 1 hour under normal load
+- [ ] All services respond to health checks within 10 seconds
+- [ ] No container restarts occur during testing period
+
+### 2. GPU Access
+- [ ] Each service can detect and access GPU(s)
+- [ ] `nvidia-smi` shows processes from all three services (or proper MIG/MPS allocation)
+- [ ] GPU memory is properly allocated without conflicts
+- [ ] No CUDA out-of-memory errors occur during testing
+
+### 3. Functional Testing
+- [ ] Training service can complete a test fine-tuning run
+- [ ] Chat comparison service can perform inference
+- [ ] Model management service can load and manage models
+- [ ] All services can handle concurrent requests
+
+### 4. Performance Testing
+- [ ] Load tests pass with <5% error rate
+- [ ] Stress tests complete successfully for 15+ minutes
+- [ ] No memory leaks detected (< 100MB increase over 50 iterations)
+- [ ] Response times remain consistent under load
+
+### 5. Monitoring & Logging
+- [ ] GPU monitoring dashboard shows accurate data
+- [ ] Service logs are accessible and informative
+- [ ] No critical errors in logs
+- [ ] Resource usage is within expected bounds
+
+### 6. Recovery Testing
+- [ ] Services recover gracefully from simulated failures
+- [ ] Container restart policies work correctly
+- [ ] No data corruption or state inconsistencies
+
+---
+
+## TROUBLESHOOTING GUIDE
+
+### Issue: Container keeps restarting
+**Diagnosis:**
+```bash
+docker logs llmforge-training --tail 100
+docker inspect llmforge-training
+```
+
+**Possible causes:**
+1. OOM kill - Check `dmesg | grep -i oom`
+2. GPU not accessible - Verify NVIDIA runtime
+3. Port conflicts - Check `netstat -tulpn`
+
+**Solutions:**
+- Increase memory limits in docker-compose.yml
+- Verify GPU allocation with `nvidia-smi`
+- Check for port conflicts and adjust
+
+### Issue: CUDA out of memory
+**Diagnosis:**
+```bash
+nvidia-smi
+docker exec llmforge-training python -c "import torch; print(torch.cuda.memory_summary())"
+```
+
+**Solutions:**
+- Reduce batch sizes in training config
+- Implement gradient accumulation
+- Enable memory-efficient attention
+- Clear GPU cache between operations
+
+### Issue: Services can't see GPU
+**Diagnosis:**
+```bash
+docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+docker exec llmforge-training nvidia-smi
+```
+
+**Solutions:**
+- Verify NVIDIA Container Toolkit installation
+- Check `/etc/docker/daemon.json` for nvidia runtime
+- Restart Docker daemon: `sudo systemctl restart docker`
+
+### Issue: Poor performance/high latency
+**Diagnosis:**
+```bash
+./scripts/monitor_gpu.sh
+docker stats --no-stream
+```
+
+**Solutions:**
+- Check GPU utilization (should be >70% during inference)
+- Verify batch sizes are optimal
+- Check for CPU bottlenecks
+- Ensure proper MPS/MIG configuration
+
+---
+
+## FINAL VALIDATION CHECKLIST
+
+Before considering the implementation complete, verify:
+
+1. **Documentation**
+   - [ ] Updated README.md with GPU setup instructions
+   - [ ] Created deployment runbook
+   - [ ] Documented troubleshooting steps
+   - [ ] Added architecture diagrams
+
+2. **Code Quality**
+   - [ ] All scripts are executable and tested
+   - [ ] Configuration files are properly formatted
+   - [ ] Error handling is comprehensive
+   - [ ] Logging is informative and consistent
+
+3. **Testing**
+   - [ ] All test suites pass
+   - [ ] Manual testing completed
+   - [ ] Load testing shows acceptable performance
+   - [ ] No memory leaks detected
+
+4. **Deployment**
+   - [ ] Deployment script works end-to-end
+   - [ ] Rollback script tested
+   - [ ] Monitoring dashboard functional
+   - [ ] Alerts configured (if applicable)
+
+5. **Production Readiness**
+   - [ ] Security review completed
+   - [ ] Backup strategy defined
+   - [ ] Disaster recovery plan documented
+   - [ ] Performance benchmarks established
+
+---
+
+## DELIVERABLES
+
+Upon successful completion, provide:
+
+1. **Updated Configuration Files**
+   - docker-compose.yml
+   - All Dockerfiles (if modified)
+   - Environment configurations
+
+2. **Scripts**
+   - Deployment script
+   - Monitoring scripts
+   - Test scripts
+   - Rollback script
+
+3. **Documentation**
+   - Implementation guide
+   - Troubleshooting guide
+   - Architecture documentation
+   - Performance benchmarks
+
+4. **Test Results**
+   - Integration test results
+   - Load test results
+   - Stress test results
+   - Memory leak test results
+
+5. **Monitoring**
+   - GPU usage dashboard
+   - Service health metrics
+   - Performance baselines
+
+---
+
+## NEXT STEPS
+
+After successful implementation:
+
+1. **Optimization Phase**
+   - Fine-tune memory allocations
+   - Optimize batch sizes
+   - Implement caching strategies
+   - Add auto-scaling if needed
+
+2. **Production Deployment**
+   - Deploy to staging environment
+   - Conduct user acceptance testing
+   - Monitor for 1 week
+   - Deploy to production
+
+3. **Continuous Improvement**
+   - Set up automated monitoring
+   - Implement alerting
+   - Create performance dashboards
+   - Plan capacity upgrades
+
+---
+
+## IMPORTANT NOTES
+
+- **DO NOT proceed to next phase until current phase is verified**
+- **Document all decisions and configurations**
+- **Keep detailed logs of all tests and results**
+- **Ask for clarification if anything is unclear**
+- **Report any blockers immediately**
+
+The goal is a **stable, production-ready GPU sharing solution** where all three microservices work reliably without conflicts or restarts.
+
+---
+
+**End of Implementation Guide**

@@ -1,6 +1,6 @@
 # Multi-stage Dockerfile for LLMForge
 # This builds a development environment with all services
-FROM nvidia/cuda:12.1-devel-ubuntu22.04
+FROM ubuntu:22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
@@ -29,13 +29,12 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy requirements files
-COPY requirements*.txt ./
+# Copy shared requirements files
+COPY src/docker/shared-base/requirements-common.txt ./
+COPY src/docker/shared-ml-base/requirements-ml.txt ./
 
 # Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
-RUN pip3 install --no-cache-dir -r requirements-app.txt
-RUN pip3 install --no-cache-dir -r requirements-base.txt
+RUN pip3 install --no-cache-dir -r requirements-common.txt
 RUN pip3 install --no-cache-dir -r requirements-ml.txt
 
 # Copy application code

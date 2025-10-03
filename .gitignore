@@ -4,10 +4,10 @@
 # DOWNLOADED MODELS AND DATA
 # =============================================================================
 
-# Downloaded models (can be very large)
-models/
-models/base/
-models/finetuned/
+# Downloaded models (can be very large) - only ignore in root directory
+/models/
+/models/base/
+/models/finetuned/
 
 # Dataset files
 data/input/
