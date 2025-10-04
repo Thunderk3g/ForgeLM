@@ -193,24 +193,42 @@ async def fine_tune(request: FineTuneRequest, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=503, detail="Training service not initialized")
     
     try:
+        # Validate required fields first
+        if not request.base_model_dir:
+            training_errors_total.inc()
+            raise HTTPException(status_code=400, detail="base_model_dir is required and cannot be empty")
+
+        if not request.dataset_dir:
+            training_errors_total.inc()
+            raise HTTPException(status_code=400, detail="dataset_dir is required and cannot be empty")
+
         # Fix model path if it's pointing to base directory instead of specific model
         if request.base_model_dir == "/app/models/base":
             # Look for the actual model directory
             base_models_dir = "/app/models/base"
             if os.path.exists(base_models_dir):
-                model_subdirs = [d for d in os.listdir(base_models_dir) 
-                               if os.path.isdir(os.path.join(base_models_dir, d)) and 
+                model_subdirs = [d for d in os.listdir(base_models_dir)
+                               if os.path.isdir(os.path.join(base_models_dir, d)) and
                                os.path.exists(os.path.join(base_models_dir, d, "config.json"))]
                 if model_subdirs:
                     # Use the first available model (or could implement selection logic)
                     request.base_model_dir = os.path.join(base_models_dir, model_subdirs[0])
                     logger.info(f"Corrected model path from /app/models/base to {request.base_model_dir}")
-        
-        # Validate request
+                else:
+                    training_errors_total.inc()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No valid models found in {base_models_dir}. Please ensure at least one model directory contains a config.json file."
+                    )
+            else:
+                training_errors_total.inc()
+                raise HTTPException(status_code=400, detail=f"Base models directory does not exist: {base_models_dir}")
+
+        # Validate paths exist
         if not os.path.exists(request.base_model_dir):
             training_errors_total.inc()
             raise HTTPException(status_code=400, detail=f"Base model directory not found: {request.base_model_dir}")
-        
+
         if not os.path.exists(request.dataset_dir):
             training_errors_total.inc()
             raise HTTPException(status_code=400, detail=f"Dataset directory not found: {request.dataset_dir}")

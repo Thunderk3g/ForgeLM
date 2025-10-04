@@ -197,6 +197,19 @@ class TrainingCore:
             f"Environment: {hardware_summary['environment']}, Storage={hardware_summary['storage']}"
         )
         self.logger.info(f"Unsloth available: {UNSLOTH_AVAILABLE}")
+
+        # Log container memory configuration for debugging restarts
+        container_limit = os.environ.get("CONTAINER_MEMORY_LIMIT_GB", "8")
+        worker_memory = os.environ.get("WORKER_MEMORY_GB", "6")
+        self.logger.info(f"🐳 Container Memory Config: Limit={container_limit}GB, Worker={worker_memory}GB")
+
+        # Log initial memory state
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            self.logger.info(f"📊 Initial Memory: {mem.used / 1024**3:.1f}GB used / {mem.total / 1024**3:.1f}GB total ({mem.percent}%)")
+        except:
+            pass
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -211,35 +224,50 @@ class TrainingCore:
             try:
                 with open('/proc/self/oom_score', 'r') as f:
                     oom_score = int(f.read().strip())
-                    if oom_score > 300:  # FIXED: More aggressive OOM detection
-                        self.logger.warning(f"High OOM score detected: {oom_score}")
+                    if oom_score > 200:  # Even more aggressive for 8GB container
+                        self.logger.error(f"🚨 CRITICAL OOM score: {oom_score} - container may be killed!")
                         return True
+                    elif oom_score > 100:
+                        self.logger.warning(f"⚠️ Elevated OOM score: {oom_score}")
             except (FileNotFoundError, PermissionError):
                 # /proc may not be available in some container environments
                 pass
-            
+
             # Check memory pressure using psutil
             try:
                 import psutil
                 memory = psutil.virtual_memory()
-                if memory.percent > 75:  # FIXED: More aggressive memory monitoring
-                    self.logger.warning(f"High memory pressure: {memory.percent}%")
-                    return True
-                    
-                # Check if we're approaching container memory limits
+                memory_percent = memory.percent
+
+                # Get container limits
                 container_limit_gb = float(os.environ.get("CONTAINER_MEMORY_LIMIT_GB", "8"))
                 memory_used_gb = (memory.total - memory.available) / (1024**3)
                 memory_usage_percent = (memory_used_gb / container_limit_gb) * 100
-                
-                if memory_usage_percent > 70:  # FIXED: More aggressive container memory monitoring
-                    self.logger.warning(f"Container memory usage {memory_usage_percent:.1f}% of {container_limit_gb}GB limit")
+
+                # Log current memory state periodically
+                if hasattr(self, '_last_memory_log_time'):
+                    if time.time() - self._last_memory_log_time > 30:  # Log every 30s
+                        self.logger.info(f"Memory: {memory_used_gb:.1f}GB used ({memory_usage_percent:.1f}% of {container_limit_gb}GB limit), system: {memory_percent:.1f}%")
+                        self._last_memory_log_time = time.time()
+                else:
+                    self._last_memory_log_time = time.time()
+
+                # Critical threshold - prevent OOM kill
+                if memory_usage_percent > 85:
+                    self.logger.error(f"🚨 CRITICAL: Memory at {memory_usage_percent:.1f}% of container limit! OOM kill imminent!")
                     return True
-                    
+                elif memory_usage_percent > 70:
+                    self.logger.warning(f"⚠️ HIGH: Memory at {memory_usage_percent:.1f}% of container limit - approaching danger zone")
+                    return True
+                elif memory.percent > 80:
+                    self.logger.warning(f"⚠️ System memory pressure: {memory.percent}%")
+                    return True
+
             except ImportError:
                 self.logger.warning("psutil not available for memory monitoring")
-                
+
             return False
-            
+
         except Exception as e:
             self.logger.error(f"Error detecting container stress: {e}")
             return False
@@ -285,20 +313,20 @@ class TrainingCore:
 
     def _enable_emergency_mode(self, request: FineTuneRequest):
         """Enable emergency mode for container stability"""
-        self.logger.warning("🚨 Enabling emergency stability mode for RTX 4060 8GB")
-        
-        # Ultra-conservative settings to prevent container restart
+        self.logger.warning("🚨 Enabling emergency stability mode for RTX 3050 4GB Laptop (32GB RAM)")
+
+        # Conservative settings optimized for 4GB VRAM (RAM is not the bottleneck)
         emergency_config = {
-            "max_seq_length": 128,  # FIXED: Even smaller to test memory - was min(256, ...)
-            "batch_size": 1,  # Always 1 for stability
-            "gradient_accumulation_steps": max(128, request.gradient_accumulation_steps),  # FIXED: Much higher accumulation
+            "max_seq_length": 1024,  # Can use longer sequences with 32GB RAM
+            "batch_size": 1,  # Still 1 for 4GB VRAM
+            "gradient_accumulation_steps": max(32, request.gradient_accumulation_steps),  # Moderate accumulation
             "reduced_precision": True,
-            "dataloader_num_workers": 0,  # FIXED: Force single worker
-            "dataset_num_proc": 1  # FIXED: Force single process
+            "dataloader_num_workers": 0,  # Force single worker
+            "dataset_num_proc": 1  # Force single process
         }
-        
-        self.logger.info(f"Emergency config: {emergency_config}")
-        self.logger.warning("🚨 Using ultra-conservative settings to prevent container restarts")
+
+        self.logger.info(f"Emergency config for 4GB GPU with 32GB RAM: {emergency_config}")
+        self.logger.warning("🚨 GPU is the bottleneck (4GB VRAM), RAM is plentiful (32GB)")
         return emergency_config
         
 
@@ -383,14 +411,24 @@ class TrainingCore:
         self._update_status("loading", "Loading model with Unsloth optimization...")
 
         try:
+            # CRITICAL: Validate all required paths before proceeding
+            if not request.base_model_dir:
+                raise ValueError("base_model_dir is None or empty. Please provide a valid model directory path.")
+            if not request.dataset_dir:
+                raise ValueError("dataset_dir is None or empty. Please provide a valid dataset directory path.")
+            if not request.output_dir:
+                raise ValueError("output_dir is None or empty. Please provide a valid output directory path.")
+
+            self.logger.info(f"Validated paths - model: {request.base_model_dir}, dataset: {request.dataset_dir}, output: {request.output_dir}")
+
             # FIXED: Always apply emergency mode for RTX 4060 8GB to prevent restarts
             self.logger.warning("🚨 Applying emergency stability mode for RTX 4060 8GB")
             emergency_config = self._enable_emergency_mode(request)
             # Override request parameters with emergency settings
             request.max_seq_length = emergency_config["max_seq_length"]
-            request.batch_size = emergency_config["batch_size"] 
+            request.batch_size = emergency_config["batch_size"]
             request.gradient_accumulation_steps = emergency_config["gradient_accumulation_steps"]
-            
+
             # Additional memory pressure check
             if self._detect_container_stress():
                 self.logger.error("Container stress detected - applying additional emergency measures")
@@ -398,40 +436,44 @@ class TrainingCore:
                 request.batch_size = 1
                 request.gradient_accumulation_steps = max(32, request.gradient_accumulation_steps)
                 request.max_seq_length = min(1024, request.max_seq_length)
-            
+
             # FIXED: Validate precision BEFORE model loading to prevent race conditions
             optimal_precision = self._get_optimal_precision_settings()
             self.logger.info(f"Pre-validated precision: {optimal_precision['reason']}")
-            
-            # Optimized model loading for RTX 4060 8GB with Unsloth 2025.9.5+
-            worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "6"))
-            
-            # RTX 4060 8GB optimal loading configuration with validated precision
-            loading_config = {
-                "model_name": request.base_model_dir,
-                "max_seq_length": 2048 if worker_memory_gb <= 8 else request.max_seq_length,
-                "dtype": torch.bfloat16 if optimal_precision['bf16'] else torch.float16,  # FIXED: Explicit dtype
-                "load_in_4bit": True,  # Essential for 8GB VRAM - 4x memory reduction
-                "trust_remote_code": True,  # Required for Qwen2.5
-            }
-            
-            # Hardware-specific optimizations
-            if worker_memory_gb <= 8:
-                loading_config.update({
-                    "device_map": "auto",  # Let Unsloth handle device mapping
-                    "attn_implementation": "flash_attention_2",  # Better memory efficiency
-                    # Additional 8GB optimizations
-                    "torch_dtype": torch.float16,  # Explicit for compatibility
-                })
-            else:
-                loading_config.update({
-                    "device_map": "balanced",  # Better for multi-GPU setups
-                    "attn_implementation": "flash_attention_2",
-                })
-            
-            self.logger.info(f"Loading model with RTX 4060 8GB optimized config: 4bit={loading_config['load_in_4bit']}, max_seq={loading_config['max_seq_length']}")
-            
-            model, tokenizer = FastLanguageModel.from_pretrained(**loading_config)
+
+            # Optimized model loading for RTX 3050 4GB Laptop with Unsloth
+            worker_memory_gb = float(os.environ.get("WORKER_MEMORY_GB", "4"))
+
+            # CRITICAL FIX: Qwen models have bias terms that prevent Unsloth from patching any layers
+            # When Unsloth can't patch (0 QKV, 0 O, 0 MLP), using it causes segfault
+            # Solution: Use standard HuggingFace BitsAndBytes 4-bit instead of Unsloth
+
+            self.logger.warning("⚠️ Qwen models incompatible with Unsloth (bias terms prevent patching)")
+            self.logger.info("Using standard BitsAndBytes 4-bit quantization instead")
+
+            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+            # BitsAndBytes 4-bit config for RTX 3050 4GB
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
+                bnb_4bit_compute_dtype=torch.bfloat16 if optimal_precision['bf16'] else torch.float16,
+                bnb_4bit_use_double_quant=True,  # Nested quantization for memory
+            )
+
+            self.logger.info(f"Loading model with BitsAndBytes 4-bit: compute_dtype={'bf16' if optimal_precision['bf16'] else 'fp16'}, double_quant=True")
+
+            model = AutoModelForCausalLM.from_pretrained(
+                request.base_model_dir,
+                quantization_config=bnb_config,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+
+            tokenizer = AutoTokenizer.from_pretrained(
+                request.base_model_dir,
+                trust_remote_code=True,
+            )
             
             # CRITICAL FIX: Proper Qwen2.5 tokenizer configuration
             self.logger.info("Applying Qwen2.5 tokenizer fixes...")
@@ -500,20 +542,23 @@ class TrainingCore:
                 # Embeddings excluded to reduce trainable params ~1.67%
             ]
             
-            # Apply conservative LoRA - no full FT on embeddings
-            model = FastLanguageModel.get_peft_model(
-                model,
+            # Apply standard PEFT LoRA (not Unsloth) for Qwen compatibility
+            from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
+            # Prepare model for 4-bit training
+            model = prepare_model_for_kbit_training(model)
+
+            lora_config = LoraConfig(
                 r=lora_rank,
-                target_modules=qwen_target_modules,
                 lora_alpha=lora_alpha,
-                lora_dropout=0.0,  # Enforced for Unsloth QKV optimization
+                target_modules=qwen_target_modules,
+                lora_dropout=0.05,  # Standard PEFT dropout (not 0.0 like Unsloth)
                 bias="none",
-                use_gradient_checkpointing="unsloth",
-                random_state=3407,
-                use_rslora=False,
-                loftq_config=None,
-                modules_to_save=None,  # Explicit: No full fine-tune on embeddings/lm_head
+                task_type="CAUSAL_LM",
             )
+
+            model = get_peft_model(model, lora_config)
+            model.print_trainable_parameters()
             
             self.logger.info(f"Applied LoRA with rank {lora_rank}, alpha {lora_alpha}, targeting {len(qwen_target_modules)} module types for optimal 8GB VRAM performance")
 
@@ -845,6 +890,16 @@ class TrainingCore:
         self._update_status("loading", "Loading model with Transformers...")
 
         try:
+            # CRITICAL: Validate all required paths before proceeding
+            if not request.base_model_dir:
+                raise ValueError("base_model_dir is None or empty. Please provide a valid model directory path.")
+            if not request.dataset_dir:
+                raise ValueError("dataset_dir is None or empty. Please provide a valid dataset directory path.")
+            if not request.output_dir:
+                raise ValueError("output_dir is None or empty. Please provide a valid output directory path.")
+
+            self.logger.info(f"Validated paths - model: {request.base_model_dir}, dataset: {request.dataset_dir}, output: {request.output_dir}")
+
             # Load tokenizer and model
             tokenizer = AutoTokenizer.from_pretrained(
                 request.base_model_dir, trust_remote_code=True

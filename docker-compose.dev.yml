@@ -1,0 +1,59 @@
+# Development Docker Compose Override
+# Use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Optimized for: RTX 3050 4GB Laptop, i5 11th Gen, 32GB RAM
+
+version: '3.8'
+
+services:
+  training-service:
+    environment:
+      # Development environment - Optimized for 32GB RAM system
+      - CONTAINER_MEMORY_LIMIT_GB=16  # Generous limit with 32GB RAM
+      - WORKER_MEMORY_GB=12           # Plenty of room for training
+      - OMP_NUM_THREADS=4             # i5 11th gen has 4-6 cores
+      - GPU_MEMORY_LIMIT_MB=3072      # 75% of 4GB GPU (GPU is the bottleneck)
+
+      # Development-specific settings
+      - LOG_LEVEL=DEBUG               # More verbose logging
+      - PROMETHEUS_ENABLED=false      # Disable metrics overhead
+      - MAX_TRAINING_JOBS=1           # Only 1 job at a time (GPU limited)
+
+    deploy:
+      resources:
+        limits:
+          memory: 16G  # Safe limit with 32GB system RAM
+        reservations:
+          memory: 12G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    restart: unless-stopped  # Don't auto-restart on dev machine
+
+  # Other services can use more RAM too
+  chat-comparison-service:
+    deploy:
+      resources:
+        limits:
+          memory: 6G   # Increased for 32GB system
+        reservations:
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  model-management-service:
+    deploy:
+      resources:
+        limits:
+          memory: 6G   # Increased for 32GB system
+        reservations:
+          memory: 4G
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
