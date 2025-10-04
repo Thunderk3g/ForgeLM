@@ -795,18 +795,45 @@ class TrainingService:
             if torch.cuda.is_available():
                 self.logger.info(f"GPU memory before model load: allocated={torch.cuda.memory_allocated()/1024**3:.2f}GB, reserved={torch.cuda.memory_reserved()/1024**3:.2f}GB")
 
-            # Load model and tokenizer with adaptive optimization
-            model, tokenizer = FastLanguageModel.from_pretrained(
-                model_name=request.base_model_dir,
-                max_seq_length=min(
-                    request.max_seq_length, model_config["max_seq_length"]
-                ),
-                dtype=None,  # Auto-detect optimal dtype
-                load_in_4bit=gpu_opts["load_in_4bit"],
-                load_in_8bit=gpu_opts.get("load_in_8bit", False),
-                device_map=gpu_opts["device_map"],
-                trust_remote_code=model_config["trust_remote_code"],
+            # CRITICAL FIX: Qwen models have bias terms that prevent Unsloth from patching any layers
+            # When Unsloth can't patch (0 QKV, 0 O, 0 MLP), using it causes segfault at step 0
+            # Solution: Use standard HuggingFace BitsAndBytes 4-bit instead of Unsloth
+
+            self.logger.warning("⚠️ Qwen models incompatible with Unsloth (bias terms prevent patching)")
+            self.logger.info("Using standard BitsAndBytes 4-bit quantization instead of Unsloth")
+
+            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+
+            # Determine optimal dtype
+            use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+            compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+
+            # BitsAndBytes 4-bit config for RTX 3050 4GB
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_use_double_quant=True,  # Nested quantization for memory
             )
+
+            self.logger.info(f"Loading model with BitsAndBytes 4-bit: compute_dtype={'bf16' if use_bf16 else 'fp16'}, double_quant=True")
+
+            model = AutoModelForCausalLM.from_pretrained(
+                request.base_model_dir,
+                quantization_config=bnb_config,
+                torch_dtype=compute_dtype,  # CRITICAL: Load base weights in same dtype as compute_dtype to prevent mismatch
+                device_map="auto",
+                trust_remote_code=True,
+            )
+
+            tokenizer = AutoTokenizer.from_pretrained(
+                request.base_model_dir,
+                trust_remote_code=True,
+            )
+
+            # Store the precision used for model loading to ensure training args match
+            model._bnb_precision = "bf16" if use_bf16 else "fp16"
+            self.logger.info(f"✅ Model loaded with {model._bnb_precision} precision - training args will match this")
 
             # Log memory after model load
             if torch.cuda.is_available():
@@ -815,43 +842,31 @@ class TrainingService:
             # CRITICAL FIX: Fix Qwen2.5 tokenizer configuration
             tokenizer = self.fix_qwen_tokenizer(tokenizer)
 
-            # Apply adaptive LoRA configuration with 2025 Unsloth optimizations
-            enforced_dropout = 0.0  # CRITICAL: Must be 0.0 for Unsloth kernel acceleration
+            # Apply standard PEFT LoRA (not Unsloth) for Qwen compatibility
+            from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+
             self.logger.info(
-                f"Applying Unsloth 2025 LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, "
-                f"dropout={enforced_dropout} (required for Unsloth), targets={len(lora_config['target_modules'])}"
+                f"Applying standard PEFT LoRA: r={lora_config['r']}, alpha={lora_config['lora_alpha']}, "
+                f"dropout=0.05 (standard PEFT), targets={len(lora_config['target_modules'])}"
             )
-            self.logger.info(f"LoRA target modules (QLoRA-All approach): {lora_config['target_modules']}")
-            if lora_config.get('use_rslora', False):
-                self.logger.info("✅ Using Rank-Stabilized LoRA (RSLoRA) for improved training stability")
-            if lora_config.get('use_dora', False):
-                self.logger.info("✅ Using DoRA for enhanced accuracy (2025 feature)")
-            self.logger.warning(f"CRITICAL: LoRA dropout ENFORCED to {enforced_dropout} for maximum Unsloth acceleration")
-            
-            # Enhanced LoRA configuration with 2025 Unsloth features
-            peft_kwargs = {
-                "r": lora_config["r"],
-                "target_modules": lora_config["target_modules"],
-                "lora_alpha": lora_config["lora_alpha"],
-                "lora_dropout": enforced_dropout,  # CRITICAL: 0.0 for Unsloth kernels
-                "bias": lora_config.get("bias", "none"),
-                "use_gradient_checkpointing": (
-                    "unsloth" if gpu_opts.get("gradient_checkpointing", True) else "no"
-                ),
-                "random_state": 3407,
-                "use_rslora": lora_config.get("use_rslora", False),  # 2025: RSLoRA support
-                "loftq_config": None,  # Standard setting
-            }
-            
-            # Add DoRA support for 2025 if enabled and memory allows
-            if lora_config.get("use_dora", False) and adaptive_config["effective_memory_gb"] > 8:
-                peft_kwargs["use_dora"] = True
-                self.logger.info("🚀 DoRA enabled for enhanced accuracy (Unsloth 2025)")
-            
-            model = FastLanguageModel.get_peft_model(model, **peft_kwargs)
-            
-            # Validate dropout was applied correctly
-            self._validate_lora_dropout(model, enforced_dropout)
+            self.logger.info(f"LoRA target modules: {lora_config['target_modules']}")
+
+            # Prepare model for 4-bit training
+            model = prepare_model_for_kbit_training(model)
+
+            peft_lora_config = LoraConfig(
+                r=lora_config["r"],
+                lora_alpha=lora_config["lora_alpha"],
+                target_modules=lora_config["target_modules"],
+                lora_dropout=0.05,  # Standard PEFT dropout (not 0.0 like Unsloth)
+                bias="none",
+                task_type="CAUSAL_LM",
+            )
+
+            model = get_peft_model(model, peft_lora_config)
+            model.print_trainable_parameters()
+
+            self.logger.info("✅ Standard PEFT LoRA applied successfully (no Unsloth patching required)")
 
             # Load dataset with comprehensive error handling and schema validation
             dataset = self._load_and_validate_dataset(request.dataset_dir)
@@ -862,7 +877,7 @@ class TrainingService:
             
             # Setup adaptive training arguments with training type (already defined above)
             training_args = self._create_adaptive_training_args(
-                request, task_id, adaptive_config, training_type
+                request, task_id, adaptive_config, training_type, model=model
             )
             
             # Create progress callback
@@ -1093,7 +1108,7 @@ class TrainingService:
 
             # Setup training arguments with training type (already defined above)
             training_args = self._create_adaptive_training_args(
-                request, task_id, adaptive_config, training_type
+                request, task_id, adaptive_config, training_type, model=model
             )
             sft_config = SFTConfig(
                 dataset_text_field="text",
@@ -1150,7 +1165,7 @@ class TrainingService:
             raise
 
     def _create_adaptive_training_args(
-        self, request: FineTuneRequest, task_id: str, adaptive_config: Dict[str, Any], training_type: str = "instruction"
+        self, request: FineTuneRequest, task_id: str, adaptive_config: Dict[str, Any], training_type: str = "instruction", model=None
     ):
         """Create adaptive training arguments based on hardware profile and training type
         
@@ -1175,18 +1190,27 @@ class TrainingService:
         adaptive_args = adaptive_config["training_args"]
         gpu_opts = adaptive_config["gpu_optimizations"]
         
-        # CRITICAL FIX: Replace flawed manual precision detection with Unsloth's built-in detection
-        # This prevents the "Unsloth: Model is in bfloat16 precision but you want to use float16 precision" error
-        from utils.hardware_detection import hardware_detector
-        
-        optimal_precision = self._get_optimal_precision_settings()
-        self.logger.info(
-            f"Precision detection for main training service: {optimal_precision['reason']}\n"
-            f"  Setting fp16={optimal_precision['fp16']}, bf16={optimal_precision['bf16']}"
-        )
-        
-        fp16 = optimal_precision['fp16']
-        bf16 = optimal_precision['bf16']
+        # CRITICAL FIX: Use model's actual precision instead of detection
+        # This prevents precision mismatch between model loading and training
+        if model and hasattr(model, '_bnb_precision'):
+            # Model was loaded with BitsAndBytes - use its precision
+            if model._bnb_precision == "bf16":
+                fp16, bf16 = False, True
+                optimal_precision = {'fp16': False, 'bf16': True, 'reason': 'BitsAndBytes bf16 model loading'}
+                self.logger.info(f"✅ Using model's BitsAndBytes precision: bf16=True, fp16=False")
+            else:
+                fp16, bf16 = True, False
+                optimal_precision = {'fp16': True, 'bf16': False, 'reason': 'BitsAndBytes fp16 model loading'}
+                self.logger.info(f"✅ Using model's BitsAndBytes precision: fp16=True, bf16=False")
+        else:
+            # Fallback to detection for other models
+            optimal_precision = self._get_optimal_precision_settings()
+            self.logger.info(
+                f"Precision detection for main training service: {optimal_precision['reason']}\n"
+                f"  Setting fp16={optimal_precision['fp16']}, bf16={optimal_precision['bf16']}"
+            )
+            fp16 = optimal_precision['fp16']
+            bf16 = optimal_precision['bf16']
         
         # Allow adaptive_config to explicitly override precision if needed
         if "precision" in adaptive_config:

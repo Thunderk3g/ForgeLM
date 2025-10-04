@@ -137,22 +137,26 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - NVIDIA_VISIBLE_DEVICES=0
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # Unsloth Optimizations for Windows
+      # Unsloth Optimizations for RTX 3050 4GB
       - TOKENIZERS_PARALLELISM=false
       - CUDA_LAUNCH_BLOCKING=0
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256,expandable_segments:True,backend:cudaMallocAsync
+      # CRITICAL: Disable PyTorch Inductor to prevent compilation hangs
+      - TORCH_COMPILE_DISABLE=1
+      - TORCHINDUCTOR_MAX_AUTOTUNE=0
+      - TORCHINDUCTOR_COMPILE_THREADS=1
       - TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;8.9;9.0"
       - MAX_TRAINING_JOBS=1
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
-      # Container stability environment variables for Windows
-      - CONTAINER_MEMORY_LIMIT_GB=12
-      - WORKER_MEMORY_GB=10
+      # Container stability environment variables - RTX 3050 4GB Laptop with 32GB RAM
+      - CONTAINER_MEMORY_LIMIT_GB=16
+      - WORKER_MEMORY_GB=12
       - TRITON_CACHE_DIR=/tmp/.triton_cache
       - OMP_NUM_THREADS=4
-      # GPU Orchestration for Windows native sharing
+      # GPU Orchestration for laptop GPU
       - GPU_ORCHESTRATION_ENABLED=true
       - GPU_SHARING_MODE=native
-      - GPU_MEMORY_LIMIT_MB=6144  # 75% of 8GB GPU for training
+      - GPU_MEMORY_LIMIT_MB=3072  # 75% of 4GB GPU for training
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
@@ -168,9 +172,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 12G # Adjusted for Windows GPU sharing
+          memory: 16G # RTX 3050 4GB Laptop with 32GB RAM - optimized for better performance
         reservations:
-          memory: 10G
+          memory: 12G # CRITICAL: Must reserve enough for model loading + Triton compilation
           devices:
             - driver: nvidia
               count: 1 # Shared GPU access
@@ -178,8 +182,8 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
-      timeout: 10s
-      retries: 3
+      timeout: 30s  # Increased: GPU busy during training
+      retries: 5     # Increased: Allow more failures during training
       start_period: 60s
     networks:
       - llmforge-network
@@ -204,16 +208,16 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - NVIDIA_VISIBLE_DEVICES=0
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # Unsloth Inference Optimizations for Windows
+      # Unsloth Inference Optimizations for RTX 3050 4GB
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
       - TOKENIZERS_PARALLELISM=false
       - CUDA_LAUNCH_BLOCKING=0
-      - MAX_CACHED_PAIRS=${MAX_CACHED_PAIRS:-8}
-      - MAX_HBM_GB=${MAX_HBM_GB:-2}  # Reduced for shared GPU
-      # GPU Orchestration for Windows native sharing
+      - MAX_CACHED_PAIRS=${MAX_CACHED_PAIRS:-4}
+      - MAX_HBM_GB=${MAX_HBM_GB:-1}  # Reduced for 4GB GPU
+      # GPU Orchestration for RTX 3050 4GB
       - GPU_ORCHESTRATION_ENABLED=true
       - GPU_SHARING_MODE=native
-      - GPU_MEMORY_LIMIT_MB=1536  # 18.75% of 8GB GPU for chat comparison
+      - GPU_MEMORY_LIMIT_MB=512  # ~12.5% of 4GB GPU for chat comparison
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:
@@ -327,16 +331,16 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - NVIDIA_VISIBLE_DEVICES=0
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # Unsloth Model Management Optimizations for Windows
+      # Unsloth Model Management Optimizations for RTX 3050 4GB
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
       - TOKENIZERS_PARALLELISM=false
       - CUDA_LAUNCH_BLOCKING=0
-      - MAX_CACHED_MODELS=${MAX_CACHED_MODELS:-2}
-      - CACHE_SIZE_GB=${CACHE_SIZE_GB:-4}  # Reduced for shared GPU
-      # GPU Orchestration for Windows native sharing
+      - MAX_CACHED_MODELS=${MAX_CACHED_MODELS:-1}
+      - CACHE_SIZE_GB=${CACHE_SIZE_GB:-2}  # Reduced for 4GB GPU
+      # GPU Orchestration for RTX 3050 4GB
       - GPU_ORCHESTRATION_ENABLED=true
       - GPU_SHARING_MODE=native
-      - GPU_MEMORY_LIMIT_MB=512  # 6.25% of 8GB GPU for model management
+      - GPU_MEMORY_LIMIT_MB=512  # ~12.5% of 4GB GPU for model management
       - REDIS_HOST=redis
       - REDIS_PORT=6379
     volumes:

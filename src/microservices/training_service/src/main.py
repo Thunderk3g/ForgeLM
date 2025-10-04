@@ -11,6 +11,7 @@ import signal
 import threading
 import time
 import uuid
+import json
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 
@@ -193,24 +194,42 @@ async def fine_tune(request: FineTuneRequest, background_tasks: BackgroundTasks)
         raise HTTPException(status_code=503, detail="Training service not initialized")
     
     try:
+        # Validate required fields first
+        if not request.base_model_dir:
+            training_errors_total.inc()
+            raise HTTPException(status_code=400, detail="base_model_dir is required and cannot be empty")
+
+        if not request.dataset_dir:
+            training_errors_total.inc()
+            raise HTTPException(status_code=400, detail="dataset_dir is required and cannot be empty")
+
         # Fix model path if it's pointing to base directory instead of specific model
         if request.base_model_dir == "/app/models/base":
             # Look for the actual model directory
             base_models_dir = "/app/models/base"
             if os.path.exists(base_models_dir):
-                model_subdirs = [d for d in os.listdir(base_models_dir) 
-                               if os.path.isdir(os.path.join(base_models_dir, d)) and 
+                model_subdirs = [d for d in os.listdir(base_models_dir)
+                               if os.path.isdir(os.path.join(base_models_dir, d)) and
                                os.path.exists(os.path.join(base_models_dir, d, "config.json"))]
                 if model_subdirs:
                     # Use the first available model (or could implement selection logic)
                     request.base_model_dir = os.path.join(base_models_dir, model_subdirs[0])
                     logger.info(f"Corrected model path from /app/models/base to {request.base_model_dir}")
-        
-        # Validate request
+                else:
+                    training_errors_total.inc()
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"No valid models found in {base_models_dir}. Please ensure at least one model directory contains a config.json file."
+                    )
+            else:
+                training_errors_total.inc()
+                raise HTTPException(status_code=400, detail=f"Base models directory does not exist: {base_models_dir}")
+
+        # Validate paths exist
         if not os.path.exists(request.base_model_dir):
             training_errors_total.inc()
             raise HTTPException(status_code=400, detail=f"Base model directory not found: {request.base_model_dir}")
-        
+
         if not os.path.exists(request.dataset_dir):
             training_errors_total.inc()
             raise HTTPException(status_code=400, detail=f"Dataset directory not found: {request.dataset_dir}")
@@ -270,6 +289,80 @@ async def get_training_logs(task_id: str):
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     except Exception as e:
         logger.error(f"Log streaming failed for {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/logs/{task_id}")
+async def get_training_logs_sse(task_id: str):
+    """Server-Sent Events endpoint for real-time training logs"""
+    if not training_service:
+        raise HTTPException(status_code=503, detail="Training service not initialized")
+    
+    try:
+        async def sse_log_generator():
+            # Send connection event
+            yield "event: connected\ndata: {\"message\": \"Connected to training logs\"}\n\n"
+            
+            # Send heartbeat periodically and stream logs
+            import asyncio
+            last_heartbeat = time.time()
+            
+            async for log_entry in training_service.stream_logs(task_id):
+                try:
+                    # Parse log entry to determine event type
+                    if isinstance(log_entry, str):
+                        # Try to parse as JSON, fallback to plain text
+                        try:
+                            import json
+                            log_data = json.loads(log_entry)
+                            event_type = log_data.get('type', 'log')
+                        except:
+                            # Plain text log - wrap in proper format
+                            log_data = {
+                                "timestamp": time.strftime("%H:%M:%S"),
+                                "type": "info",
+                                "message": log_entry.strip()
+                            }
+                            event_type = "log"
+                    else:
+                        log_data = log_entry
+                        event_type = log_data.get('type', 'log')
+                    
+                    # Send as proper SSE event
+                    yield f"event: {event_type}\ndata: {json.dumps(log_data)}\n\n"
+                    
+                    # Send heartbeat every 30 seconds
+                    current_time = time.time()
+                    if current_time - last_heartbeat > 30:
+                        yield "event: heartbeat\ndata: {\"timestamp\": " + str(current_time) + "}\n\n"
+                        last_heartbeat = current_time
+                        
+                except Exception as log_error:
+                    logger.error(f"Error processing log entry: {log_error}")
+                    error_data = {
+                        "timestamp": time.strftime("%H:%M:%S"),
+                        "type": "error", 
+                        "message": f"Log processing error: {str(log_error)}"
+                    }
+                    yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
+            
+            # Send completion event
+            yield "event: complete\ndata: {\"message\": \"Training completed\"}\n\n"
+        
+        return StreamingResponse(
+            sse_log_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Headers": "Cache-Control"
+            }
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    except Exception as e:
+        logger.error(f"SSE Log streaming failed for {task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

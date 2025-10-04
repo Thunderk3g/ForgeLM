@@ -1,0 +1,249 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmforge-training-service
+  namespace: llmforge
+  labels:
+    app: llmforge-training
+    component: ml-training
+    tier: backend
+spec:
+  replicas: 1  # Single replica for GPU workloads
+  selector:
+    matchLabels:
+      app: llmforge-training
+  template:
+    metadata:
+      labels:
+        app: llmforge-training
+        component: ml-training
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      # GPU node selection
+      nodeSelector:
+        node.kubernetes.io/instance-type: "g4dn.xlarge"  # Or your GPU instance type
+        # Alternatively: nvidia.com/gpu: "true"
+
+      # Tolerations for GPU taints
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+
+      containers:
+      - name: training-service
+        image: llmforge-training:latest
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 8001
+          name: http
+          protocol: TCP
+
+        env:
+        # Service configuration
+        - name: SERVICE_HOST
+          value: "0.0.0.0"
+        - name: SERVICE_PORT
+          value: "8001"
+        - name: ORCHESTRATOR_URL
+          value: "http://llmforge-orchestrator:8080"
+
+        # GPU Configuration - Production
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: "all"
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility"
+
+        # Memory Configuration - DYNAMIC based on node
+        - name: CONTAINER_MEMORY_LIMIT_GB
+          valueFrom:
+            resourceFieldRef:
+              containerName: training-service
+              resource: limits.memory
+              divisor: "1Gi"  # Convert to GB
+        - name: WORKER_MEMORY_GB
+          valueFrom:
+            resourceFieldRef:
+              containerName: training-service
+              resource: requests.memory
+              divisor: "1Gi"
+
+        # CUDA Optimizations
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        - name: CUDA_LAUNCH_BLOCKING
+          value: "0"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "max_split_size_mb:512,expandable_segments:True,backend:cudaMallocAsync"
+        - name: OMP_NUM_THREADS
+          value: "8"  # More CPUs in production
+
+        # GPU Orchestration - Kubernetes native
+        - name: GPU_ORCHESTRATION_ENABLED
+          value: "true"
+        - name: GPU_SHARING_MODE
+          value: "kubernetes"  # Use K8s GPU scheduling
+        - name: REDIS_HOST
+          value: "llmforge-redis"
+        - name: REDIS_PORT
+          value: "6379"
+
+        # Secrets
+        - name: HUGGINGFACE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: llmforge-secrets
+              key: huggingface-token
+              optional: true
+
+        # Resource allocation - ADJUST FOR YOUR GPU INSTANCE
+        resources:
+          limits:
+            memory: "32Gi"      # g4dn.xlarge has 32GB RAM
+            nvidia.com/gpu: 1   # Request 1 GPU
+          requests:
+            memory: "24Gi"      # Reserve 24GB
+            cpu: "4"            # Reserve 4 CPUs
+            nvidia.com/gpu: 1
+
+        # Volume mounts
+        volumeMounts:
+        - name: models
+          mountPath: /app/models
+        - name: datasets
+          mountPath: /app/datasets
+        - name: data
+          mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
+        - name: cache
+          mountPath: /home/llmforge/.cache
+
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        # Lifecycle hooks
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]  # Graceful shutdown
+
+      # Volumes
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: llmforge-models-pvc
+      - name: datasets
+        persistentVolumeClaim:
+          claimName: llmforge-datasets-pvc
+      - name: data
+        persistentVolumeClaim:
+          claimName: llmforge-data-pvc
+      - name: logs
+        emptyDir:
+          sizeLimit: 10Gi
+      - name: cache
+        emptyDir:
+          sizeLimit: 20Gi  # Larger for model downloads
+
+      # Pod settings
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 60  # Allow training to finish
+
+      # Security context
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsNonRoot: true
+
+---
+# Alternative: High-Memory GPU Instance (e.g., p3.2xlarge)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmforge-training-service-gpu-large
+  namespace: llmforge
+spec:
+  # ... same as above but with:
+  template:
+    spec:
+      nodeSelector:
+        node.kubernetes.io/instance-type: "p3.2xlarge"  # 61GB RAM, V100 16GB
+
+      containers:
+      - name: training-service
+        resources:
+          limits:
+            memory: "48Gi"      # p3.2xlarge has 61GB RAM
+            nvidia.com/gpu: 1   # V100 16GB
+          requests:
+            memory: "40Gi"
+            cpu: "8"
+            nvidia.com/gpu: 1
+
+---
+# Service for training-service
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmforge-training
+  namespace: llmforge
+spec:
+  selector:
+    app: llmforge-training
+  ports:
+  - name: http
+    port: 8001
+    targetPort: 8001
+    protocol: TCP
+  type: ClusterIP
+
+---
+# HorizontalPodAutoscaler (optional, for CPU-based scaling)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: llmforge-training-hpa
+  namespace: llmforge
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: llmforge-training-service
+  minReplicas: 1
+  maxReplicas: 3  # Multiple GPU nodes
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
