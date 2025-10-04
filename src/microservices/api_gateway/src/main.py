@@ -41,6 +41,8 @@ SERVICE_ROUTES = {
     # Training service routes
     '/api/v1/fine-tune': 'llmforge-training',
     '/api/v1/training': 'llmforge-training',
+    '/api/v1/logs': 'llmforge-training',  # Log streaming endpoint
+    '/api/v1/status': 'llmforge-training',  # Status endpoint  
     '/fine-tune': 'llmforge-training',  # Backward compatibility
     
     # Chat comparison service routes  
