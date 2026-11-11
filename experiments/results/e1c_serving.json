@@ -1,0 +1,93 @@
+{
+  "experiment": "E1c serving cost of the full-data Banking77 students, measured alone",
+  "serving": [
+    {
+      "student": "tfidf + LR",
+      "accuracy": 0.9123,
+      "artefact_mb": 11.07,
+      "note": "",
+      "latency_ms_p50": 9.63,
+      "latency_ms_p95": 15.927,
+      "throughput_per_s": 4037.978,
+      "batch_size": 32,
+      "n_items": 400
+    },
+    {
+      "student": "static potion-32M + LR",
+      "accuracy": 0.9101,
+      "artefact_mb": 0.15,
+      "note": "size is the classifier head only; the shared embedding model is separate",
+      "latency_ms_p50": 0.219,
+      "latency_ms_p95": 0.296,
+      "throughput_per_s": 13553.39,
+      "batch_size": 32,
+      "n_items": 400
+    },
+    {
+      "student": "frozen bge-small + LR",
+      "accuracy": 0.9315,
+      "artefact_mb": 0.11,
+      "note": "size is the classifier head only; the shared embedding model is separate",
+      "latency_ms_p50": 11.135,
+      "latency_ms_p95": 17.454,
+      "throughput_per_s": 120.374,
+      "batch_size": 32,
+      "n_items": 400
+    },
+    {
+      "student": "fine-tuned MiniLM-L6 (22M)",
+      "accuracy": 0.9052,
+      "artefact_mb": 91.7,
+      "note": "",
+      "latency_ms_p50": 6.197,
+      "latency_ms_p95": 8.028,
+      "throughput_per_s": 421.629,
+      "batch_size": 32,
+      "n_items": 400
+    },
+    {
+      "student": "fine-tuned ModernBERT-base (149M)",
+      "accuracy": 0.9308,
+      "artefact_mb": 602.26,
+      "note": "",
+      "latency_ms_p50": 44.127,
+      "latency_ms_p95": 55.199,
+      "throughput_per_s": 24.121,
+      "batch_size": 32,
+      "n_items": 400
+    }
+  ],
+  "environment": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ram_gb": 15.71,
+    "device_class": "cpu",
+    "cpu_flags": [
+      "avx",
+      "avx2",
+      "avx512f",
+      "avx512bw",
+      "avx512_vnni",
+      "avx_vnni",
+      "amx_int8",
+      "amx_bf16",
+      "fma",
+      "f16c"
+    ],
+    "python": "3.13.18",
+    "packages": {
+      "torch": "2.15.0",
+      "transformers": "5.22.2",
+      "peft": "0.21.2",
+      "sentence_transformers": "6.2.0",
+      "model2vec": "0.10.0",
+      "onnxruntime": "1.29.0",
+      "sklearn": "1.9.1",
+      "lightgbm": "4.7.0",
+      "interpret": "0.7.8",
+      "tabicl": "2.2.0"
+    },
+    "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"
+  },
+  "generated_utc": "2026-11-11T16:54:55Z"
+}

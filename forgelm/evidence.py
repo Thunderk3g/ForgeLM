@@ -33,10 +33,10 @@ EVIDENCE: Dict[str, dict] = {
     "e1-static": {
         "level": "measured",
         "claim": "A static-embedding student (potion-base-32M with a logistic-regression head) reached 78.1% / 87.7% / "
-                 "91.0% at 8 / 32 / all labels per class and served at about 0.14 ms per text and 18,000 texts per second "
-                 "on CPU with no torch at inference, 2 to 8 points below the frozen encoder at roughly 90 times its "
-                 "single-text speed.",
-        "source": "experiments/results/e1_banking77_ladder.json",
+                 "91.0% at 8 / 32 / all labels per class and served at 0.14-0.22 ms per text and 13,000-18,000 texts per "
+                 "second on CPU (two runs on a shared VM) with no torch at inference, 2 to 8 points below the frozen "
+                 "encoder at roughly 50-90 times its single-text speed.",
+        "source": "experiments/results/e1_banking77_ladder.json ; experiments/results/e1c_serving.json",
     },
     "e1-zeroshot": {
         "level": "measured",
