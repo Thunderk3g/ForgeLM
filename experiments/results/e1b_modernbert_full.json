@@ -1,0 +1,82 @@
+{
+  "experiment": "E1 student ladder on Banking77",
+  "dataset": {
+    "name": "PolyAI/banking77",
+    "licence": "CC BY 4.0",
+    "train_pool": 9618,
+    "calibration_anchor": 385,
+    "test": 3080,
+    "classes": 77
+  },
+  "embedding_models": {
+    "static": "minishlab/potion-base-32M (MIT)",
+    "encoder": "BAAI/bge-small-en-v1.5 (MIT)",
+    "finetuned": "sentence-transformers/all-MiniLM-L6-v2 (Apache-2.0)"
+  },
+  "embed_seconds_per_1k_texts": {},
+  "rows": [
+    {
+      "student": "fine-tuned ModernBERT-base (149M)",
+      "labels_per_class": "full",
+      "seed": 0,
+      "train_seconds": 2979.91,
+      "temperature": 1.074,
+      "ece_calibrated": 0.0193027466845627,
+      "nll_calibrated": 0.2657611885443598,
+      "n": 3080,
+      "accuracy": 0.9308441558441558,
+      "macro_precision": 0.9334539130849503,
+      "macro_recall": 0.9308441558441558,
+      "macro_f1": 0.9307588015151889,
+      "ece": 0.022834917748129215,
+      "brier": 0.10595601882076378,
+      "nll": 0.2697945291926305,
+      "epochs": 3
+    }
+  ],
+  "serving": [
+    {
+      "student": "fine-tuned ModernBERT-base (149M)",
+      "artefact_mb": 602.26,
+      "note": "",
+      "latency_ms_p50": 41.414,
+      "latency_ms_p95": 49.725,
+      "throughput_per_s": 56.977,
+      "batch_size": 32,
+      "n_items": 400
+    }
+  ],
+  "environment": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ram_gb": 15.71,
+    "device_class": "cpu",
+    "cpu_flags": [
+      "avx",
+      "avx2",
+      "avx512f",
+      "avx512bw",
+      "avx512_vnni",
+      "avx_vnni",
+      "amx_int8",
+      "amx_bf16",
+      "fma",
+      "f16c"
+    ],
+    "python": "3.13.18",
+    "packages": {
+      "torch": "2.15.0",
+      "transformers": "5.22.2",
+      "peft": "0.21.2",
+      "sentence_transformers": "6.2.0",
+      "model2vec": "0.10.0",
+      "onnxruntime": "1.29.0",
+      "sklearn": "1.9.1",
+      "lightgbm": "4.7.0",
+      "interpret": "0.7.8",
+      "tabicl": "2.2.0"
+    },
+    "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"
+  },
+  "generated_utc": "2026-11-11T15:45:27Z"
+}

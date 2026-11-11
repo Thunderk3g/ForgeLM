@@ -53,6 +53,9 @@ Serving cost of the full-data students (PyTorch / numpy, before any ONNX export)
 | frozen bge-small + LR | 93.1% | 12.94 | 17.33 | 146 | 0.1 | size is the classifier head only; the shared embedding model is separate |
 | fine-tuned MiniLM-L6 (22M) | 90.5% | 5.50 | 7.57 | 512 | 91.7 |  |
 | tfidf + LR | 91.2% | 4.72 | 10.05 | 4,131 | 11.1 |  |
+| fine-tuned ModernBERT-base (149M) | 93.1% | 41.41 | 49.73 | 57 | 602.3 |  |
+
+ModernBERT-base (149M), fine-tuned for 3 epochs on the full set in a separate run: 93.1% accuracy, ECE 0.023 → 0.019, 50 minutes of CPU training.
 
 ## E2. A local LLM as teacher, with no human training labels
 

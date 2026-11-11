@@ -24,7 +24,8 @@ def test_measured_evidence_points_at_a_result_file_that_exists():
     root = Path(__file__).resolve().parents[2]
     for key, entry in EVIDENCE.items():
         if entry["level"] == "measured":
-            assert (root / entry["source"]).is_file(), f"{key}: {entry['source']} missing"
+            for source in entry["source"].split(";"):
+                assert (root / source.strip()).is_file(), f"{key}: {source.strip()} missing"
 
 
 def test_weakest_level_wins():

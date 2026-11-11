@@ -25,8 +25,10 @@ EVIDENCE: Dict[str, dict] = {
         "claim": "On Banking77 (77 intents, 3,080 test texts) a frozen 33M encoder with a logistic-regression head was the "
                  "most accurate LLM-free student at every data size tested: 85.8% with 8 labels per class, 90.9% with 32, "
                  "93.1% with all. TF-IDF trailed by 15 points at 8 labels but by only 2 with all labels (91.2%). A 22M "
-                 "encoder fine-tuned end to end with fixed, untuned settings never led (78.3%, 88.5%, 90.5%).",
-        "source": "experiments/results/e1_banking77_ladder.json",
+                 "encoder fine-tuned end to end with fixed, untuned settings never led (78.3%, 88.5%, 90.5%). A "
+                 "fine-tuned ModernBERT-base (149M) only matched the frozen encoder with all labels (93.1%), after "
+                 "50 minutes of CPU training against 38 seconds, at about 3x its latency and with a 602 MB artefact.",
+        "source": "experiments/results/e1_banking77_ladder.json ; experiments/results/e1b_modernbert_full.json",
     },
     "e1-static": {
         "level": "measured",
