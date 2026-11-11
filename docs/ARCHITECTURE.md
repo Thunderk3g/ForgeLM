@@ -64,7 +64,7 @@ Found by reading the code. Items marked **fixed** were changed in this pass.
 
   | File | Copies | Lines each |
   |---|---|---|
-  | `service_orchestrator.py` | 5 (a 6th differs) | 582 |
+  | `service_orchestrator.py` | 5 (two more differ) | 582 |
   | `gpu_orchestrator.py`, `gpu_client.py`, `gpu_monitoring.py`, `gpu_inference_wrapper.py` | 4 each | 303 to 489 |
   | `research_logger.py` | 3 (a 4th differs) | 485 |
   | `memory.py` | 5 | 137 |
@@ -74,7 +74,7 @@ Found by reading the code. Items marked **fixed** were changed in this pass.
   Counting every byte-identical Python file of 20 lines or more, 13 groups of
   files were duplicated, about 11,000 of the 42,000 Python lines. (fixed: one
   installable package, `src/shared/llmforge_common`, holds each module once;
-  the 60 former copies are 13-line shims that keep every import path working,
+  the 60 former copies are 13- to 17-line shims that keep every import path working,
   and every service image installs the package. About 14,500 lines removed. A
   test fails if two byte-identical Python files of 20+ lines reappear.)
   Near-duplicates that have genuinely diverged were left alone: the three
@@ -171,7 +171,7 @@ without any of them.
 - **training-service** imports one module, `utils/factory_bridge.py`. It
   builds the `peft` config from the request, picks device and precision for
   any accelerator vendor, and adds a vendor-neutral `factory` block to
-  `GET /hardware-profile`. If `forgelm` is not installed the bridge returns
+  `GET /system/hardware`. If `forgelm` is not installed the bridge returns
   the previous hard-coded behaviour.
 - **factory-service** (new, port 8006, CPU only, no ML base image) exposes the
   core over HTTP under `/api/v1/factory`: `hardware`, `plan`, `usecases`,
@@ -186,9 +186,8 @@ without any of them.
 
 | Area | Status |
 |---|---|
-| `forgelm` core | unit tests in `tests/factory/` (about 560), no GPU or network needed |
-| Student ladder, distillation, tabular, cascades, contract screening | measured on CPU; see `experiments/RESULTS.md` (E1, E2, E4, E5, E6) |
-| ONNX export / int8 (E3), CPU fine-tune to GGUF (E7), prompt-or-train (E8), retrieval (E9) | scripted and smoke-tested; full runs are part of `experiments/run_all.sh` and land in `RESULTS.md` when complete |
+| `forgelm` core | unit tests in `tests/factory/` (about 590), no GPU needed; two tests marked `slow` download small models and are skipped by default |
+| Student ladder, distillation, ONNX export / int8, tabular, cascades, contract screening, CPU fine-tune to GGUF, prompt-or-train, retrieval | measured on CPU; see `experiments/RESULTS.md` (E1-E9) |
 | factory-service | FastAPI test client; image built and exercised with curl in a container (all endpoints, non-root user) |
 | api-gateway factory routing | path rule unit-tested against every existing route; not run behind a live gateway |
 | training-service changes | unit tests with stubbed GPU libraries. **Not run end to end**: no GPU, Unsloth or Redis here |

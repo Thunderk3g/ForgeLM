@@ -27,8 +27,10 @@ EVIDENCE: Dict[str, dict] = {
                  "93.1% with all. TF-IDF trailed by 15 points at 8 labels but by only 2 with all labels (91.2%). A 22M "
                  "encoder fine-tuned end to end with fixed, untuned settings never led (78.3%, 88.5%, 90.5%). A "
                  "fine-tuned ModernBERT-base (149M) only matched the frozen encoder with all labels (93.1%), after "
-                 "50 minutes of CPU training against 38 seconds, at about 3x its latency and with a 602 MB artefact.",
-        "source": "experiments/results/e1_banking77_ladder.json ; experiments/results/e1b_modernbert_full.json",
+                 "50 minutes of CPU training against 38 seconds, at 3-4x its single-text latency (41-44 against "
+                 "11-13 ms over two runs) and with a 602 MB artefact.",
+        "source": "experiments/results/e1_banking77_ladder.json ; experiments/results/e1b_modernbert_full.json ; "
+                  "experiments/results/e1c_serving.json",
     },
     "e1-static": {
         "level": "measured",
@@ -71,11 +73,13 @@ EVIDENCE: Dict[str, dict] = {
     },
     "e4-tabular": {
         "level": "measured",
-        "claim": "On UCI credit-default and census-income data (5,000-row test sets, 3 draws per size, library "
-                 "defaults), the in-context model TabICL was best or tied from 100 to 2,000 training rows but led an "
-                 "Explainable Boosting Machine by at most 0.02 AUC, inside the seed spread from 500 rows up, and took "
-                 "24-51 s to score 5,000 rows on CPU. The EBM was at or near the top at every size up to 10,000 rows "
-                 "and well calibrated. LightGBM at defaults had ECE 0.11-0.18 with 2,000 rows or fewer.",
+        "claim": "On UCI credit-default and census-income data (5,000-row test sets, 3 draws per size, fixed "
+                 "untuned settings), the in-context model TabICL was best or tied from 100 to 2,000 training rows. "
+                 "It led an Explainable Boosting Machine by up to 0.033 AUC at 100 rows and by 0.01 or less from 500 "
+                 "rows up, inside the seed spread, and took 24-51 s to score 5,000 rows on CPU. The EBM was first or "
+                 "second and well calibrated at every size from 500 to 10,000 rows, but fourth of five on "
+                 "census-income at 100 rows (0.823 against 0.860 for logistic regression). Untuned LightGBM had ECE "
+                 "0.08-0.18 with 2,000 rows or fewer.",
         "source": "experiments/results/e4_tabular.json",
     },
     "e5-cascade": {
@@ -83,9 +87,10 @@ EVIDENCE: Dict[str, dict] = {
         "claim": "With calibrated full-data Banking77 students and a confidence threshold chosen on 385 held-out "
                  "examples, the frozen-encoder student answered 92.7% of test texts at 96.1% accuracy (target 97%) and "
                  "72.7% at 99.1% (target 99%); targets were met to within about 1.5 points, so a small anchor gives a "
-                 "noisy threshold. Escalating the uncertain items to a 1.5B local LLM lowered accuracy in every "
-                 "configuration, because that LLM was less accurate than the student even on the items the student "
-                 "was unsure about.",
+                 "noisy threshold. Escalating the uncertain items to a 1.5B local LLM lowered accuracy in 13 of 15 "
+                 "student and target settings and never raised it (the other two escalated 7 and 15 items, on "
+                 "which both models scored the same), because that LLM was never more accurate than the student, "
+                 "even on the items the student was unsure about.",
         "source": "experiments/results/e5_cascade.json",
     },
     "e6-screening": {

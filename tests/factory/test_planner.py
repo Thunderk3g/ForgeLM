@@ -87,7 +87,7 @@ def test_deployment_differs_from_training_hardware():
     assert result.hardware_class == "nvidia" and result.deploy_class == "cpu"
     text = " ".join(result.deployment)
     assert "reduce_range" in text  # laptop CPU has no VNNI
-    assert "only TF-IDF and static embeddings" in text
+    assert "only static embeddings met it" in text and "TF-IDF took" in text  # E1: TF-IDF is 4.7-9.6 ms per text
 
 
 def test_on_prem_and_cascade_constraints():

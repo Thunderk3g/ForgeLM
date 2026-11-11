@@ -20,7 +20,7 @@ needs before any compute is spent.
 ## Quick start: the core, on any machine
 
 ```bash
-pip install -e ".[classify,tabular,train,api,dev]"
+pip install -e ".[classify,tabular,train,generative,retrieval,api,dev]"
 ```
 
 ```bash
@@ -80,6 +80,9 @@ forgelm finetune --data train.jsonl --base-model HuggingFaceTB/SmolLM2-360M-Inst
 ```bash
 forgelm export-gguf --model runs/intent/merged --quant Q4_K_M --fetch-converter --out runs/intent/gguf
 ```
+
+The export step needs the `export` extra (`pip install -e ".[export]"`), which
+pins the `gguf` package to the same llama.cpp release as the converter.
 
 `export-gguf` checks that the chat template stored in the GGUF file renders
 the same prompt as the Hugging Face tokenizer, the usual silent failure after
@@ -180,7 +183,8 @@ The React dashboard is in `frontend/` (`npm install --legacy-peer-deps` because 
 existing peer-dependency conflict, then `npm run dev`); its
 Factory page covers hardware, planning, classifier training and call review. The
 GPU-backed services expect an NVIDIA GPU and the NVIDIA Container Toolkit; the
-factory service does not. Set `HUGGINGFACE_TOKEN` in `.env` for gated models.
+factory service does not. Set `HF_TOKEN` in `.env` for gated models (the older
+`HUGGINGFACE_TOKEN` name is still accepted).
 
 Factory endpoints, through the gateway at `/api/v1/factory`:
 
@@ -188,7 +192,7 @@ Factory endpoints, through the gateway at `/api/v1/factory`:
 |---|---|
 | `GET /hardware` | probe this machine, or describe a reference profile |
 | `POST /plan` | plan for a task, data regime and constraints |
-| `POST /classifiers` | train an LLM-free classifier |
+| `POST /classifiers` | train an LLM-free classifier (synchronous; the gateway allows `GATEWAY_LONG_REQUEST_TIMEOUT_S`, default 30 minutes, for this route only) |
 | `POST /classifiers/{name}/predict` | classify, with an abstention threshold |
 | `GET /classifiers/{name}` | run record and model card |
 | `POST /generative/advice` | backend, memory estimate and PEFT config for an LLM fine-tune |
@@ -211,7 +215,9 @@ Factory service settings (environment variables):
 python -m pytest tests/factory -q
 ```
 
-The factory tests need no GPU, network or model downloads.
+The factory tests need no GPU, network or model downloads. Two tests marked
+`slow` download small models; they are skipped by default and run with
+`-m slow`.
 
 ```bash
 bash experiments/run_all.sh
@@ -223,7 +229,7 @@ python experiments/report.py
 
 `run_all.sh` runs every experiment whose result file is missing, so an
 interrupted run resumes where it stopped (`FORCE=1` re-runs everything; the
-full set takes about four hours on four CPU cores, and models and datasets
+full set takes about five hours on four CPU cores, and models and datasets
 download from the Hugging Face Hub). `report.py` regenerates
 `experiments/RESULTS.md` from the result files.
 
@@ -231,8 +237,10 @@ download from the Hugging Face Hub). `report.py` regenerates
 
 The `forgelm` core, the factory service and the experiments were built and
 run on a CPU-only machine. The changes to the GPU training service compile and
-have unit tests but have not been run on a GPU. Docker images were not
-rebuilt. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full list.
+have unit tests but have not been run on a GPU. The factory-service, base and
+gateway images were built and run; images that need the Debian `apt` layer
+were built without it, because this sandbox blocks the package mirror, and the
+CUDA images were not built. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full list.
 
 ## Licence
 

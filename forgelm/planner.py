@@ -256,8 +256,9 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
     # ---- deployment ------------------------------------------------------
     dcls = deploy.device_class
     if c.max_latency_ms is not None and c.max_latency_ms < 2 and dcls == "cpu":
-        plan.deployment.append(f"latency budget {c.max_latency_ms} ms on CPU: only TF-IDF and static embeddings "
-                               "meet it; a transformer encoder will not")
+        plan.deployment.append(f"latency budget {c.max_latency_ms} ms per text on CPU: in E1 only static embeddings "
+                               "met it (0.14-0.22 ms). TF-IDF took 4.7-9.6 ms per single text (well under 1 ms per "
+                               "item only in batches) and the smallest fine-tuned encoder 2.1 ms as ONNX fp32")
         plan.warnings.append("latency figures were measured on one 4-core x86 machine; re-measure on the target")
     if dcls == "cpu":
         plan.deployment.append("static / TF-IDF students: serve the numpy head directly (no torch, no ONNX)")
@@ -275,7 +276,8 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
                        "threshold_for_accuracy on validation -> simulate_cascade",
                        "keeps the LLM for the minority of items the small model is unsure about, and only "
                        "helps if the larger model is more accurate on exactly those items: in the measurement "
-                       "here, escalating to a 1.5B local LLM lowered accuracy at every threshold",
+                       "here, escalating to a 1.5B local LLM never raised accuracy and lowered it in 13 of 15 "
+                       "settings",
                        ["e5-cascade", "cascade-negative"]))
 
     plan.guardrails += [
@@ -315,7 +317,17 @@ def _plan_tabular(task: TaskSpec, c: Constraints, hw: HardwareProfile, deploy: H
                 {"what": r["model"].strip("()"), "why": r["why"]} if r["model"].startswith("(excluded")
                 else f"{r['model'].strip('()')}: {r['why']}")
             continue
-        plan.steps.append(_step(hw, f"{r['model']} ({r['role']})", f"tabular.run_ladder(models=['{r['model']}'])",
+        if r["model"] in tabular.AVAILABLE:
+            action = f"tabular.run_ladder(models=['{r['model']}'])"
+        elif r["model"].startswith("tabpfn"):
+            action = ("tabpfn.TabPFNClassifier with a pinned checkpoint, scored on the same split as "
+                      "tabular.run_ladder (run_ladder does not run it)")
+        elif r["model"].startswith("text embeddings"):
+            action = ("embed the free-text columns, append them as features, then "
+                      "tabular.run_ladder(models=['lightgbm'])")
+        else:
+            action = r["model"]
+        plan.steps.append(_step(hw, f"{r['model']} ({r['role']})", action,
                                 r["why"], ev.get(r["model"], []), [pkg[r["model"]]] if r["model"] in pkg else []))
     plan.deployment.append("GBDT / linear / EBM: serve the native library on CPU; no accelerator needed")
     plan.deployment.append("in-context models keep the training rows (or a cache of them) in the serving "
@@ -404,7 +416,7 @@ def _plan_document_qa(task: TaskSpec, c: Constraints, hw: HardwareProfile, deplo
                    "forgelm.retrieval.BM25Index",
                    "about 0.4 ms per query and no model, for when an encoder cannot run on the target; "
                    "noticeably weaker on paraphrased questions",
-                   ["e9-retrieval"]))
+                   ["e9-retrieval"], ["scipy"]))
     S.append(_step(hw, "compact classifiers around the retriever",
                    "FineTunedStudent / EmbeddingStudent for obligation-sentence detection, document routing, "
                    "query intent",

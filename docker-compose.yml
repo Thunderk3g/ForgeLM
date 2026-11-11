@@ -102,6 +102,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - RATE_LIMIT_REQUESTS_PER_MINUTE=1000
       - CORS_ORIGINS=*
+      # Timeout for synchronous factory classifier training through the gateway (seconds).
+      - GATEWAY_LONG_REQUEST_TIMEOUT_S=${GATEWAY_LONG_REQUEST_TIMEOUT_S:-1800}
     volumes:
       - ./logs:/app/logs
     depends_on:
@@ -150,6 +152,7 @@ services:
       # Hold the Redis-backed cross-service GPU lock for each fine-tuning job (see .env.example).
       - TRAINING_USE_GPU_LOCK=${TRAINING_USE_GPU_LOCK:-false}
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
+      - HF_TOKEN=${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}
       # Container stability environment variables - RTX 3050 4GB Laptop with 32GB RAM
       - CONTAINER_MEMORY_LIMIT_GB=16
       - WORKER_MEMORY_GB=12
@@ -204,6 +207,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8002
+      - HF_TOKEN=${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}
       - SERVICE_ADVERTISED_HOST=llmforge-chat-comparison
       - ORCHESTRATOR_URL=http://orchestrator:8080
       # Windows GPU Configuration (Shared GPU access)
@@ -293,6 +297,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8006
+      - HF_TOKEN=${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}
       - FACTORY_MODELS_DIR=/app/models/factory
       - HF_HOME=/app/models/hf_cache
       # Optional limits and allow-list; see .env.example. Unset means the service defaults.
@@ -359,6 +364,7 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8005
+      - HF_TOKEN=${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}
       - SERVICE_ADVERTISED_HOST=llmforge-model-management
       - ORCHESTRATOR_URL=http://orchestrator:8080
       # Windows GPU Configuration (Shared GPU access)

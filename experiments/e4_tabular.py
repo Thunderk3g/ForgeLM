@@ -10,8 +10,9 @@ Datasets (binary targets)
 Protocol
   * A fixed random 5,000-row test set per dataset (not stratified).
   * Training sets of 100, 500, 2,000 and 10,000 rows, 3 seeds each.
-  * Default hyper-parameters throughout (no search), so this compares
-    out-of-the-box behaviour. A tuned GBDT would score somewhat higher.
+  * Fixed settings chosen in advance in forgelm.tabular.make_model, no
+    search, so this compares untuned models. A tuned GBDT would score
+    somewhat higher.
   * TabICL runs on CPU; it is skipped at 10,000 rows if --tabicl-max is lower.
 """
 
@@ -70,7 +71,7 @@ write_result("e4_tabular", {
     "experiment": "E4 tabular ladder: logistic regression, GBDT, EBM, TabICL",
     "datasets": {"credit_default": "scikit-learn/credit-card-clients (UCI default of credit card clients)",
                  "census_income": "scikit-learn/adult-census-income (UCI Adult)"},
-    "test_rows": 5000, "seeds": args.seeds, "hyperparameters": "library defaults, no search",
+    "test_rows": 5000, "seeds": args.seeds, "hyperparameters": "fixed settings chosen in advance in forgelm.tabular.make_model, no search",
     "tabicl": {"checkpoint": "jingang/TabICL-clf (default of the tabicl package)", "licence": "BSD-3-Clause",
                "device": "cpu"},
     "summary": summary, "rows": rows,

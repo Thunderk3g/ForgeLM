@@ -10,7 +10,7 @@ Read `docs/ARCHITECTURE.md` first.
 - Slow tests that download a small model: `python -m pytest tests/factory -q -m slow`
 - Hardware report: `python -m forgelm doctor`
 - Experiments: `bash experiments/run_all.sh` (skips steps whose result file exists; `FORCE=1` re-runs),
-  then `python experiments/report.py`. A full run takes about four hours: start it detached
+  then `python experiments/report.py`. A full run takes about five hours: start it detached
   (`setsid nohup ... &`), because tool sessions stop background commands after two hours.
 
 ## Conventions
@@ -31,7 +31,15 @@ Read `docs/ARCHITECTURE.md` first.
 
 ## Known debt
 
-- Many files under `src/microservices/*/src/{common,utils,services}` are
-  byte-identical copies of each other. Change all copies or none.
+- Modules the services share live once, in `src/shared/llmforge_common`. The
+  same-named files under `src/microservices/*/src/{common,utils,services,models,config}`
+  and `src/{common,utils,config}` are short shims that import it: edit the
+  package, not the shims. A test fails if byte-identical copies reappear.
+- Near-duplicates that have diverged remain: the three `model_service.py` files,
+  the training service's and the orchestrator's `service_orchestrator.py`, the
+  visualization `research_logger.py`, the data-generation `schemas.py`, and the
+  two training paths (`training_service.py`, `training_service_core.py`; shared
+  helpers in `services/training_common.py`). `model_pairs.yaml` still exists in
+  five identical copies: change all or none.
 - GPU training paths cannot be run in a CPU-only environment. Say so when
   changing them.

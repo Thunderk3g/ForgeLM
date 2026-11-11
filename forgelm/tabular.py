@@ -202,11 +202,12 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
     else:
         add("logreg", "baseline", "always fit; cheap, calibrated, exposes leakage when it scores too well")
         add("lightgbm", "baseline", "tuned GBDT is the bar every newer model must clear"
-            + ("; at library defaults it was badly calibrated with this little data (ECE 0.11-0.18 in E4), "
+            + ("; untuned, it was badly calibrated with this little data (ECE 0.08-0.18 in E4), "
                "so tune it or calibrate it before reading its probabilities" if n_rows <= 2_000 else ""))
         add("ebm", "candidate",
-            "at or within noise of the best model at every size measured (100 to 10,000 rows), well "
-            "calibrated, instant to score, and exactly explainable: often the model to ship")
+            "at or within noise of the best model from 500 to 10,000 rows in E4 (at 100 rows it trailed by "
+            "up to 0.04 AUC), well calibrated there, instant to score, and exactly explainable: often the "
+            "model to ship")
 
     fm_ok = not temporal_or_grouped and n_rows <= 100_000 and n_features <= 500
     if temporal_or_grouped:
@@ -217,7 +218,7 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
             role = "challenger" if needs_inherent_explainability else "candidate"
             add("tabicl", role,
                 "BSD-3 weights; in-context learner, no hyper-parameter search; best or tied from 100 to 2,000 "
-                "rows in E4, but by at most 0.02 AUC over an EBM"
+                "rows in E4; it led an EBM by up to 0.033 AUC at 100 rows and by 0.01 or less from 500 rows up"
                 + ("" if gpu else ", and scoring is slow on CPU (24-51 s per 5,000 rows in E4, against "
                                   "well under a second for the others)"))
             if n_rows <= 10_000 and n_classes <= 10:

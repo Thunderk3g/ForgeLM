@@ -58,6 +58,7 @@ KNOWN_PACKAGES: Dict[str, str] = {
     "onnxruntime_gpu": "onnxruntime-gpu",
     "openvino": "openvino",
     "sklearn": "scikit-learn",
+    "scipy": "scipy",
     "lightgbm": "lightgbm",
     "xgboost": "xgboost",
     "catboost": "catboost",

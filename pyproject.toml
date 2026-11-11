@@ -14,12 +14,19 @@ dependencies = ["numpy>=1.24"]
 [project.optional-dependencies]
 # LLM-free text classifiers that train and serve on a CPU.
 classify = ["scikit-learn>=1.3", "pandas>=2.0", "model2vec>=0.4", "sentence-transformers>=3.0", "psutil>=5.9"]
-# End-to-end encoder fine-tuning, local LLM teachers, ONNX export.
-train = ["torch>=2.2", "transformers>=4.48", "onnx>=1.16", "onnxruntime>=1.18", "tokenizers>=0.19"]
+# End-to-end encoder fine-tuning, local LLM teachers, ONNX export (torch.onnx.export's dynamo
+# argument needs torch 2.4).
+train = ["torch>=2.4", "transformers>=4.48", "onnx>=1.16", "onnxruntime>=1.18", "tokenizers>=0.19"]
 # Tabular baselines and the permissively licensed in-context model.
 tabular = ["scikit-learn>=1.3", "pandas>=2.0", "lightgbm>=4.0", "interpret-core>=0.6", "tabicl>=0.1"]
 # Generative fine-tuning on any PyTorch device (CUDA, ROCm, XPU, MPS, CPU).
 generative = ["torch>=2.2", "transformers>=4.48", "peft>=0.14", "trl>=0.12", "accelerate>=1.0", "datasets>=2.20"]
+# GGUF export and quantisation for llama.cpp / Ollama. The gguf pin must match forgelm.gguf.GGUF_PIP_VERSION
+# (the converter script is pinned to the same llama.cpp tag); a test checks the two agree.
+export = ["gguf==0.19.0", "llama-cpp-python>=0.3", "sentencepiece>=0.2", "jinja2>=3.1", "torch>=2.4",
+          "transformers>=4.48"]
+# BM25 retrieval (dense retrieval uses the classify extra's embedders).
+retrieval = ["scipy>=1.10"]
 # NVIDIA-only accelerators for the generative path.
 nvidia = ["bitsandbytes>=0.45", "unsloth"]
 # Apple Silicon native trainer.
@@ -39,3 +46,5 @@ forgelm = ["packs/**/*.json", "packs/**/*.jsonl"]
 [tool.pytest.ini_options]
 testpaths = ["tests/factory"]
 markers = ["slow: needs model downloads and several minutes of CPU"]
+# Slow tests download models; run them explicitly with -m slow.
+addopts = "-m 'not slow'"

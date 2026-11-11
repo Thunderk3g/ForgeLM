@@ -159,16 +159,20 @@ hypothesis to test, not a result.
 
 - `forgelm.tabular.FOUNDATION_MODEL_LICENCES` gates recommendations; the
   planner excludes non-commercial weights unless told the use is non-commercial.
-- `forgelm.tabular.run_ladder` always fits logistic regression and a GBDT next
-  to any foundation model, on the same split, with calibration metrics.
+- `forgelm.tabular.run_ladder` by default fits logistic regression, two GBDTs
+  (HistGradientBoosting, LightGBM), an EBM and TabICL on the same split, with
+  calibration metrics; `forgelm.tabular.recommend` always lists logistic
+  regression and LightGBM as baselines.
 - When each decision needs stated reasons, an Explainable Boosting Machine is
   the champion and everything else is a challenger.
 - E4 measured this ladder on credit-default and census-income data. TabICL was
-  best or tied from 100 to 2,000 rows, but by at most 0.02 AUC over an EBM,
-  within the seed spread from 500 rows up, and it took 24 to 51 s to score
-  5,000 rows on a CPU against well under a second for the rest. The EBM was at
-  or near the top at every size and well calibrated; LightGBM at its defaults
-  was badly calibrated with 2,000 rows or fewer. The planner therefore lists
+  best or tied from 100 to 2,000 rows. It led an EBM by up to 0.033 AUC at 100
+  rows and by 0.01 or less from 500 rows up, within the seed spread, and it
+  took 24 to 51 s to score 5,000 rows on a CPU against well under a second for
+  the rest. The EBM was first or second, and well calibrated, at every size
+  from 500 to 10,000 rows, but fourth of five on census-income at 100 rows.
+  Untuned LightGBM was badly calibrated (ECE 0.08 to 0.18) with 2,000 rows or
+  fewer. The planner therefore lists
   the EBM as a primary candidate, not an afterthought, and warns about
   untuned LightGBM probabilities on small data. **[measured]**
 
@@ -305,7 +309,7 @@ secondary write-ups; have counsel confirm each against the regulation text.
 |---|---|
 | GPU training paths (Unsloth, QLoRA, MLX) | Not run. This environment has 4 CPU cores and no accelerator. The backend rules are tested against reference hardware profiles, not real devices. |
 | TabPFN | Not run. v2 weights need a licence acceptance; later weights are non-commercial. |
-| SetFit, GLiClass, NLI zero-shot | Not run. Listed in the plan with [snippet] evidence. |
+| SetFit, GLiClass, NLI zero-shot | Not run. SetFit is listed in the plan with [snippet] evidence; GLiClass and NLI zero-shot are not offered. |
 | Hosted LLM teacher | Not run. `ChatCompletionsTeacher` is tested against a local stub endpoint only. |
-| Prompt optimisation, retrieval | Recommended by the planner; not implemented here. Integrate DSPy / an existing RAG stack. |
+| Prompt optimiser, reranker | Not implemented. The planner recommends a prompt-optimisation baseline (integrate DSPy MIPROv2 / GEPA). Retrieval itself is in `forgelm.retrieval` and measured in E9, but there is no reranker. |
 | Real insurance call data | None available publicly. The BFSI pack is unvalidated. |

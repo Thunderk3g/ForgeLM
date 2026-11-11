@@ -620,3 +620,16 @@ def test_real_model_exports_to_gguf_and_keeps_its_prompt_and_answers(tmp_path):
         assert gguf.output_parity([reference], [chat.chat(messages, 12)]).passed
     finally:
         chat.close()
+
+
+def test_export_extra_pins_the_same_gguf_version_as_the_converter():
+    """The pip gguf package and the pinned llama.cpp converter must come from the same release."""
+    import re
+    from pathlib import Path
+
+    from forgelm import gguf
+
+    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+    export = re.search(r"^export = \[(.*?)\]", pyproject, re.S | re.M).group(1)
+    assert f'"gguf=={gguf.GGUF_PIP_VERSION}"' in export
+    assert gguf.LLAMA_CPP_TAG.endswith(gguf.GGUF_PIP_VERSION)

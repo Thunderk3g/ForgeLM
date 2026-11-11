@@ -96,6 +96,22 @@ FULL_PATH_PREFIXES = {
 }
 
 
+# Default per-request timeout when proxying, in seconds.
+DEFAULT_PROXY_TIMEOUT_S = 30.0
+# Requests that do long synchronous work get a longer timeout. Training a factory
+# classifier (POST /api/v1/factory/classifiers) runs inside the request and can take
+# minutes for the encoder or fine-tuned students.
+LONG_REQUEST_TIMEOUT_S = float(os.getenv('GATEWAY_LONG_REQUEST_TIMEOUT_S', '1800'))
+LONG_REQUEST_PREFIXES = ('/api/v1/factory/classifiers',)
+
+
+def proxy_timeout_seconds(method: str, target_path: str) -> float:
+    """Timeout for one proxied request: long for synchronous training, 30 s otherwise."""
+    if method.upper() == 'POST' and target_path.rstrip('/') in LONG_REQUEST_PREFIXES:
+        return LONG_REQUEST_TIMEOUT_S
+    return DEFAULT_PROXY_TIMEOUT_S
+
+
 def v1_target_path(path: str) -> str:
     """The path to forward for a request to /api/v1/{path}.
 
@@ -374,7 +390,7 @@ async def proxy_request(
                 headers=headers,
                 data=body,
                 params=dict(request.query_params),
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=proxy_timeout_seconds(request.method, normalized_path))
             ) as response:
                 content = await response.read()
                 

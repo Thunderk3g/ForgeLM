@@ -7,7 +7,6 @@ result carries the hardware it came from (see :mod:`forgelm.provenance`).
 from __future__ import annotations
 
 import os
-import resource
 import sys
 import time
 from pathlib import Path
@@ -24,7 +23,15 @@ def directory_size_mb(path: str) -> float:
 
 
 def peak_rss_mb() -> float:
-    """Peak resident memory of this process so far (high-water mark)."""
+    """Peak resident memory of this process so far (high-water mark), or NaN where unavailable.
+
+    ``resource`` exists only on Unix, so it is imported here rather than at module
+    level, which would make forgelm.bench (and anything importing it) fail on Windows.
+    """
+    try:
+        import resource
+    except ImportError:
+        return float("nan")
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     return peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024
 

@@ -6,8 +6,8 @@
 #   FORCE=1 bash experiments/run_all.sh   # re-run everything
 #
 # A step is skipped when its result JSON already exists, so an interrupted run
-# can be resumed by running the script again. Total on 4 CPU cores: about four
-# hours, most of it the ModernBERT fine-tune (E1b) and the LLM teacher (E2, E6).
+# can be resumed by running the script again. Total on 4 CPU cores: about five
+# hours, most of it the ModernBERT fine-tune (E1b), the LLM teacher (E2, E6) and E7.
 set -u
 cd "$(dirname "$0")"
 mkdir -p artifacts results
@@ -16,10 +16,10 @@ mkdir -p artifacts results
 STEPS=(
   "e1_banking77_ladder.py|e1_banking77_ladder|e1_banking77_ladder"
   "e2_teacher_distillation.py|e2_teacher_distillation|e2_teacher_distillation"
+  "e1_banking77_ladder.py --only-modernbert|e1b_modernbert_full|e1b_modernbert"
   "e5_cascade.py|e5_cascade|e5_cascade"
   "e4_tabular.py --tabicl-max 2000|e4_tabular|e4_tabular"
   "e6_unfair_terms.py|e6_unfair_terms|e6_unfair_terms"
-  "e1_banking77_ladder.py --only-modernbert|e1b_modernbert_full|e1b_modernbert"
   "e3_compression.py|e3_compression|e3_compression"
   "e7_generative_cpu.py|e7_generative_cpu|e7_generative_cpu"
   "e8_prompt_or_train.py|e8_prompt_or_train|e8_prompt_or_train"

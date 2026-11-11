@@ -6,7 +6,7 @@
   },
   "test_rows": 5000,
   "seeds": 3,
-  "hyperparameters": "library defaults, no search",
+  "hyperparameters": "fixed settings chosen in advance in forgelm.tabular.make_model, no search",
   "tabicl": {
     "checkpoint": "jingang/TabICL-clf (default of the tabicl package)",
     "licence": "BSD-3-Clause",
