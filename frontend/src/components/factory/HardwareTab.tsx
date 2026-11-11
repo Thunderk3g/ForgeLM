@@ -12,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { factoryApi } from "@/lib/factory-api"
-import { useFactoryQuery } from "@/hooks/useFactoryRequest"
+import { useFactoryQuery, type QueryResult } from "@/hooks/useFactoryRequest"
 import type { Accelerator, HardwareResponse } from "@/types/factory"
 import { EmptyState, ErrorState, Field, LoadingState, Stat } from "./factory-shared"
 
@@ -20,7 +20,7 @@ import { EmptyState, ErrorState, Field, LoadingState, Stat } from "./factory-sha
 // sentinel of its own.
 const THIS_MACHINE = "__probe__"
 
-const fetchProfile = (key: string) => factoryApi.hardware(key === THIS_MACHINE ? null : key)
+const fetchReference = (reference: string) => factoryApi.hardware(reference)
 
 function usability(a: Accelerator): { text: string; className: string } {
   if (a.torch_usable === true) return { text: "usable", className: "bg-chart-2/15 text-chart-2 border-chart-2/30" }
@@ -202,12 +202,16 @@ function ProfileView({ data }: { data: HardwareResponse }) {
   )
 }
 
-export function HardwareTab({ referenceProfiles }: { referenceProfiles: string[] }) {
+/**
+ * ``probe`` is the page's own GET /hardware for the service's machine (the
+ * page needs it anyway for the list of reference profiles), so viewing this
+ * machine costs no second request. Reference profiles are fetched here.
+ */
+export function HardwareTab({ probe }: { probe: QueryResult<HardwareResponse> }) {
   const [view, setView] = useState(THIS_MACHINE)
-  const { data, error, loading, reload } = useFactoryQuery(view, fetchProfile)
-  // A response's own list is the freshest; the page-level list covers the
-  // moment before the first response arrives.
-  const profiles = data?.reference_profiles ?? referenceProfiles
+  const reference = useFactoryQuery(view === THIS_MACHINE ? null : view, fetchReference)
+  const { data, error, loading, reload } = view === THIS_MACHINE ? probe : reference
+  const profiles = probe.data?.reference_profiles ?? data?.reference_profiles ?? []
 
   return (
     <div className="space-y-6">
