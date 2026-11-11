@@ -9,6 +9,7 @@ bitsandbytes, xformers or flash-attention dependency to break elsewhere.
     encode_chat         one conversation -> token ids and loss labels
     finetune_lora       train an adapter, save it with its tokenizer and recipe
     merge_adapter       fold the adapter into full weights (needed for GGUF)
+    load_model          a model and its tokenizer, ready to generate
     generate            greedy decoding of one conversation
     evaluate_exact      exact-match accuracy, keeping every raw output
     write_mlx_dataset, write_mlx_config, mlx_lora_command
@@ -279,6 +280,22 @@ def _load_causal_lm(name: str, dtype: str):
     version = tuple(int(p) for p in re.findall(r"\d+", transformers.__version__)[:2])
     key = "dtype" if version >= (4, 56) else "torch_dtype"
     return AutoModelForCausalLM.from_pretrained(name, **{key: getattr(torch, dtype)})
+
+
+def load_model(name: str, device: Optional[str] = None, dtype: Optional[str] = None):
+    """``(model, tokenizer)`` ready for :func:`generate`, on the best device present.
+
+    For a full model directory (for example the output of
+    :func:`merge_adapter`) or a Hub id. The precision defaults to what
+    :func:`training_dtype` picks for the device, so a model is scored in the
+    precision it was trained in.
+    """
+    from transformers import AutoTokenizer
+
+    device = resolve_device(device)
+    model = _load_causal_lm(name, dtype or training_dtype(device)).to(device)
+    model.eval()
+    return model, AutoTokenizer.from_pretrained(name)
 
 
 def _pad_id(tokenizer) -> int:

@@ -290,8 +290,14 @@ class GGUFChat:
         self.llm = llama_cpp.Llama(model_path=self.path, n_ctx=n_ctx, n_threads=n_threads,
                                    n_threads_batch=n_threads, n_gpu_layers=n_gpu_layers, verbose=False)
 
-    def chat_details(self, messages: Sequence[dict], max_tokens: int = 64) -> Dict[str, object]:
-        """The reply with token counts and seconds, in the shape ``generate(return_details=True)`` uses."""
+    def chat_details(self, messages: Sequence[dict], max_tokens: int = 64, fresh: bool = False) -> Dict[str, object]:
+        """The reply with token counts and seconds, in the shape ``generate(return_details=True)`` uses.
+
+        ``fresh=True`` drops the cached prompt prefix first, so the whole
+        prompt is processed again: use it when timing one call on its own.
+        """
+        if fresh:
+            self.llm.reset()
         started = time.time()
         response = self.llm.create_chat_completion(
             messages=[{"role": m["role"], "content": m["content"]} for m in messages],

@@ -5,6 +5,8 @@
     forgelm train ...                   train an LLM-free text classifier from a CSV
     forgelm predict ...                 classify text with a trained student
     forgelm tabular ...                 benchmark tabular models on a CSV
+    forgelm finetune ...                LoRA fine-tune a small chat model on any PyTorch device
+    forgelm export-gguf ...             merge, convert to GGUF, quantise, check the chat template
 """
 
 from __future__ import annotations
@@ -198,6 +200,122 @@ def cmd_tabular(args) -> int:
     return 0
 
 
+def recipe_from_args(args):
+    """The :class:`forgelm.finetune.FineTuneRecipe` the ``finetune`` options describe."""
+    from .finetune import FineTuneRecipe
+
+    return FineTuneRecipe(base_model=args.base_model, method=args.method, rank=args.rank, alpha=args.alpha,
+                          dropout=args.dropout, target_modules=args.target_modules or None,
+                          learning_rate=args.learning_rate, epochs=args.epochs, batch_size=args.batch_size,
+                          grad_accumulation=args.grad_accumulation, max_seq_len=args.max_seq_len,
+                          warmup=args.warmup, seed=args.seed, train_on_responses_only=not args.all_tokens)
+
+
+def cmd_finetune(args) -> int:
+    from .finetune import evaluate_exact, finetune_lora, load_chat_records, merge_adapter, prepare_mlx_run
+
+    try:
+        recipe = recipe_from_args(args)
+        train = load_chat_records(args.data)
+        evaluation = load_chat_records(args.eval_data) if args.eval_data else None
+    except (ValueError, OSError) as exc:
+        print(f"cannot fine-tune: {exc}", file=sys.stderr)
+        return 2
+    out = Path(args.out)
+    if args.backend == "mlx":
+        # Nothing is trained here: mlx-lm runs only on Apple Silicon, so this
+        # writes its inputs and prints the command to run there.
+        try:
+            argv = prepare_mlx_run(recipe, train, str(out / "mlx_data"), str(out / "adapter"), evaluation)
+        except ValueError as exc:
+            print(f"cannot prepare an mlx-lm run: {exc}", file=sys.stderr)
+            return 2
+        print("mlx-lm data and config written to", out / "mlx_data")
+        print("run on the Mac:", " ".join(argv))
+        return 0
+
+    def progress(step, total, loss):
+        if step == 1 or step == total or step % args.log_every == 0:
+            print(f"step {step}/{total}  loss {loss:.4f}", file=sys.stderr, flush=True)
+
+    adapter_dir = out / "adapter"
+    result = finetune_lora(recipe, train, str(adapter_dir), eval_records=evaluation, device=args.device,
+                           on_progress=progress)
+    summary = {"adapter": str(adapter_dir), "device": result["device"], "dtype": result["dtype"],
+               "steps": result["steps"], "seconds": round(result["seconds"], 1),
+               "first_loss": round(result["loss_history"][0], 4), "last_loss": round(result["loss_history"][-1], 4),
+               "n_train": result["n_train"], "n_truncated": result["n_truncated"],
+               "n_dropped_no_answer": result["n_dropped_no_answer"]}
+    if result["eval_loss_history"]:
+        summary["eval_loss"] = round(result["eval_loss_history"][-1]["loss"], 4)
+    if args.merge or args.eval_exact:
+        merged = merge_adapter(recipe.base_model, str(adapter_dir), str(out / "merged"))
+        summary["merged"] = merged["out_dir"]
+        if args.eval_exact:
+            if not evaluation:
+                print("--eval-exact needs --eval-data", file=sys.stderr)
+                return 2
+            from .finetune import load_model
+
+            model, tokenizer = load_model(merged["out_dir"], device=args.device)
+            scored = evaluate_exact(model, tokenizer, evaluation, max_new_tokens=args.max_new_tokens)
+            summary["exact_match"] = round(scored["accuracy"], 4)
+            (out / "eval_outputs.json").write_text(json.dumps(
+                {k: scored[k] for k in ("accuracy", "outputs", "references", "correct")}, indent=2))
+    print(json.dumps(summary, indent=2))
+    return 0
+
+
+def cmd_export_gguf(args) -> int:
+    from . import gguf
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    model_dir = args.model  # the parser requires exactly one of --model and --adapter
+    if args.adapter:
+        from .finetune import merge_adapter
+
+        model_dir = merge_adapter(args.base_model, args.adapter, str(out / "merged"))["out_dir"]
+    script = args.convert_script
+    if args.fetch_converter and not script:
+        script = gguf.fetch_convert_script(str(out / "llama_cpp"))
+    name = Path(model_dir).name or "model"
+    try:
+        f16 = gguf.convert_to_gguf(model_dir, str(out / f"{name}.{args.outtype}.gguf"), script, outtype=args.outtype)
+        files = {args.outtype: f16}
+        if args.quant != "none":
+            files[args.quant] = gguf.quantize_gguf(f16, str(out / f"{name}.{args.quant}.gguf"), args.quant)
+    except (FileNotFoundError, ImportError, RuntimeError, ValueError) as exc:
+        print(f"GGUF export failed: {exc}", file=sys.stderr)
+        return 2
+    from transformers import AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(model_dir)
+    # The file that will be deployed is the one checked: the quantised one
+    # when there is one. Quantisation does not touch the metadata, but a check
+    # on the intermediate would not show that.
+    checked = files.get(args.quant, f16)
+    try:
+        verdict = gguf.chat_template_round_trip(tokenizer, checked)
+    except ImportError as exc:
+        print(f"exported, but the chat-template check could not run: {exc}", file=sys.stderr)
+        verdict = None
+    report = {"files": {k: {"path": v, "mb": round(Path(v).stat().st_size / 1e6, 1)} for k, v in files.items()},
+              "versions": gguf.installed_versions()}
+    if verdict is not None:
+        report["chat_template_round_trip"] = {k: verdict[k] for k in ("passed", "identical", "tokens_identical",
+                                                                      "template_identical", "reasons")}
+    (out / "export_report.json").write_text(json.dumps(report, indent=2))
+    print(json.dumps(report, indent=2))
+    if verdict is None:
+        return 1
+    if verdict["passed"]:
+        print("chat template round trip: PASS (the GGUF runtime builds the same prompt as the training tokenizer)")
+        return 0
+    print("chat template round trip: FAIL - " + "; ".join(verdict["reasons"]), file=sys.stderr)
+    return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="forgelm", description="ForgeLM model intelligence factory")
     sub = p.add_subparsers(dest="command", required=True)
@@ -259,6 +377,53 @@ def build_parser() -> argparse.ArgumentParser:
     tb.add_argument("--test-fraction", type=float, default=0.25)
     tb.add_argument("--seed", type=int, default=0)
     tb.set_defaults(func=cmd_tabular)
+
+    # Defaults are the FineTuneRecipe defaults, written out so --help shows them.
+    ft = sub.add_parser("finetune", help="LoRA fine-tune a small chat model on any PyTorch device (CPU included)")
+    ft.add_argument("--data", required=True, help="JSONL, one {\"messages\": [...]} conversation per line, "
+                                                  "each ending with the assistant answer to learn")
+    ft.add_argument("--eval-data", help="JSONL of held-out conversations (evaluation loss, and --eval-exact)")
+    ft.add_argument("--base-model", required=True, help="Hugging Face id or local directory of an instruct model")
+    ft.add_argument("--out", required=True, help="writes OUT/adapter (and OUT/merged with --merge)")
+    ft.add_argument("--method", default="lora", help="peft method, as in forgelm.generative.lora_config")
+    ft.add_argument("--rank", type=int, default=16)
+    ft.add_argument("--alpha", type=int, help="default: 2 x rank")
+    ft.add_argument("--dropout", type=float, default=0.0)
+    ft.add_argument("--target-modules", nargs="*", help="default: every attention and MLP projection")
+    ft.add_argument("--learning-rate", type=float, default=2e-4)
+    ft.add_argument("--epochs", type=float, default=3)
+    ft.add_argument("--batch-size", type=int, default=4)
+    ft.add_argument("--grad-accumulation", type=int, default=1)
+    ft.add_argument("--max-seq-len", type=int, default=512)
+    ft.add_argument("--warmup", type=float, default=0.1, help="fraction of steps below 1, a step count otherwise")
+    ft.add_argument("--seed", type=int, default=0)
+    ft.add_argument("--all-tokens", action="store_true",
+                    help="train on the whole conversation, not only the final assistant answer")
+    ft.add_argument("--device", help="cuda, rocm, xpu, mps or cpu (default: the best one present)")
+    ft.add_argument("--backend", choices=["torch", "mlx"], default="torch",
+                    help="mlx: write mlx-lm's dataset and config and print the command for a Mac, train nothing")
+    ft.add_argument("--merge", action="store_true", help="also save merged full weights to OUT/merged")
+    ft.add_argument("--eval-exact", action="store_true",
+                    help="after training, score exact-match accuracy of the merged model on --eval-data")
+    ft.add_argument("--max-new-tokens", type=int, default=64, help="generation limit for --eval-exact")
+    ft.add_argument("--log-every", type=int, default=10, help="print the loss every N optimizer steps")
+    ft.set_defaults(func=cmd_finetune)
+
+    from .gguf import CONVERT_OUTTYPES, QUANT_TYPES
+
+    ex = sub.add_parser("export-gguf", help="convert a fine-tuned model to GGUF, quantise it, check the chat template")
+    source = ex.add_mutually_exclusive_group(required=True)
+    source.add_argument("--model", help="a full model directory (for example OUT/merged from `forgelm finetune`)")
+    source.add_argument("--adapter", help="an adapter directory; it is merged into its base model first")
+    ex.add_argument("--base-model", help="base model of --adapter (default: the one its recipe.json names)")
+    ex.add_argument("--out", required=True)
+    ex.add_argument("--outtype", choices=CONVERT_OUTTYPES, default="f16", help="what the converter writes")
+    ex.add_argument("--quant", choices=QUANT_TYPES + ("none",), default="Q4_K_M",
+                    help="llama.cpp quantisation applied after conversion")
+    ex.add_argument("--convert-script", help="llama.cpp convert_hf_to_gguf.py (default: $LLAMA_CPP_CONVERT)")
+    ex.add_argument("--fetch-converter", action="store_true",
+                    help="download the pinned convert_hf_to_gguf.py into OUT/llama_cpp when none is given")
+    ex.set_defaults(func=cmd_export_gguf)
     return p
 
 
