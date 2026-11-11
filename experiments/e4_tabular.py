@@ -8,7 +8,7 @@ Datasets (binary targets)
   * census income: scikit-learn/adult-census-income (32.5k rows, numeric + categorical)
 
 Protocol
-  * A fixed stratified 5,000-row test set per dataset.
+  * A fixed random 5,000-row test set per dataset (not stratified).
   * Training sets of 100, 500, 2,000 and 10,000 rows, 3 seeds each.
   * Default hyper-parameters throughout (no search), so this compares
     out-of-the-box behaviour. A tuned GBDT would score somewhat higher.

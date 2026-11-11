@@ -10,6 +10,7 @@ more information to the student than one that reports "complaint".
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import string
@@ -86,8 +87,9 @@ class LocalLLMTeacher(Teacher):
 
     For label sets larger than ``max_options`` pass a ``shortlister`` (any
     object with ``predict_proba``, e.g. a zero-shot or few-shot student). The
-    LLM then chooses among each text's top candidates only. This keeps prompts
-    short and is how a small-context teacher handles dozens of classes.
+    LLM then chooses among each text's top candidates only, presented in a
+    shuffled order. This keeps prompts short and is how a small-context
+    teacher handles dozens of classes.
     """
 
     def __init__(self, model: str, labels: Sequence[str], descriptions: Optional[Sequence[str]] = None,
@@ -160,7 +162,14 @@ class LocalLLMTeacher(Teacher):
             candidates = [list(range(c))] * n
         else:
             short = np.asarray(self.shortlister.predict_proba(texts))
-            candidates = [list(np.argsort(-row)[: self.max_options]) for row in short]
+            candidates = []
+            for text, row in zip(texts, short):
+                top = np.argsort(-row)[: self.max_options]
+                # Shuffle (deterministically per text) so option A is not always the shortlister's
+                # first choice; otherwise the LLM's preference for early options would be
+                # indistinguishable from agreement with the shortlister.
+                seed = int.from_bytes(hashlib.sha1(text.encode("utf-8")).digest()[:8], "little")
+                candidates.append([int(j) for j in np.random.default_rng(seed).permutation(top)])
         out = np.zeros((n, c))
         device = next(self._model.parameters()).device
         # Longest prompts first keeps padding (and wasted compute) low per batch.

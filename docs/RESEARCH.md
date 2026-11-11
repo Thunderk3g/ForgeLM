@@ -40,8 +40,10 @@ hypothesis to test, not a result.
   | Full fine-tune | 47.2% | 38.9 GB | 2,147 s |
 
   Differences of two points or less are noise at one run each. rsLoRA is the
-  only variant that gained at no cost. DoRA cost about 10% more VRAM and 26%
-  more time for no gain. VeRA, IA3, BOFT and LoRA-FA lost 7 to 13 points.
+  only variant that gained at no memory or time cost, but it also takes a
+  larger effective step at the same learning rate, and learning rates were not
+  tuned. DoRA cost about 10% more VRAM and 26% more time for no gain. VeRA,
+  IA3, BOFT and LoRA-FA lost 7 to 13 points.
 - After per-method learning-rate tuning, LoRA variants reportedly land within
   1 to 2% of each other **[snippet]**. Under reinforcement-learning objectives
   DoRA reportedly leads and PiSSA collapses **[snippet]**.
@@ -61,9 +63,14 @@ hypothesis to test, not a result.
 
 **What the platform does**
 
-- `forgelm.generative.lora_config` maps method names onto HF `peft` and turns on
-  rank-stabilised scaling at rank 32 and above. DoRA, PiSSA, OLoRA and LoftQ
-  are available as advanced options; VeRA, IA3 and BOFT are not offered.
+- `forgelm.generative.lora_config` maps method names onto HF `peft`. Plain LoRA
+  is the default. rsLoRA is opt-in, not automatic: it changes the adapter scale
+  from alpha/rank to alpha/sqrt(rank), which at rank 64 is an 8x larger
+  effective update, so the benchmark gain above may be a learning-rate effect.
+  Use it together with a learning-rate sweep. DoRA, PiSSA and OLoRA are
+  advanced options; VeRA, IA3 and BOFT are not offered. LoftQ is not offered
+  because it needs the unquantised base model, which the request path does not
+  have.
 - The training service's hand-written DoRA / OFT / PiSSA layers (never called)
   were replaced by that mapping. The Transformers path now honours the
   requested method, rank, alpha, dropout and target modules; before, it applied

@@ -42,16 +42,25 @@ def _hard_and_weights(y, n_classes: int, min_weight: float = 0.02):
     """Turn hard or soft labels into (row_index, label, weight) triples.
 
     scikit-learn's LogisticRegression has no soft-label mode. Replicating each
-    row once per plausible class, weighted by the teacher's probability,
-    optimises exactly the soft-label cross-entropy.
+    row once per class, weighted by the teacher's probability, optimises the
+    soft-label cross-entropy. To keep that affordable with many classes, each
+    row keeps only the classes with probability >= ``min_weight`` (always
+    including its most likely class) and the kept weights are renormalised to
+    sum to one, so every row counts once and none is dropped. This is exact
+    when a teacher puts all its mass on a few options (an LLM choosing among a
+    shortlist) and a top-k approximation for dense distributions.
     """
     y = np.asarray(y)
     if y.ndim == 1:
         return np.arange(len(y)), y.astype(np.int64), np.ones(len(y))
     if y.shape[1] != n_classes:
         raise ValueError(f"soft labels have {y.shape[1]} columns, expected {n_classes}")
-    rows, cols = np.nonzero(y >= min_weight)
-    return rows, cols.astype(np.int64), y[rows, cols].astype(np.float64)
+    keep = y >= min_weight
+    keep[np.arange(len(y)), y.argmax(1)] = True
+    kept = np.where(keep, y, 0.0).astype(np.float64)
+    kept /= kept.sum(1, keepdims=True)
+    rows, cols = np.nonzero(keep)
+    return rows, cols.astype(np.int64), kept[rows, cols]
 
 
 class LinearHead:

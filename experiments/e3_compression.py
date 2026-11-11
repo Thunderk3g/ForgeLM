@@ -41,8 +41,9 @@ for key, label in (("finetuned", "MiniLM-L6 (22M)"), ("modernbert", "ModernBERT-
                                                "size_mb": round(os.path.getsize(student_dir / "model.safetensors") / 1e6, 2),
                                                **rounded(benchmark(student.predict_proba, bench_texts), 3)}}
     try:
+        # Reference and ONNX runs all use temperature 1 so probabilities and calibration are comparable.
         report = export_and_gate(str(student_dir), str(ARTIFACTS / f"e3_{key}_onnx"), texts, y, ref,
-                                 has_vnni=hw.has_vnni)
+                                 has_vnni=hw.has_vnni, temperature=1.0)
     except Exception as exc:  # an export failure is itself a result worth recording
         entry["export_error"] = repr(exc)[:500]
         out.append(entry)

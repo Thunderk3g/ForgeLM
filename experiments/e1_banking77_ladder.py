@@ -9,8 +9,10 @@ Protocol
     and never trained on. Temperature is fitted on that anchor only.
   * Few-shot subsets are drawn from the remaining training data with 3 seeds.
   * All numbers are on the untouched 3,080-example test split.
-  * No hyper-parameter search was run against the test split; settings are the
-    library defaults in forgelm/students.py.
+  * No hyper-parameter search was run. The linear-head students use the
+    defaults in forgelm/students.py. The fine-tuned encoder uses fixed,
+    untuned settings chosen in advance: learning rate 1e-4, batch 32, 64
+    tokens, and 30 / 12 / 5 epochs for 8 / 32 / all labels per class.
 """
 
 from __future__ import annotations
@@ -90,8 +92,9 @@ for k, n_seeds in regimes:
 
         start = time.perf_counter()
         tf = TfidfStudent().fit(tr_texts, tr_y, names)
-        score("tfidf + LR", k, seed, tf.predict_proba(test_texts), tf.predict_proba(anchor_texts),
-              time.perf_counter() - start)
+        tf_raw_test = tf.predict_proba(test_texts)
+        tf.temperature = score("tfidf + LR", k, seed, tf_raw_test, tf.predict_proba(anchor_texts),
+                               time.perf_counter() - start)
 
         for key, label in (("static", "static potion-32M + LR"), ("encoder", "frozen bge-small + LR")):
             start = time.perf_counter()
@@ -118,7 +121,7 @@ for k, n_seeds in regimes:
             if k == "full":
                 saved["finetuned"] = (ft, p_test)
         if k == "full":
-            saved["tfidf"] = (tf, tf.predict_proba(test_texts))
+            saved["tfidf"] = (tf, tf_raw_test)
 
 if args.only_modernbert:
     idx = pool_idx

@@ -9,8 +9,9 @@ Questions
 
 Protocol
   * Students are the full-data models saved by E1. Temperature and the
-    confidence threshold are both chosen on the 385-example calibration anchor
-    and then applied, unchanged, to the test split.
+    confidence threshold are both fitted here on the 385-example calibration
+    anchor (5 per class, never trained on) and applied, unchanged, to the
+    test split.
   * The LLM comparison uses the 1,000 test items the E2 teacher labelled.
 """
 
@@ -19,18 +20,21 @@ from __future__ import annotations
 import numpy as np
 
 from common import ARTIFACTS, load_banking77, rounded, stratified_sample, write_result
-from forgelm.metrics import (apply_temperature, apply_threshold, risk_coverage, simulate_cascade,
-                             threshold_for_accuracy)
+from forgelm.metrics import (apply_temperature, apply_threshold, fit_temperature, risk_coverage,
+                             simulate_cascade, threshold_for_accuracy)
 
 train, test, names = load_banking77()
 test_y = test.label.values
 anchor_idx = stratified_sample(train.label.values, 5, np.random.default_rng(1234))
 anchor_y = train.label.values[anchor_idx]
 
+# The E2 teacher cache for the default run (2,000 pool texts, 1,000 anchor texts). Named explicitly so a
+# smaller smoke-run cache cannot be picked up by accident.
 llm = None
-for path in ARTIFACTS.glob("e2_teacher_*.npz"):
-    cached = np.load(path)
-    llm = {"idx": cached["anchor_idx"], "pred": cached["anchor"].argmax(1), "name": path.stem}
+e2_cache = ARTIFACTS / "e2_teacher_Qwen2.5-1.5B-Instruct_2000_1000.npz"
+if e2_cache.exists():
+    cached = np.load(e2_cache)
+    llm = {"idx": cached["anchor_idx"], "pred": cached["anchor"].argmax(1), "name": e2_cache.stem}
 
 out = []
 labels_of = {"tfidf": "tfidf + LR", "static": "static potion-32M + LR", "encoder": "frozen bge-small + LR",
@@ -40,7 +44,8 @@ for key, label in labels_of.items():
     if not path.exists():
         continue
     data = np.load(path)
-    t = float(data["temperature"])
+    # Fit the temperature here, from the raw anchor probabilities, rather than trusting a stored value.
+    t = fit_temperature(anchor_y, data["anchor"])
     p_test, p_anchor = apply_temperature(data["test"], t), apply_temperature(data["anchor"], t)
     entry = {"student": label, "temperature": round(t, 3),
              "test_accuracy": round(float(np.mean(p_test.argmax(1) == test_y)), 4), "targets": [],

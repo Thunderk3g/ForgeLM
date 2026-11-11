@@ -12,7 +12,7 @@ Protocol
   * The decision threshold is chosen on the validation split to reach 90%
     recall there, then applied unchanged to the 1,607-sentence test split.
   * A local 1.5B LLM is also scored zero-shot on the test split, and as a
-    teacher for students trained on 1,500 sentences with no human labels.
+    teacher for students trained on 1,000 sentences with no human labels.
 """
 
 from __future__ import annotations

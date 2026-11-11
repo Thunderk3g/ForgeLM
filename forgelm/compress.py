@@ -176,8 +176,14 @@ class OnnxClassifier:
 
 def export_and_gate(student_dir: str, out_dir: str, texts: Sequence[str], y_true: Optional[Sequence[int]],
                     reference_probs: np.ndarray, has_vnni: bool = True, min_agreement: float = 0.98,
-                    max_accuracy_drop: float = 0.01) -> Dict[str, dict]:
+                    max_accuracy_drop: float = 0.01, temperature: Optional[float] = None) -> Dict[str, dict]:
     """Export fp32 and int8 ONNX, gate each against the PyTorch reference.
+
+    ``reference_probs`` must come from the PyTorch student at the same
+    temperature the ONNX classifiers will use: the one stored in
+    ``student.json`` by default, or ``temperature`` when given. Mixing the two
+    leaves accuracy and agreement intact but makes probability deltas and
+    calibration figures incomparable.
 
     Returns a dict with a ``recommended`` key naming the smallest artefact that
     passed. If int8 fails the gate the fp32 file is recommended instead, and
@@ -192,6 +198,8 @@ def export_and_gate(student_dir: str, out_dir: str, texts: Sequence[str], y_true
     report: Dict[str, dict] = {}
     for name, path in (("onnx_fp32", fp32), ("onnx_int8", int8)):
         clf = OnnxClassifier.from_student_dir(path, student_dir)
+        if temperature is not None:
+            clf.temperature = temperature
         probs = clf.predict_proba(texts)
         gate = parity_gate(reference_probs, probs, y_true, min_agreement, max_accuracy_drop)
         report[name] = {"path": path, "size_mb": os.path.getsize(path) / 1e6, "parity": gate.to_dict()}
