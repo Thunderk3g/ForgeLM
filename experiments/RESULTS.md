@@ -53,3 +53,87 @@ Serving cost of the full-data students (PyTorch / numpy, before any ONNX export)
 | frozen bge-small + LR | 93.1% | 12.94 | 17.33 | 146 | 0.1 | size is the classifier head only; the shared embedding model is separate |
 | fine-tuned MiniLM-L6 (22M) | 90.5% | 5.50 | 7.57 | 512 | 91.7 |  |
 | tfidf + LR | 91.2% | 4.72 | 10.05 | 4,131 | 11.1 |  |
+
+## E2. A local LLM as teacher, with no human training labels
+
+**Question.** How close does a student trained only on a model's labels get to that model, and how does that compare with labelling a few examples by hand?
+
+**Setup.** Banking77. Teacher: Qwen/Qwen2.5-1.5B-Instruct on CPU (bfloat16), read through answer-letter logits; a zero-shot embedding model shortlists 10 of the 77 intents per text (top-10 recall 94.7%). The teacher labelled 2000 unlabelled training texts at 0.564 s per text. Scores are on 1000 human-labelled test texts the teacher never labelled for training.
+
+Teachers on the anchor:
+
+| Teacher | Accuracy | Macro F1 | ECE |
+|---|---|---|---|
+| llm | 59.2% | 58.0% | 0.346 |
+| zero-shot embedder | 67.5% | 66.3% | 0.293 |
+| llm x embedder (product) | 61.8% | 60.7% | 0.332 |
+
+Students trained on teacher labels only:
+
+| Teacher | Student | Labels | Min. confidence | Texts used | Accuracy | vs teacher (points) | Agrees with teacher |
+|---|---|---|---|---|---|---|---|
+| llm | static potion-32M + LR | soft | 0.0 | 2000 | 60.0% | +0.8 | 64.5% |
+| llm | static potion-32M + LR | hard | 0.0 | 2000 | 58.5% | -0.7 | 63.1% |
+| llm | static potion-32M + LR | soft | 0.5 | 1949 | 59.9% | +0.7 | 64.2% |
+| llm | frozen bge-small + LR | soft | 0.0 | 2000 | 62.9% | +3.7 | 69.4% |
+| llm | frozen bge-small + LR | hard | 0.0 | 2000 | 63.1% | +3.9 | 67.9% |
+| llm | frozen bge-small + LR | soft | 0.5 | 1949 | 63.1% | +3.9 | 68.9% |
+| zero-shot embedder | static potion-32M + LR | soft | 0.0 | 2000 | 63.5% | -4.0 | 84.2% |
+| zero-shot embedder | static potion-32M + LR | hard | 0.0 | 2000 | 64.2% | -3.3 | 82.2% |
+| zero-shot embedder | static potion-32M + LR | soft | 0.5 | 547 | 54.4% | -13.1 | 67.3% |
+| zero-shot embedder | frozen bge-small + LR | soft | 0.0 | 2000 | 67.1% | -0.4 | 91.6% |
+| zero-shot embedder | frozen bge-small + LR | hard | 0.0 | 2000 | 66.0% | -1.5 | 87.2% |
+| zero-shot embedder | frozen bge-small + LR | soft | 0.5 | 547 | 58.1% | -9.4 | 71.5% |
+| llm x embedder (product) | static potion-32M + LR | soft | 0.0 | 2000 | 61.5% | -0.3 | 69.0% |
+| llm x embedder (product) | static potion-32M + LR | hard | 0.0 | 2000 | 61.2% | -0.6 | 68.0% |
+| llm x embedder (product) | static potion-32M + LR | soft | 0.5 | 1965 | 60.6% | -1.2 | 67.8% |
+| llm x embedder (product) | frozen bge-small + LR | soft | 0.0 | 2000 | 63.7% | +1.9 | 73.2% |
+| llm x embedder (product) | frozen bge-small + LR | hard | 0.0 | 2000 | 64.2% | +2.4 | 71.4% |
+| llm x embedder (product) | frozen bge-small + LR | soft | 0.5 | 1965 | 64.1% | +2.3 | 73.0% |
+
+Reference points on the same anchor (human labels):
+
+| Student | Trained on | Accuracy |
+|---|---|---|
+| static potion-32M + LR | same 2000 texts, human labels | 85.8% |
+| static potion-32M + LR | 8 human labels per class (616 labels, mean of 3 seeds) | 79.9% ± 1.2 |
+| frozen bge-small + LR | same 2000 texts, human labels | 91.2% |
+| frozen bge-small + LR | 8 human labels per class (616 labels, mean of 3 seeds) | 85.9% ± 1.2 |
+
+## E5. Abstention and cascades
+
+**Question.** If the small model answers only when confident, how much traffic can it take at a stated accuracy, and does sending the rest to a larger model help?
+
+**Setup.** Full-data Banking77 students from E1. Temperature and threshold are both chosen on the 385-example anchor and applied unchanged to the 3,080 test texts. 385 anchor examples give a noisy threshold; coverage at the 0.99 target is especially unstable.
+
+| Student | Accuracy answering everything | Target | Share answered by the student | Accuracy on that share | Overall accuracy if a perfect reviewer takes the rest |
+|---|---|---|---|---|---|
+| tfidf + LR | 91.2% | 95% | 91.9% | 95.2% | 95.6% |
+| tfidf + LR | 91.2% | 97% | 83.0% | 97.8% | 98.2% |
+| tfidf + LR | 91.2% | 99% | 65.0% | 99.1% | 99.4% |
+| static potion-32M + LR | 91.0% | 95% | 93.4% | 94.3% | 94.7% |
+| static potion-32M + LR | 91.0% | 97% | 79.8% | 97.7% | 98.2% |
+| static potion-32M + LR | 91.0% | 99% | 55.4% | 99.2% | 99.6% |
+| frozen bge-small + LR | 93.2% | 95% | 99.6% | 93.5% | 93.5% |
+| frozen bge-small + LR | 93.2% | 97% | 92.7% | 96.1% | 96.4% |
+| frozen bge-small + LR | 93.2% | 99% | 72.7% | 99.1% | 99.4% |
+| fine-tuned MiniLM-L6 (22M) | 90.5% | 95% | 85.5% | 95.7% | 96.3% |
+| fine-tuned MiniLM-L6 (22M) | 90.5% | 97% | 77.1% | 97.4% | 98.0% |
+| fine-tuned MiniLM-L6 (22M) | 90.5% | 99% | 58.7% | 99.0% | 99.4% |
+
+Escalating to the real local LLM from E2 instead of a perfect reviewer (1,000 test texts):
+
+| Student | Target | Escalated | Student alone | LLM alone | Student on escalated items | LLM on escalated items | Cascade accuracy |
+|---|---|---|---|---|---|---|---|
+| tfidf + LR | 95% | 7.3% | 92.0% | 59.2% | 49.3% | 34.2% | 90.9% |
+| tfidf + LR | 97% | 16.2% | 92.0% | 59.2% | 63.0% | 43.2% | 88.8% |
+| tfidf + LR | 99% | 33.2% | 92.0% | 59.2% | 76.8% | 43.4% | 80.9% |
+| static potion-32M + LR | 95% | 7.0% | 90.8% | 59.2% | 42.9% | 35.7% | 90.3% |
+| static potion-32M + LR | 97% | 20.1% | 90.8% | 59.2% | 60.7% | 39.8% | 86.6% |
+| static potion-32M + LR | 99% | 43.0% | 90.8% | 59.2% | 79.1% | 47.2% | 77.1% |
+| frozen bge-small + LR | 95% | 0.7% | 93.4% | 59.2% | 14.3% | 14.3% | 93.4% |
+| frozen bge-small + LR | 97% | 7.0% | 93.4% | 59.2% | 54.3% | 35.7% | 92.1% |
+| frozen bge-small + LR | 99% | 27.3% | 93.4% | 59.2% | 76.9% | 41.4% | 83.7% |
+| fine-tuned MiniLM-L6 (22M) | 95% | 13.8% | 89.8% | 59.2% | 56.5% | 40.6% | 87.6% |
+| fine-tuned MiniLM-L6 (22M) | 97% | 23.2% | 89.8% | 59.2% | 65.5% | 45.3% | 85.1% |
+| fine-tuned MiniLM-L6 (22M) | 99% | 42.8% | 89.8% | 59.2% | 77.1% | 48.4% | 77.5% |

@@ -69,7 +69,10 @@ def test_plenty_of_labels_adds_fine_tuning_sized_for_the_hardware():
 
 def test_zero_labels_paths():
     bare = plan(TaskSpec(n_classes=6), CPU)
-    assert names(bare).startswith("zero-shot") and len(bare.steps) == 1
+    # With no labels the plan is: look at zero-shot, then hand-label a few per class (the cheapest
+    # large gain measured in E1 / E2).
+    assert [s.name for s in bare.steps] == ["zero-shot by label description",
+                                            "label about 8 examples per class by hand"]
     assert any("anchor" in w for w in bare.warnings)
     with_pool = plan(TaskSpec(n_classes=6, n_unlabelled=5000), CPU, Constraints(teacher_available=True))
     assert "teacher-label the unlabelled pool" in names(with_pool)

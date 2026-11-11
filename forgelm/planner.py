@@ -173,11 +173,18 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
                        "ZeroShotStudent: embed a one-line description of each label, classify by similarity",
                        "the only option with no labels; treat the output as a first look and as a shortlister",
                        ["e1-zeroshot"], ["sentence_transformers"], student="zero_shot"))
+        S.append(_step(hw, "label about 8 examples per class by hand",
+                       "EmbeddingStudent('BAAI/bge-small-en-v1.5', backend='sentence') on the hand-labelled set",
+                       "the cheapest large gain measured here: 8 labels per class with a frozen encoder "
+                       "reached 85.8% on a 77-class task, against 68.0% zero-shot and 59-67% for students "
+                       "trained on 2,000 texts labelled by a small local LLM or a zero-shot model",
+                       ["e1-ladder", "e2-teacher"], ["sentence_transformers", "sklearn"], student="encoder"))
         if c.teacher_available and task.n_unlabelled > 0:
             S.append(_step(hw, "teacher-label the unlabelled pool, then train a student",
                            "distill(LocalLLMTeacher or ChatCompletionsTeacher, EmbeddingStudent, pool, anchor)",
-                           "turns an LLM's judgement into a model that needs no LLM at inference; the student "
-                           "is bounded by the teacher, so score both on a human-labelled anchor",
+                           "turns an LLM's judgement into a model that needs no LLM at inference, but the "
+                           "student is bounded by the teacher: score the teacher on a human-labelled anchor "
+                           "first, and only distil if it beats what a few hand labels give",
                            ["e2-teacher", "llm-labeller"], ["sentence_transformers", "torch"],
                            student="embedding", teacher=True))
         elif c.teacher_available:
@@ -230,8 +237,9 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
         if c.teacher_available and task.n_unlabelled >= 500:
             S.append(_step(hw, "enlarge the training set with teacher labels",
                            "distill(teacher, student, unlabelled_pool, anchor) with soft labels",
-                           "unlabelled in-domain text plus a teacher is usually cheaper than more human labels; "
-                           "only worth it if the teacher beats the student trained on the human labels alone",
+                           "worth it only if the teacher, scored on the anchor, beats the student trained on "
+                           "the human labels alone; a 1.5B local LLM did not in the measurement here, so use the "
+                           "strongest teacher available",
                            ["e2-teacher", "llm-labeller"], ["torch", "transformers"], teacher=True))
 
     # ---- deployment ------------------------------------------------------
@@ -252,8 +260,9 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
     if c.llm_at_inference:
         S.append(_step(hw, "escalate low-confidence items to a larger model",
                        "threshold_for_accuracy on validation -> simulate_cascade",
-                       "keeps the LLM for the minority of items the small model is unsure about; verify the "
-                       "larger model is actually better on the escalated items",
+                       "keeps the LLM for the minority of items the small model is unsure about, and only "
+                       "helps if the larger model is more accurate on exactly those items: in the measurement "
+                       "here, escalating to a 1.5B local LLM lowered accuracy at every threshold",
                        ["e5-cascade", "cascade-negative"]))
 
     plan.guardrails += [

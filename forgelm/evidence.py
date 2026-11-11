@@ -52,7 +52,11 @@ EVIDENCE: Dict[str, dict] = {
     },
     "e2-teacher": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "On Banking77 with no human training labels, a local 1.5B LLM teacher scored 59.2% on a 1,000-text "
+                 "human-labelled anchor, below the zero-shot embedding model that shortlisted its options (67.5%). "
+                 "Students trained on 2,000 teacher-labelled texts landed within 4 points of their teacher (59-63% from "
+                 "the LLM, 64-67% from the embedder), far below the same students trained on 8 human labels per class "
+                 "(79.9% and 85.9%). A student is bounded by its teacher: measure the teacher on an anchor first.",
         "source": "experiments/results/e2_teacher_distillation.json",
     },
     "e3-int8": {
@@ -67,7 +71,12 @@ EVIDENCE: Dict[str, dict] = {
     },
     "e5-cascade": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "With calibrated full-data Banking77 students and a confidence threshold chosen on 385 held-out "
+                 "examples, the frozen-encoder student answered 92.7% of test texts at 96.1% accuracy (target 97%) and "
+                 "72.7% at 99.1% (target 99%); targets were met to within about 1.5 points, so a small anchor gives a "
+                 "noisy threshold. Escalating the uncertain items to a 1.5B local LLM lowered accuracy in every "
+                 "configuration, because that LLM was less accurate than the student even on the items the student "
+                 "was unsure about.",
         "source": "experiments/results/e5_cascade.json",
     },
     "e6-screening": {
