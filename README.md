@@ -187,9 +187,11 @@ bash experiments/run_all.sh
 python experiments/report.py
 ```
 
-`run_all.sh` reruns every experiment (about two and a half hours on four CPU
-cores; models and datasets download from the Hugging Face Hub). `report.py`
-regenerates `experiments/RESULTS.md` from the result files.
+`run_all.sh` runs every experiment whose result file is missing, so an
+interrupted run resumes where it stopped (`FORCE=1` re-runs everything; the
+full set takes about four hours on four CPU cores, and models and datasets
+download from the Hugging Face Hub). `report.py` regenerates
+`experiments/RESULTS.md` from the result files.
 
 ## Status
 

@@ -9,7 +9,9 @@ Read `docs/ARCHITECTURE.md` first.
 - Tests (no GPU, network or model downloads): `python -m pytest tests/factory -q`
 - Slow tests that download a small model: `python -m pytest tests/factory -q -m slow`
 - Hardware report: `python -m forgelm doctor`
-- Experiments: `bash experiments/run_all.sh`, then `python experiments/report.py`
+- Experiments: `bash experiments/run_all.sh` (skips steps whose result file exists; `FORCE=1` re-runs),
+  then `python experiments/report.py`. A full run takes about four hours: start it detached
+  (`setsid nohup ... &`), because tool sessions stop background commands after two hours.
 
 ## Conventions
 
