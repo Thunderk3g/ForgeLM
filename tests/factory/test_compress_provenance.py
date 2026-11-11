@@ -61,6 +61,20 @@ def test_eval_contract_checks_thresholds_and_data(tmp_path):
     assert EvalContract.load(path).dataset_sha256 == contract.dataset_sha256
 
 
+def test_eval_contract_fails_metrics_that_are_not_finite_numbers():
+    # NaN is neither below a minimum nor above a limit, so a plain comparison
+    # would pass it. roc_auc is NaN whenever the hold-out has only one class.
+    contract = EvalContract("demo", "0" * 64, 3, {"roc_auc": 0.8, "ece": 0.05})
+    for bad in (float("nan"), np.float64("nan"), float("inf"), float("-inf"), None, "0.9"):
+        for metrics in ({"roc_auc": bad, "ece": 0.01}, {"roc_auc": 0.9, "ece": bad}):
+            result = contract.check(metrics)
+            assert not result["passed"], metrics
+            assert len(result["failures"]) == 1 and "not a finite number" in result["failures"][0]
+    assert "roc_auc is nan" in contract.check({"roc_auc": float("nan"), "ece": 0.01})["failures"][0]
+    # numpy scalars and plain ints are still ordinary numbers
+    assert contract.check({"roc_auc": np.float32(0.9), "ece": 0})["passed"]
+
+
 def test_run_record_writes_card_and_bom(tmp_path):
     (tmp_path / "model.bin").write_bytes(b"weights")
     record = RunRecord(

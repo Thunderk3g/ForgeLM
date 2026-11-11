@@ -214,18 +214,29 @@ def threshold_for_accuracy(y_true, probs, target_accuracy: float) -> OperatingPo
     Choose it on a validation set, then report coverage on the test set with
     :func:`apply_threshold`; a threshold tuned and reported on the same data
     is optimistic.
+
+    The returned coverage and accuracy are exactly what
+    ``apply_threshold(y_true, probs, threshold)`` gives on the same data.
     """
     p = _as_probs(probs)
     y = np.asarray(y_true, dtype=np.int64)
     conf = p.max(1)
     order = np.argsort(-conf, kind="mergesort")
+    sorted_conf = conf[order]
     correct = (p.argmax(1) == y)[order]
     cum = np.cumsum(correct) / np.arange(1, len(y) + 1)
-    ok = np.where(cum >= target_accuracy)[0]
+    # A threshold answers every item at or above it, so items that share a
+    # confidence are answered together or not at all. Only the last item of
+    # each run of equal confidences is a cut a threshold can really make;
+    # cutting inside a run would report fewer answered items than
+    # apply_threshold then answers, at a better accuracy than it then gets.
+    reachable = np.ones(len(y), dtype=bool)
+    reachable[:-1] = sorted_conf[:-1] != sorted_conf[1:]
+    ok = np.where(reachable & (cum >= target_accuracy))[0]
     if len(ok) == 0:
         return OperatingPoint(1.0 + 1e-9, 0.0, float("nan"), False)
     n = int(ok[-1]) + 1
-    return OperatingPoint(float(conf[order][n - 1]), n / len(y), float(cum[n - 1]), True)
+    return OperatingPoint(float(sorted_conf[n - 1]), n / len(y), float(cum[n - 1]), True)
 
 
 def apply_threshold(y_true, probs, threshold: float) -> OperatingPoint:

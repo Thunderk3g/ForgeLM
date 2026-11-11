@@ -120,14 +120,46 @@ _PACKAGE = {"logreg": "sklearn", "hist_gbdt": "sklearn", "lightgbm": "lightgbm",
             "tabicl": "tabicl"}
 
 
+class SplitError(ValueError):
+    """The train/test split cannot be scored; the caller has to re-split."""
+
+
+def _encode_labels(y_train, y_test):
+    """Recode labels to 0..k-1 by the sorted classes of the training split.
+
+    Every model orders its ``predict_proba`` columns by the sorted classes it
+    was fitted on. Fitting on 0..k-1 makes column ``i`` the probability of
+    class ``i`` by construction, whatever the caller's encoding was ({1, 2},
+    strings, or integers with a class missing from the training rows).
+    """
+    y_train, y_test = np.asarray(y_train), np.asarray(y_test)
+    classes = np.unique(y_train)  # sorted
+    if len(classes) < 2:
+        raise SplitError(f"the training split holds {len(classes)} class(es) {classes.tolist()}; "
+                         "a classifier needs at least two")
+    unseen = np.setdiff1d(np.unique(y_test), classes)
+    if len(unseen):
+        # A model has no probability column for a class it never saw, so every
+        # such row would be scored as wrong against some other class's column.
+        raise SplitError(f"the test split contains class(es) {unseen.tolist()} that are absent from the "
+                         "training split; re-split so every class has training rows (stratify by class)")
+    return np.searchsorted(classes, y_train), np.searchsorted(classes, y_test), classes
+
+
 def run_ladder(train_df, y_train, test_df, y_test, models: Sequence[str] = AVAILABLE, seed: int = 0,
                skip_missing: bool = True) -> List[TabularResult]:
-    """Fit each model on the same split and score it with the same metrics."""
+    """Fit each model on the same split and score it with the same metrics.
+
+    Labels may use any encoding. With two classes the positive class is the
+    one that sorts last (1 of {0, 1}, 2 of {1, 2}, "yes" of {"no", "yes"}).
+    Raises :class:`SplitError` (a ``ValueError``) if the test split contains a
+    class the training split does not.
+    """
     import importlib.util
 
     results: List[TabularResult] = []
-    y_train, y_test = np.asarray(y_train), np.asarray(y_test)
-    binary = len(np.unique(y_train)) == 2
+    y_train, y_test, classes = _encode_labels(y_train, y_test)
+    binary = len(classes) == 2
     for name in models:
         module = {"sklearn": "sklearn", "lightgbm": "lightgbm", "interpret": "interpret", "tabicl": "tabicl"}[
             _PACKAGE[name]]

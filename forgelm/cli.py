@@ -156,26 +156,45 @@ def cmd_tabular(args) -> int:
     import numpy as np
     import pandas as pd
 
-    from .tabular import AVAILABLE, run_ladder
+    from .tabular import AVAILABLE, SplitError, run_ladder
 
     df = pd.read_csv(args.data)
     y_raw = df[args.target]
     classes = sorted(y_raw.astype(str).unique())
     y = y_raw.astype(str).map({c: i for i, c in enumerate(classes)}).values
     X = df.drop(columns=[args.target])
-    perm = np.random.default_rng(args.seed).permutation(len(df))
-    cut = int(len(df) * (1 - args.test_fraction))
-    tr, te = perm[:cut], perm[cut:]
+    # Split each class separately. One shuffle of all rows can put every row
+    # of a rare class in the test part, and a model cannot be scored on a
+    # class it was never trained on. Each class keeps at least one training
+    # row; a class with a single row is therefore trained on but not tested.
+    rng = np.random.default_rng(args.seed)
+    tr_parts, te_parts = [], []
+    for c in range(len(classes)):
+        rows = rng.permutation(np.flatnonzero(y == c))
+        cut = max(1, int(len(rows) * (1 - args.test_fraction)))
+        tr_parts.append(rows[:cut])
+        te_parts.append(rows[cut:])
+    # Shuffle again so the rows are not grouped by class.
+    tr, te = rng.permutation(np.concatenate(tr_parts)), rng.permutation(np.concatenate(te_parts))
     models = args.models or list(AVAILABLE)
-    results = run_ladder(X.iloc[tr].reset_index(drop=True), y[tr], X.iloc[te].reset_index(drop=True), y[te],
-                         models, seed=args.seed)
+    # Hand over the class names, not their positions, so that an error from
+    # run_ladder names the values that are in the CSV. It encodes them in the
+    # same sorted order as ``classes``.
+    names = np.asarray(classes)
+    try:
+        results = run_ladder(X.iloc[tr].reset_index(drop=True), names[y[tr]],
+                             X.iloc[te].reset_index(drop=True), names[y[te]], models, seed=args.seed)
+    except SplitError as exc:
+        print(f"cannot benchmark {args.data}: {exc}", file=sys.stderr)
+        return 2
     key = "roc_auc" if len(classes) == 2 else "accuracy"
     print(f"{'model':12} {key:>9} {'brier':>8} {'ece':>8} {'fit s':>8} {'predict s':>10}")
     for r in sorted(results, key=lambda r: -r.metrics[key]):
         m = r.metrics
         print(f"{r.model:12} {m[key]:9.4f} {m['brier']:8.4f} {m['ece']:8.4f} {r.fit_seconds:8.2f} "
               f"{r.predict_seconds:10.2f}")
-    print("random split; if rows are ordered in time or grouped by customer, split that way instead")
+    print("random split, stratified by class; if rows are ordered in time or grouped by customer, split that way "
+          "instead")
     return 0
 
 

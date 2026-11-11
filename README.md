@@ -161,6 +161,16 @@ Factory endpoints, through the gateway at `/api/v1/factory`:
 | `POST /review-call` | BFSI sales-call screen |
 | `GET /usecases` | BFSI use-case map |
 
+Factory service settings (environment variables):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `FACTORY_MODELS_DIR` | `/app/models/factory` | where trained classifiers are stored |
+| `FACTORY_ALLOWED_MODELS` | the ladder's six default models | comma-separated Hugging Face repo ids a request may name as `model`; anything else is refused |
+| `FACTORY_MAX_TRAIN_ROWS` | 50000 | rows per training request |
+| `FACTORY_MAX_PREDICT_ROWS` | 10000 | texts per predict or review-call request |
+| `FACTORY_MAX_TEXT_CHARS` | 20000 | characters per text on predict and review-call |
+
 ## Tests and experiments
 
 ```bash

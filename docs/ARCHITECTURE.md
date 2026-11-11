@@ -174,6 +174,33 @@ without any of them.
 | Backend selection for NVIDIA / AMD / Apple / Intel | tested against reference profiles, **not on real devices** |
 | Front end | unchanged; no UI for the factory yet |
 
+### Independent review
+
+After the first version was written, a separate reviewer read the new code
+and reported 14 defects. All were fixed, each fix was checked by a second
+independent reviewer, and each has a regression test. The ones that mattered
+most:
+
+- A queued fine-tuning job was invisible (`/status` returned 404, cancel
+  failed) until the job ahead of it finished.
+- Rank-stabilised LoRA was switched on automatically at rank 32 and above,
+  silently multiplying the adapter's effective step (8x at rank 64, alpha 128).
+  It is now opt-in.
+- Teacher answers that could not be parsed became class-0 training labels.
+- A confidence threshold could split a group of tied confidences, reporting
+  better accuracy and lower coverage than the threshold delivers.
+- The evaluation contract passed a metric that was NaN.
+- Tabular scoring assumed labels were encoded 0..k-1.
+- The factory service accepted a classifier name with a trailing newline,
+  could interleave two concurrent trainings of the same name, and would load
+  any model id a request named.
+- Two experiments compared numbers computed under different settings.
+
+Known and not fixed: `stream_logs` in the training service makes a blocking
+queue read inside an async generator, which can hold the event loop for up to
+a second per heartbeat (older behaviour); cancelling a job that is already
+running sets a flag but does not stop the trainer thread.
+
 ## 5. What is still owed, in order
 
 1. **Run the changed training path on a real GPU** before merging to a

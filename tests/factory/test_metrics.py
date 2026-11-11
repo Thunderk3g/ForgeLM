@@ -72,6 +72,54 @@ def test_threshold_for_accuracy_and_coverage():
     assert not never.target_met and never.coverage == 0.0
 
 
+def _agrees_with_apply_threshold(y, probs, target):
+    op = M.threshold_for_accuracy(y, probs, target)
+    applied = M.apply_threshold(y, probs, op.threshold)
+    assert applied.coverage == pytest.approx(op.coverage)
+    if op.target_met:
+        assert applied.selective_accuracy == pytest.approx(op.selective_accuracy)
+        assert applied.selective_accuracy >= target
+    else:
+        assert op.coverage == 0.0 and np.isnan(op.selective_accuracy)
+    return op
+
+
+def test_threshold_for_accuracy_does_not_split_tied_confidences():
+    # Four items at the same confidence, three correct. A threshold answers all
+    # four or none, so 100% accuracy is not reachable; reporting "3 of 4
+    # answered, all correct" would describe a cut no threshold can make.
+    y = np.array([0, 0, 0, 1])
+    probs = np.tile([1.0, 0.0], (4, 1))
+    op = _agrees_with_apply_threshold(y, probs, 1.0)
+    assert not op.target_met
+    # The same four items do meet a 75% target, with everything answered.
+    op = _agrees_with_apply_threshold(y, probs, 0.75)
+    assert op.target_met and op.coverage == 1.0 and op.selective_accuracy == 0.75 and op.threshold == 1.0
+
+    # Two tied groups: 0.9 (4 items, all correct) and 0.6 (4 items, 2 correct).
+    # 6 of 8 would be 83% if the lower group could be cut in half; it cannot,
+    # so a 0.8 target stops at the 0.9 group.
+    y = np.zeros(8, dtype=int)
+    probs = np.array([[0.9, 0.1]] * 4 + [[0.6, 0.4]] * 2 + [[0.4, 0.6]] * 2)
+    op = _agrees_with_apply_threshold(y, probs, 0.8)
+    assert op.target_met and op.threshold == 0.9 and op.coverage == 0.5 and op.selective_accuracy == 1.0
+    op = _agrees_with_apply_threshold(y, probs, 0.75)
+    assert op.target_met and op.threshold == 0.6 and op.coverage == 1.0 and op.selective_accuracy == 0.75
+
+
+def test_threshold_for_accuracy_agrees_with_apply_threshold_on_coarse_confidences():
+    # Confidences rounded to one decimal produce many ties, as real models
+    # with few distinct scores (trees, small ensembles) do.
+    rng = np.random.default_rng(3)
+    for _ in range(20):
+        n = 60
+        conf = np.round(rng.uniform(0.5, 1.0, n), 1)
+        y = (rng.random(n) > conf).astype(int)  # predicted class is 0; right with probability conf
+        probs = np.stack([conf, 1 - conf], 1)
+        for target in (0.6, 0.8, 0.95, 1.0):
+            _agrees_with_apply_threshold(y, probs, target)
+
+
 def test_cascade_reports_whether_escalation_helps():
     y = np.array([0, 0, 1, 1])
     small = np.array([[0.95, 0.05], [0.55, 0.45], [0.45, 0.55], [0.6, 0.4]])  # last one wrong, unsure

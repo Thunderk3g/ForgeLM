@@ -73,9 +73,7 @@ def test_lora_config_mapping():
     name, cfg, notes = lora_config("dora", rank=16)
     assert name == "LoraConfig" and cfg["use_dora"] is True and "use_rslora" not in cfg and notes
     _, cfg, notes = lora_config("lora", rank=64)
-    assert cfg["use_rslora"] is True and cfg["lora_alpha"] == 128
-    _, cfg, _ = lora_config("lora", rank=64, auto_rslora=False)
-    assert "use_rslora" not in cfg
+    assert "use_rslora" not in cfg and cfg["lora_alpha"] == 128 and notes == []
     _, cfg, _ = lora_config("pissa", rank=8, alpha=8, target_modules=["q_proj"])
     assert cfg["init_lora_weights"].startswith("pissa") and cfg["target_modules"] == ["q_proj"]
     assert lora_config("oft")[0] == "OFTConfig"
@@ -84,8 +82,70 @@ def test_lora_config_mapping():
     assert {"lora", "qlora", "dora", "pissa", "oft"} <= set(PEFT_METHODS)
 
 
-@pytest.mark.parametrize("method", ["lora", "qlora", "rslora", "dora", "pissa", "olora", "oft"])
-def test_configs_are_accepted_by_the_installed_peft(method):
+@pytest.mark.parametrize("method", ["lora", "qlora", "dora", "pissa", "olora"])
+@pytest.mark.parametrize("rank,alpha", [(8, 16), (32, 64), (64, 128), (256, 32)])
+def test_explicit_rank_and_alpha_are_returned_unchanged_with_no_rescaling(method, rank, alpha):
+    # rsLoRA scales the update by alpha/sqrt(rank) instead of alpha/rank, so switching it on behind the
+    # caller's back would change the effective step size (8x at rank 64) for the same request.
+    _, cfg, notes = lora_config(method, rank=rank, alpha=alpha)
+    assert cfg["r"] == rank and cfg["lora_alpha"] == alpha
+    assert "use_rslora" not in cfg
+    assert not any("rslora" in n for n in notes)
+
+
+def test_rank_stabilised_scaling_is_opt_in_and_says_what_it_changes():
+    for kwargs in ({"method": "rslora", "rank": 8}, {"method": "rslora", "rank": 64},
+                   {"method": "lora", "rank": 64, "auto_rslora": True},
+                   {"method": "dora", "rank": 32, "auto_rslora": True}):
+        _, cfg, notes = lora_config(**kwargs)
+        assert cfg["use_rslora"] is True, kwargs
+        assert cfg["lora_alpha"] == 2 * kwargs["rank"]  # alpha itself is left alone
+        assert any("alpha/sqrt(rank)" in n and "learning rate" in n for n in notes), kwargs
+    # the automatic switch only applies from rank 32 upwards, and never to methods with their own init
+    assert "use_rslora" not in lora_config("lora", rank=31, auto_rslora=True)[1]
+    assert "use_rslora" not in lora_config("pissa", rank=64, auto_rslora=True)[1]
+
+
+def test_loftq_is_not_advertised():
+    # peft needs a loftq_config and the unquantised base model, neither of which a request can supply
+    assert "loftq" not in PEFT_METHODS
+    with pytest.raises(ValueError, match="unsupported PEFT method"):
+        lora_config("loftq")
+
+
+# Derived from PEFT_METHODS, not a hand-written list, so a method cannot be advertised without being checked.
+@pytest.mark.parametrize("method", sorted(PEFT_METHODS))
+@pytest.mark.parametrize("rank", [8, 64])
+def test_configs_are_accepted_by_the_installed_peft(method, rank):
     peft = pytest.importorskip("peft")
-    name, cfg, _ = lora_config(method, rank=8)
-    assert getattr(peft, name)(**cfg) is not None
+    name, cfg, _ = lora_config(method, rank=rank)
+    config = getattr(peft, name)(**cfg)
+    assert config.r == rank
+    if name == "LoraConfig":
+        assert config.use_rslora is (method == "rslora")
+
+
+@pytest.mark.parametrize("kwargs,message", [
+    ({"params_billion": -1}, "params_billion"), ({"params_billion": 0}, "params_billion"),
+    ({"params_billion": float("nan")}, "params_billion"),
+    ({"params_billion": 3, "bits": 5}, "bits"), ({"params_billion": 3, "bits": 0}, "bits"),
+    ({"params_billion": 3, "batch_size": 0}, "batch_size"), ({"params_billion": 3, "seq_len": 0}, "seq_len"),
+    ({"params_billion": 3, "seq_len": -8}, "seq_len")])
+def test_estimate_rejects_inputs_it_cannot_price(kwargs, message):
+    with pytest.raises(ValueError, match=message):
+        estimate_memory_gb(**kwargs)
+
+
+def test_callers_of_the_estimate_inherit_the_check_and_still_work():
+    gpu = reference_profile("nvidia-24gb")
+    with pytest.raises(ValueError, match="params_billion"):
+        select_backend(gpu, -3)
+    with pytest.raises(ValueError, match="batch_size"):
+        capacity(gpu, batch_size=0)
+    for bits in (4, 8, 16, 32):
+        assert estimate_memory_gb(3, bits)["total_gb"] > 0
+    # capacity probes with a small positive size and the bisection only evaluates sizes above zero,
+    # including when almost nothing fits
+    assert capacity(gpu)["max_params_billion"] > 0
+    assert largest_model_that_fits(0.5) == 0.0
+    assert largest_model_that_fits(0.0) == 0.0

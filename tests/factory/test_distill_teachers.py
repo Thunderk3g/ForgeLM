@@ -53,8 +53,63 @@ def test_confidence_filter_and_empty_result(toy_text):
     texts, y, labels = toy_text
     probs = np.full((len(texts), 3), 1 / 3)
     teacher = CallableTeacher(lambda ts: probs[: len(ts)], labels)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="no teacher labels left"):
         distill(teacher, TfidfStudent(), texts[3:], texts[:3], y[:3], min_confidence=0.9)
+    # Uniform rows name no class, so they must not reach training even with the filter off.
+    for soft in (True, False):
+        with pytest.raises(ValueError, match="no teacher labels left"):
+            distill(teacher, TfidfStudent(), texts[3:], texts[:3], y[:3], soft=soft)
+
+
+class _RecordingStudent(TfidfStudent):
+    """Remembers what it was trained on."""
+
+    def fit(self, texts, y, labels):
+        self.fit_texts, self.fit_y = list(texts), np.asarray(y)
+        return super().fit(texts, y, labels)
+
+
+@pytest.mark.parametrize("soft", [True, False])
+def test_distill_drops_uniform_teacher_rows(toy_text, soft):
+    texts, y, labels = toy_text
+    anchor_idx = list(range(0, 30, 5))
+    pool_idx = [i for i in range(30) if i not in anchor_idx]
+    pool = [texts[i] for i in pool_idx]
+    # The teacher "cannot answer" for two loan texts and two policy texts. None of them is
+    # class 0, so if the uniform rows were kept, argmax would add four wrong class-0 labels.
+    unanswered = {texts[i] for i in (11, 13, 22, 27)}
+
+    def fn(ts):
+        out = np.full((len(ts), 3), 1 / 3)
+        for i, t in enumerate(ts):
+            if t not in unanswered:
+                guess = next(j for j, l in enumerate(labels) if l in t.lower())
+                out[i] = 0.05
+                out[i, guess] = 0.9
+        return out
+
+    student = _RecordingStudent()
+    report = distill(CallableTeacher(fn, labels), student, pool, [texts[i] for i in anchor_idx], y[anchor_idx],
+                     soft=soft)
+
+    assert report.n_uninformative_dropped == 4
+    assert report.to_dict()["n_uninformative_dropped"] == 4
+    assert any("dropped 4 teacher row(s) that carry no information" in w for w in report.warnings)
+    assert report.n_unlabelled == len(pool)
+    assert report.n_used_for_training == len(pool) - 4 == len(student.fit_texts)
+    assert not unanswered & set(student.fit_texts)
+    assert student.fit_y.shape == ((len(pool) - 4, 3) if soft else (len(pool) - 4,))
+    kept_y = [y[i] for i in pool_idx if texts[i] not in unanswered]
+    assert report.label_distribution == {l: kept_y.count(j) for j, l in enumerate(labels)}
+    assert report.student_on_anchor["accuracy"] >= 0.8
+
+
+def test_distill_keeps_every_row_of_a_teacher_that_always_answers(toy_text):
+    texts, y, labels = toy_text
+    report = distill(_keyword_teacher(labels), TfidfStudent(), texts[3:], texts[:3], y[:3])
+    assert report.n_uninformative_dropped == 0
+    assert report.n_used_for_training == len(texts) - 3
+    assert not any("carry no information" in w for w in report.warnings)
 
 
 def test_student_as_teacher(toy_text):

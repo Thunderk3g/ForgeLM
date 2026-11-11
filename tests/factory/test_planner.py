@@ -115,7 +115,12 @@ def test_generation_backend_follows_hardware(hardware, backend, device):
     result = plan(TaskSpec(kind="generation", model_params_billion=3), reference_profile(hardware))
     step = next(s for s in result.steps if "LoRA fine-tune" in s.name)
     assert step.detail["backend"]["backend"] == backend and step.detail["backend"]["device"] == device
-    assert step.detail["lora"]["use_rslora"] is True
+    # plain LoRA: the plan must not switch on rank-stabilised scaling, nor say that it did
+    lora = step.detail["lora"]
+    assert (lora["r"], lora["lora_alpha"]) == (32, 64) and "use_rslora" not in lora
+    assert "plain LoRA r=32" in step.action and "with rank-stabilised scaling" not in step.action
+    assert "learning-rate sweep" in step.action
+    assert not any("LoftQ" in n["what"] and "available" in n["why"] for n in result.not_recommended)
     assert result.steps[0].name == "freeze an evaluation contract"
 
 

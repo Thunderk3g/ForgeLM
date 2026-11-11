@@ -144,33 +144,50 @@ def test_bridge_backend_advice_and_device(bridge):
 
 # ---- training service: start_fine_tuning must not block --------------------
 
-def _start_fine_tuning_source():
-    """The method's source, exec'd in isolation (the module itself needs the GPU stack to import)."""
+def _training_method_source(name):
+    """One method's source, exec'd in isolation (the module itself needs the GPU stack to import)."""
     import ast
     import textwrap
 
     path = ROOT / "src/microservices/training_service/src/services/training_service.py"
     tree = ast.parse(path.read_text())
     cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "TrainingService")
-    defs = [n for n in cls.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "start_fine_tuning"]
-    assert len(defs) == 1, "start_fine_tuning must be defined exactly once"
+    defs = [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name]
+    assert len(defs) == 1, f"{name} must be defined exactly once"
+    assert not defs[0].decorator_list, f"{name} must not carry a decorator"
     return textwrap.dedent(ast.get_source_segment(path.read_text(), defs[0]))
+
+
+def _training_namespace(*methods):
+    """The module-level names the methods use, plus the methods themselves."""
+    import os
+    import queue
+    import uuid
+
+    namespace = {"os": os, "uuid": uuid, "queue": queue, "Path": Path, "FineTuneRequest": object,
+                 "Dict": dict, "Any": object, "GPULockPriority": SimpleNamespace(HIGH=1),
+                 "task_log_queues": {}, "task_completion_flags": {}, "queued_task_ids": set(),
+                 "UNSLOTH_AVAILABLE": False, "TRANSFORMERS_AVAILABLE": True}
+    for name in methods:
+        exec(_training_method_source(name), namespace)
+    return namespace
 
 
 def test_start_fine_tuning_returns_before_training_finishes():
     import asyncio
-    import os
     import threading
     import time
-    import uuid
 
-    namespace = {"os": os, "uuid": uuid, "FineTuneRequest": object, "GPULockPriority": SimpleNamespace(HIGH=1)}
-    exec(_start_fine_tuning_source(), namespace)
-    release, started, finished = threading.Event(), threading.Event(), []
+    namespace = _training_namespace("start_fine_tuning")
+    queues, flags, queued = (namespace[k] for k in ("task_log_queues", "task_completion_flags", "queued_task_ids"))
+    release, started, finished, status_files = threading.Event(), threading.Event(), [], []
 
     class Service:
         start_fine_tuning = namespace["start_fine_tuning"]
         logger = SimpleNamespace(error=lambda *a, **k: None)
+
+        def _initialize_status_file(self, task_id, request):
+            status_files.append((task_id, request))
 
         def fine_tune(self, request, task_id):
             started.set()
@@ -178,15 +195,112 @@ def test_start_fine_tuning_returns_before_training_finishes():
             finished.append(task_id)
 
     async def scenario():
-        service = Service()
+        service, request = Service(), object()
         t0 = time.perf_counter()
-        task_id = await service.start_fine_tuning(object())
+        task_id = await service.start_fine_tuning(request)
         returned_after = time.perf_counter() - t0
+        # Visible the moment the id comes back, before the job has had any chance to run.
+        assert not started.is_set()
+        assert status_files == [(task_id, request)]
+        assert queues[task_id].empty() and flags[task_id] is False and task_id in queued
         await asyncio.sleep(0.05)  # the event loop stays responsive while the job runs
         assert started.is_set() and not finished
+
+        # A second job waits behind the first on the single worker thread. It must be
+        # visible while it waits, not only once the first job has finished.
+        second = await service.start_fine_tuning(request)
+        await asyncio.sleep(0.05)
+        assert finished == [] and second != task_id
+        assert status_files[-1] == (second, request)
+        assert second in queues and flags[second] is False and second in queued
+
         release.set()
         await asyncio.gather(*service._background_jobs)
-        return task_id, returned_after
+        return task_id, second, returned_after
 
-    task_id, returned_after = asyncio.run(scenario())
-    assert returned_after < 1.0 and finished == [task_id]
+    task_id, second, returned_after = asyncio.run(scenario())
+    assert returned_after < 1.0 and finished == [task_id, second]
+
+
+def test_start_fine_tuning_still_schedules_the_job_when_the_status_file_cannot_be_written():
+    import asyncio
+
+    namespace = _training_namespace("start_fine_tuning")
+    ran, errors = [], []
+
+    class Service:
+        start_fine_tuning = namespace["start_fine_tuning"]
+        logger = SimpleNamespace(error=lambda message, *a, **k: errors.append(message))
+
+        def _initialize_status_file(self, task_id, request):
+            raise OSError("disk full")
+
+        def fine_tune(self, request, task_id):
+            ran.append(task_id)
+
+    async def scenario():
+        service = Service()
+        task_id = await service.start_fine_tuning(object())
+        await asyncio.gather(*service._background_jobs)
+        return task_id
+
+    task_id = asyncio.run(scenario())
+    assert ran == [task_id] and task_id in namespace["task_log_queues"]
+    assert len(errors) == 1 and "disk full" in errors[0]
+
+
+def test_fine_tune_keeps_what_submission_registered_and_skips_a_job_cancelled_while_queued(tmp_path, monkeypatch):
+    import queue
+
+    monkeypatch.chdir(tmp_path)  # status files are looked up under ./logs
+    namespace = _training_namespace("fine_tune", "cancel_training")
+    queues, flags, queued = (namespace[k] for k in ("task_log_queues", "task_completion_flags", "queued_task_ids"))
+    trained, status_files, cancelled = [], [], []
+
+    class Service:
+        fine_tune = namespace["fine_tune"]
+        cancel_training = namespace["cancel_training"]
+        logger = SimpleNamespace(error=lambda *a, **k: None, info=lambda *a, **k: None)
+        active_trainings = {}
+
+        def _initialize_status_file(self, task_id, request):
+            status_files.append(task_id)
+
+        def _update_status_file_error(self, task_id, message):
+            cancelled.append((task_id, message))
+
+        def _cleanup_training_resources(self, task_id):
+            pass
+
+        def _fine_tune_with_transformers(self, request, task_id, log_queue):
+            trained.append((task_id, log_queue))
+            return {"status": "completed", "task_id": task_id}
+
+    def submit(task_id):
+        """What start_fine_tuning leaves behind for a job that is waiting its turn."""
+        queued.add(task_id)
+        queues[task_id] = queue.Queue()
+        flags[task_id] = False
+        (tmp_path / "logs").mkdir(exist_ok=True)
+        (tmp_path / "logs" / f"{task_id}_status.json").write_text("{}")
+        return queues[task_id]
+
+    service = Service()
+
+    # Submitted, then run: the same queue is handed to the trainer and the status file is not rewritten.
+    registered = submit("a")
+    assert service.fine_tune(object(), "a")["status"] == "completed"
+    assert trained == [("a", registered)] and queues["a"] is registered
+    assert status_files == [] and "a" not in queued
+
+    # Submitted, cancelled while waiting, then reached by the worker: it must not train.
+    submit("b")
+    assert service.cancel_training("b") is True
+    assert flags["b"] is True and cancelled == [("b", "Training cancelled by user")]
+    assert service.fine_tune(object(), "b")["status"] == "cancelled"
+    assert [t for t, _ in trained] == ["a"]
+    assert service.cancel_training("b") is False and service.cancel_training("unknown") is False
+
+    # Called directly, without a submission: fine_tune still sets everything up itself.
+    assert service.fine_tune(object(), "c")["status"] == "completed"
+    assert status_files == ["c"] and flags["c"] is False and trained[-1] == ("c", queues["c"])

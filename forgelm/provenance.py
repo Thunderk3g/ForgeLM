@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -79,6 +80,16 @@ class EvalContract:
                 failures.append(f"metric {metric!r} missing")
                 continue
             value = metrics[metric]
+            # NaN compares False both ways, so without this check an undefined
+            # metric (roc_auc on a one-class hold-out, say) would slip through
+            # as a pass. A metric that could not be measured has not been met.
+            try:
+                finite = math.isfinite(value)
+            except TypeError:  # None, a string, ...
+                finite = False
+            if not finite:
+                failures.append(f"{metric} is {value}, not a finite number; it cannot be checked against {limit}")
+                continue
             if metric in self.lower_is_better:
                 if value > limit:
                     failures.append(f"{metric} {value:.4f} above limit {limit}")

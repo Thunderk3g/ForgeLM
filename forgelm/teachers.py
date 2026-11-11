@@ -193,8 +193,9 @@ class ChatCompletionsTeacher(Teacher):
     Works with local servers that speak this protocol (llama.cpp server,
     Ollama, vLLM, LM Studio) as well as hosted APIs, so a regulated deployment
     can keep labelling on-premises. Returns one-hot labels; answers that do not
-    parse to a known label are returned as a uniform row so they can be
-    filtered out by confidence.
+    parse to a known label are returned as a uniform row, which
+    :func:`forgelm.distill.distill` drops before training and counts in its
+    report.
 
     The API key is read from the environment variable named by ``api_key_env``
     and never stored.

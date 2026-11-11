@@ -128,6 +128,9 @@ CONTAINER_MEMORY_LIMIT_GB = float(os.environ.get("CONTAINER_MEMORY_LIMIT_GB", "8
 # Global task management
 task_log_queues: Dict[str, queue.Queue] = {}
 task_completion_flags: Dict[str, bool] = {}
+# Jobs accepted by start_fine_tuning that the single training thread has not
+# picked up yet. cancel_training removes an id from here to stop it starting.
+queued_task_ids: set = set()
 active_sessions: Dict[str, Dict[str, Any]] = {}
 
 # Global cleanup registry for Kubernetes graceful shutdown
@@ -392,7 +395,6 @@ class TrainingService:
 
     # GPU lock methods removed - now using GPULockManager
 
-    @timed("fine_tune") 
     def _estimate_training_duration(self, request: FineTuneRequest) -> int:
         """Estimate training duration in seconds based on request parameters"""
         base_time_per_epoch = 900  # 15 minutes per epoch base estimate
@@ -432,13 +434,35 @@ class TrainingService:
         if task_id is None:
             task_id = str(uuid.uuid4())
 
-        # Initialize logging
-        log_queue = queue.Queue()
-        task_log_queues[task_id] = log_queue
-        task_completion_flags[task_id] = False
+        # start_fine_tuning registers the job (log queue, completion flag,
+        # status file) when it is submitted, which can be long before this
+        # runs. Whoever removes the id from queued_task_ids first decides what
+        # happens: if cancel_training got there first, the job must not start.
+        registered_at_submit = task_id in task_log_queues
+        try:
+            queued_task_ids.remove(task_id)
+        except KeyError:
+            if registered_at_submit:
+                self.logger.info(f"Skipping fine-tuning task {task_id}: cancelled while queued")
+                return {
+                    "status": "cancelled",
+                    "message": "Training cancelled before it started",
+                    "task_id": task_id,
+                }
 
-        # Create status file
-        self._initialize_status_file(task_id, request)
+        # Initialize logging. Reuse the queue made at submission: a client may
+        # already be streaming from it, and a new queue would leave that
+        # client waiting on one that never receives anything.
+        log_queue = task_log_queues.get(task_id)
+        if log_queue is None:
+            log_queue = queue.Queue()
+            task_log_queues[task_id] = log_queue
+        task_completion_flags.setdefault(task_id, False)
+
+        # Create the status file unless submission already wrote it, so the
+        # recorded start time stays the time the job was accepted.
+        if not (Path("logs") / f"{task_id}_status.json").exists():
+            self._initialize_status_file(task_id, request)
 
         try:
             self.logger.info(f"Starting fine-tuning task {task_id}")
@@ -1670,11 +1694,30 @@ class TrainingService:
         ``TRAINING_USE_GPU_LOCK=true`` to also hold the Redis-backed GPU lock
         for the duration of the job (off by default, matching the behaviour
         deployments have had so far).
+
+        Because jobs queue, ``fine_tune`` may not start for hours. The log
+        queue, completion flag and status file are therefore created here, so
+        status, log streaming and cancel work for a job from the moment its id
+        is returned instead of answering "not found" until its turn comes.
         """
         import asyncio
         import concurrent.futures
 
         task_id = str(uuid.uuid4())
+
+        # Neither step may stop the job being scheduled: fine_tune creates
+        # whatever is still missing when the job starts.
+        try:
+            queued_task_ids.add(task_id)
+            task_log_queues[task_id] = queue.Queue()
+            task_completion_flags[task_id] = False
+        except Exception as e:
+            self.logger.error(f"Could not register fine-tuning job {task_id} for log streaming: {e}")
+        try:
+            self._initialize_status_file(task_id, request)
+        except Exception as e:
+            self.logger.error(f"Could not write the initial status file for job {task_id}: {e}")
+
         if getattr(self, "_fine_tune_executor", None) is None:
             self._fine_tune_executor = concurrent.futures.ThreadPoolExecutor(
                 max_workers=1, thread_name_prefix="fine-tune"
@@ -1697,6 +1740,10 @@ class TrainingService:
                     await run_in_thread()
             except Exception as e:  # fine_tune records its own failures; this covers lock errors
                 self.logger.error(f"Fine-tuning job {task_id} failed: {e}")
+                # The job may never have reached fine_tune (GPU lock error).
+                # Mark it finished so log streams end instead of waiting forever.
+                queued_task_ids.discard(task_id)
+                task_completion_flags[task_id] = True
                 try:
                     self._update_status_file_error(task_id, str(e))
                 except Exception:
@@ -1832,7 +1879,20 @@ class TrainingService:
                 self.logger.error(f"Error cancelling training {task_id}: {e}")
                 return False
 
-        return False
+        # A job still waiting for the training thread is not in
+        # active_trainings yet. Taking its id out of queued_task_ids makes
+        # fine_tune skip it when its turn comes.
+        try:
+            queued_task_ids.remove(task_id)
+        except KeyError:
+            return False
+        task_completion_flags[task_id] = True  # ends any open log stream
+        try:
+            self._update_status_file_error(task_id, "Training cancelled by user")
+        except Exception as e:
+            self.logger.error(f"Error recording cancellation of queued training {task_id}: {e}")
+        self.logger.info(f"Cancelled queued training {task_id}")
+        return True
 
     def estimate_training_time(self, request: FineTuneRequest) -> Dict[str, Any]:
         """

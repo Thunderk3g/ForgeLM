@@ -35,6 +35,9 @@ class DistillReport:
     teacher_stats: dict
     label_distribution: Dict[str, int]
     warnings: List[str] = field(default_factory=list)
+    # Teacher rows left out of training because they named no class (for
+    # example an LLM answer that could not be parsed, returned as a uniform row).
+    n_uninformative_dropped: int = 0
 
     @property
     def student_minus_teacher_accuracy(self) -> float:
@@ -67,6 +70,10 @@ def distill(
     removes noise but also removes the hard cases the student most needs, so
     treat it as a knob to measure, not a default to trust.
 
+    Teacher rows that favour no class (maximum probability at the uniform
+    level ``1 / n_classes``) are always dropped, whatever ``min_confidence``
+    and ``soft`` are, and counted in ``n_uninformative_dropped``.
+
     ``teacher_probs`` / ``teacher_anchor_probs`` let a caller reuse cached
     teacher outputs (teacher calls are the expensive part).
     """
@@ -85,12 +92,32 @@ def distill(
         probs = np.asarray(teacher_probs)[keep]
     texts = [unlabelled[i] for i in keep]
 
+    # A teacher that cannot answer returns a uniform row (ChatCompletionsTeacher
+    # does this for answers it cannot parse). Such a row names no class, but
+    # argmax would still turn it into a class-0 label, both for hard labels and
+    # inside the student's soft-label handling, which keeps each row's top
+    # class. Leave these rows out of training whatever min_confidence is.
+    # Written as "not above the uniform level" so that a row of NaN is dropped
+    # too. With a single class every row sits at 1/1, so the check is skipped.
+    n_uninformative = 0
+    n_classes = probs.shape[1]
+    if n_classes > 1 and len(texts):
+        informative = probs.max(1) > 1.0 / n_classes + 1e-6
+        n_uninformative = int(len(texts) - informative.sum())
+        if n_uninformative:
+            warnings.append(f"dropped {n_uninformative} teacher row(s) that carry no information "
+                            f"(no class above the uniform level 1/{n_classes}), e.g. unparsed answers")
+            texts = [t for t, k in zip(texts, informative) if k]
+            probs = probs[informative]
+
     if min_confidence > 0:
         confident = probs.max(1) >= min_confidence
         texts = [t for t, k in zip(texts, confident) if k]
         probs = probs[confident]
     if len(texts) == 0:
-        raise ValueError("no teacher labels survived the confidence filter")
+        raise ValueError(
+            f"no teacher labels left to train on: {n_uninformative} row(s) were uninformative "
+            f"(uniform) and the rest fell below min_confidence={min_confidence}")
 
     hard = probs.argmax(1)
     counts = np.bincount(hard, minlength=len(labels))
@@ -115,6 +142,7 @@ def distill(
         teacher_stats=teacher.stats(),
         label_distribution={labels[i]: int(c) for i, c in enumerate(counts)},
         warnings=warnings,
+        n_uninformative_dropped=n_uninformative,
     )
 
 
