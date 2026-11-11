@@ -147,6 +147,8 @@ services:
       - TORCHINDUCTOR_COMPILE_THREADS=1
       - TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;8.9;9.0"
       - MAX_TRAINING_JOBS=1
+      # Hold the Redis-backed cross-service GPU lock for each fine-tuning job (see .env.example).
+      - TRAINING_USE_GPU_LOCK=${TRAINING_USE_GPU_LOCK:-false}
       - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
       # Container stability environment variables - RTX 3050 4GB Laptop with 32GB RAM
       - CONTAINER_MEMORY_LIMIT_GB=16
@@ -293,6 +295,11 @@ services:
       - SERVICE_PORT=8006
       - FACTORY_MODELS_DIR=/app/models/factory
       - HF_HOME=/app/models/hf_cache
+      # Optional limits and allow-list; see .env.example. Unset means the service defaults.
+      - FACTORY_ALLOWED_MODELS=${FACTORY_ALLOWED_MODELS:-}
+      - FACTORY_MAX_TRAIN_ROWS=${FACTORY_MAX_TRAIN_ROWS:-50000}
+      - FACTORY_MAX_PREDICT_ROWS=${FACTORY_MAX_PREDICT_ROWS:-10000}
+      - FACTORY_MAX_TEXT_CHARS=${FACTORY_MAX_TEXT_CHARS:-20000}
     volumes:
       - ./models/factory:/app/models/factory
       - ./models/hf_cache:/app/models/hf_cache

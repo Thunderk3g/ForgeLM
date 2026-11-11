@@ -49,7 +49,7 @@ _DEFAULT_ALLOWED_MODELS = ("minishlab/potion-base-32M,minishlab/potion-base-8M,B
                            "sentence-transformers/all-MiniLM-L6-v2,intfloat/multilingual-e5-small,"
                            "answerdotai/ModernBERT-base")
 ALLOWED_MODELS = tuple(m.strip() for m in
-                       os.environ.get("FACTORY_ALLOWED_MODELS", _DEFAULT_ALLOWED_MODELS).split(",") if m.strip())
+                       (os.environ.get("FACTORY_ALLOWED_MODELS") or _DEFAULT_ALLOWED_MODELS).split(",") if m.strip())
 PREFIX = "/api/v1/factory"
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 

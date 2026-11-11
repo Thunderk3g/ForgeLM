@@ -1048,9 +1048,10 @@ def test_estimate_measurement_and_verdict_are_reported_together(tiny_gpt2):
     assert report["estimate"] == estimate_memory_gb(result["total_params"] / 1e9, 32, 2, 32, True, True)
     assert report["measurement"] is result and report["available_gb"] == 4.0 and report["headroom"] == 0.9
     assert report["verdict"] == "fits" and report["measured_fits"] is True and report["estimate_fits"] is True
-    assert report["estimate_minus_measured_gb"] == pytest.approx(report["estimate"]["total_gb"] - result["total_gb"],
-                                                                 abs=0.01)
-    assert "estimate 0.80 GiB" in report["summary"] and report["summary"].endswith(": fits")
+    # The estimate is in decimal GB and the measurement in GiB; the report converts before comparing.
+    estimate_gib = report["estimate"]["total_gb"] * 1e9 / 1024**3
+    assert report["estimate_minus_measured_gb"] == pytest.approx(estimate_gib - result["total_gb"], abs=0.01)
+    assert f"estimate {estimate_gib:.2f} GiB" in report["summary"] and report["summary"].endswith(": fits")
 
     # The verdict follows the measurement, not the estimate.
     tight = dryrun.compare_with_estimate(result, available_gb=result["total_gb"] / 2)

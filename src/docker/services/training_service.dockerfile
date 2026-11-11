@@ -7,6 +7,12 @@ COPY src/microservices/training_service/ /app/
 # Install any service-specific dependencies
 # (training service uses ML base dependencies)
 
+# llmforge_common holds the modules this service shares with the others; the files under
+# src/common, src/utils, src/models and src/config are thin shims onto it. The ML base image
+# installs it as well; installing it here keeps the service working on an older base image.
+COPY src/shared/llmforge_common /opt/llmforge_common
+RUN pip install --no-cache-dir --no-deps /opt/llmforge_common
+
 # The hardware-agnostic forgelm core (PEFT mapping, device selection, capacity estimates).
 # Pure Python and installed without dependencies, so it cannot disturb the pinned ML stack.
 COPY pyproject.toml /opt/forgelm/pyproject.toml

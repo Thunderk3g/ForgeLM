@@ -70,6 +70,22 @@ Benchmark tabular models on a CSV:
 forgelm tabular --data risk.csv --target default
 ```
 
+Specialise a small instruct model on any PyTorch device (CUDA, ROCm, XPU,
+MPS or CPU; no bitsandbytes needed) and export it for llama.cpp or Ollama:
+
+```bash
+forgelm finetune --data train.jsonl --base-model HuggingFaceTB/SmolLM2-360M-Instruct --out runs/intent --merge
+```
+
+```bash
+forgelm export-gguf --model runs/intent/merged --quant Q4_K_M --fetch-converter --out runs/intent/gguf
+```
+
+`export-gguf` checks that the chat template stored in the GGUF file renders
+the same prompt as the Hugging Face tokenizer, the usual silent failure after
+export. On a Mac, `forgelm finetune --backend mlx` writes the data and prints
+the `mlx_lm lora` command instead of training with PyTorch.
+
 ### In Python
 
 ```python
@@ -101,6 +117,19 @@ All take hard or soft labels, calibrate with `student.calibrate(...)`, and
 save to a directory. Which one wins depends on how many labels you have;
 [experiments/RESULTS.md](experiments/RESULTS.md) has the measurements.
 
+## Before training: is it worth it?
+
+- `forgelm.gate.decide` compares options (for example zero-shot embeddings, a
+  linear head on a few labels, a prompted local LLM) on the same test set and
+  recommends the cheapest one that no costlier option beats by a margin you
+  set, using a paired bootstrap interval and an exact McNemar test. When the
+  test set is too small to tell, it says so.
+- `LocalLLMTeacher(..., demonstrations=..., k_demos=5, demo_embedder=...)`
+  prompts a local LLM with the labelled examples most similar to each query.
+- `forgelm.retrieval` gives BM25, dense and hybrid search with passage
+  offsets, retrieval metrics, and `verify_quotes`, which flags any quotation in
+  a generated answer that does not occur verbatim in the cited passages.
+
 ## Hardware
 
 | Machine | Generative fine-tuning | Classifiers and tabular |
@@ -111,8 +140,11 @@ save to a directory. Which one wins depends on how many labels you have;
 | Intel Arc (XPU) | PEFT + TRL on PyTorch's native XPU backend | OpenVINO or CPU |
 | Apple Silicon | MLX-LM | MPS or CPU |
 
-Only the CPU row was exercised in this repository. The others are rules tested
-against reference hardware profiles, drawn from each project's documentation.
+Only the CPU row was exercised in this repository. The others are rules drawn
+from each project's documentation and tested against simulated devices. The
+training service follows the same rules when it loads a model: 4-bit
+bitsandbytes on NVIDIA as before, 16-bit on AMD unless quantising is asked for,
+and the device's own dtype on Intel, Apple and CPU.
 
 ## BFSI and compliance
 
@@ -144,7 +176,9 @@ docker-compose up -d
 | factory-service | 8006 | the `forgelm` core over HTTP (CPU only) |
 | orchestrator | 8080 | service discovery, GPU lock |
 
-The React dashboard is in `frontend/` (`npm install`, `npm run dev`). The
+The React dashboard is in `frontend/` (`npm install --legacy-peer-deps` because of an
+existing peer-dependency conflict, then `npm run dev`); its
+Factory page covers hardware, planning, classifier training and call review. The
 GPU-backed services expect an NVIDIA GPU and the NVIDIA Container Toolkit; the
 factory service does not. Set `HUGGINGFACE_TOKEN` in `.env` for gated models.
 

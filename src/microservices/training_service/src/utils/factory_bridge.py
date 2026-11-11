@@ -97,6 +97,74 @@ def torch_device_and_dtype():
     return "cpu", getattr(torch, dtype_name_for("cpu"))
 
 
+def causal_lm_load_plan(gpu_opts: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """How the training service should load a base causal LM on this machine.
+
+    Both training paths used to load every model with a 4-bit bitsandbytes
+    config and ``device_map="auto"``, whatever the hardware detector said. On
+    NVIDIA that is what the service was tuned for, and it is kept: the plan
+    says ``accelerator == "cuda"`` and the caller runs its existing code
+    unchanged. Everywhere else the plan replaces it:
+
+    * AMD (ROCm): 16-bit weights by default. 4-bit or 8-bit bitsandbytes
+      loading only when ``gpu_opts`` (from ``AdaptiveTrainingConfig``) asks for
+      it, which it does only when the model does not fit or the operator has
+      overridden it after checking that 4-bit works on their card.
+    * Intel (XPU) and Apple (MPS): no bitsandbytes; weights in the device's
+      dtype, then moved to the device (``device_map="auto"`` does not place
+      models on these devices).
+    * CPU: float32, no bitsandbytes.
+
+    Returns ``accelerator`` ("cuda", "rocm", "xpu", "mps", "cpu"), ``kwargs``
+    for ``from_pretrained`` (besides the path and ``trust_remote_code``),
+    ``move_to`` (device to call ``.to()`` with, or None), ``kbit`` (whether to
+    call ``prepare_model_for_kbit_training``), ``training_precision`` ("bf16",
+    "fp16" or None: the value for the service's ``model._bnb_precision``; None
+    leaves the trainer in full precision, which is the safe choice on MPS and
+    CPU) and ``reason``.
+    """
+    import torch
+
+    gpu_opts = gpu_opts or {}
+    device, dtype = torch_device_and_dtype()
+    hip = getattr(getattr(torch, "version", None), "hip", None)
+    dtype_label = {torch.bfloat16: "bf16", torch.float16: "fp16"}.get(dtype)
+
+    if device == "cuda" and not hip:
+        return {"accelerator": "cuda", "kwargs": {}, "move_to": None, "kbit": True,
+                "training_precision": dtype_label,
+                "reason": "NVIDIA: the service's existing 4-bit loading, unchanged"}
+
+    if device == "cuda":  # AMD ROCm reports through torch.cuda
+        kwargs: Dict[str, Any] = {"torch_dtype": dtype, "device_map": "auto"}
+        kbit = False
+        if gpu_opts.get("load_in_4bit") or gpu_opts.get("load_in_8bit"):
+            from transformers import BitsAndBytesConfig
+
+            if gpu_opts.get("load_in_4bit"):
+                kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_compute_dtype=dtype,
+                    bnb_4bit_use_double_quant=True)
+                reason = "AMD ROCm: 4-bit bitsandbytes, as the hardware configuration asked"
+            else:
+                kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+                reason = "AMD ROCm: 8-bit bitsandbytes, as the hardware configuration asked"
+            kbit = True
+        else:
+            reason = f"AMD ROCm: LoRA on {dtype_label or 'full-precision'} weights, no bitsandbytes"
+        return {"accelerator": "rocm", "kwargs": kwargs, "move_to": None, "kbit": kbit,
+                "training_precision": dtype_label, "reason": reason}
+
+    if device in ("xpu", "mps"):
+        return {"accelerator": device, "kwargs": {"torch_dtype": dtype}, "move_to": device, "kbit": False,
+                "training_precision": "bf16" if device == "xpu" and dtype is torch.bfloat16 else None,
+                "reason": f"{'Intel XPU' if device == 'xpu' else 'Apple MPS'}: "
+                          f"{str(dtype).replace('torch.', '')} weights on the device, no bitsandbytes"}
+
+    return {"accelerator": "cpu", "kwargs": {"torch_dtype": dtype}, "move_to": None, "kbit": False,
+            "training_precision": None, "reason": "CPU: float32 weights, no bitsandbytes"}
+
+
 def estimate_memory_gb(params_billion: float, bits: int = 16, batch_size: int = 2,
                        seq_len: int = 1024) -> Optional[Dict[str, float]]:
     """``forgelm.generative.estimate_memory_gb`` for the service, or ``None`` without forgelm.

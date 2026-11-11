@@ -30,7 +30,7 @@ except (ImportError, NotImplementedError) as e:
     print(f"Worker: Unsloth not available ({e})")
 from models.schemas import FineTuneRequest
 from utils.logging import get_logger
-from utils.factory_bridge import resolve_peft_config, torch_device_and_dtype
+from utils.factory_bridge import causal_lm_load_plan, resolve_peft_config, torch_device_and_dtype
 from services.training_common import TrainingArgsMixin
 
 # Import ML dependencies with error handling
@@ -465,24 +465,42 @@ class TrainingCore(TrainingArgsMixin):
             self.logger.warning("⚠️ Qwen models incompatible with Unsloth (bias terms prevent patching)")
             self.logger.info("Using standard BitsAndBytes 4-bit quantization instead")
 
-            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            # BitsAndBytes 4-bit config for RTX 3050 4GB
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
-                bnb_4bit_compute_dtype=torch.bfloat16 if optimal_precision['bf16'] else torch.float16,
-                bnb_4bit_use_double_quant=True,  # Nested quantization for memory
+            # How to load depends on the hardware. NVIDIA keeps the 4-bit loading this worker was
+            # tuned with; AMD, Intel, Apple and CPU follow the hardware configuration instead of
+            # always forcing bitsandbytes 4-bit (see factory_bridge.causal_lm_load_plan).
+            load_plan = causal_lm_load_plan(
+                self.adaptive_config.generate_optimal_config(request).get("gpu_optimizations")
+                if getattr(self, "adaptive_config", None) is not None else None
             )
+            self.logger.info(f"Model loading plan: {load_plan['reason']}")
+            if load_plan["accelerator"] == "cuda":
+                from transformers import BitsAndBytesConfig
 
-            self.logger.info(f"Loading model with BitsAndBytes 4-bit: compute_dtype={'bf16' if optimal_precision['bf16'] else 'fp16'}, double_quant=True")
+                # BitsAndBytes 4-bit config for RTX 3050 4GB
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
+                    bnb_4bit_compute_dtype=torch.bfloat16 if optimal_precision['bf16'] else torch.float16,
+                    bnb_4bit_use_double_quant=True,  # Nested quantization for memory
+                )
 
-            model = AutoModelForCausalLM.from_pretrained(
-                request.base_model_dir,
-                quantization_config=bnb_config,
-                device_map="auto",
-                trust_remote_code=True,
-            )
+                self.logger.info(f"Loading model with BitsAndBytes 4-bit: compute_dtype={'bf16' if optimal_precision['bf16'] else 'fp16'}, double_quant=True")
+
+                model = AutoModelForCausalLM.from_pretrained(
+                    request.base_model_dir,
+                    quantization_config=bnb_config,
+                    device_map="auto",
+                    trust_remote_code=True,
+                )
+
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    request.base_model_dir, trust_remote_code=True, **load_plan["kwargs"]
+                )
+                if load_plan["move_to"]:
+                    model = model.to(load_plan["move_to"])
 
             tokenizer = AutoTokenizer.from_pretrained(
                 request.base_model_dir,
@@ -559,8 +577,9 @@ class TrainingCore(TrainingArgsMixin):
             # Apply standard PEFT LoRA (not Unsloth) for Qwen compatibility
             from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-            # Prepare model for 4-bit training
-            model = prepare_model_for_kbit_training(model)
+            # Prepare model for k-bit training (only when it was loaded quantised)
+            if load_plan["kbit"]:
+                model = prepare_model_for_kbit_training(model)
 
             lora_config = LoraConfig(
                 r=lora_rank,

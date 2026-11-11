@@ -245,9 +245,9 @@ def cmd_finetune(args) -> int:
     try:
         result = finetune_lora(recipe, train, str(adapter_dir), eval_records=evaluation, device=args.device,
                                on_progress=progress)
-    except ValueError as exc:
-        # The model has no chat template, its template cannot be masked, or
-        # no example fits in --max-seq-len: each message says what to change.
+    except (ValueError, OSError) as exc:
+        # ValueError: the model has no chat template, its template cannot be masked, or no example fits
+        # in --max-seq-len. OSError: the base model does not exist or cannot be downloaded.
         print(f"cannot fine-tune: {exc}", file=sys.stderr)
         return 2
     summary = {"adapter": str(adapter_dir), "device": result["device"], "dtype": result["dtype"],
@@ -258,7 +258,11 @@ def cmd_finetune(args) -> int:
     if result["eval_loss_history"]:
         summary["eval_loss"] = round(result["eval_loss_history"][-1]["loss"], 4)
     if args.merge or args.eval_exact:
-        merged = merge_adapter(recipe.base_model, str(adapter_dir), str(out / "merged"))
+        try:
+            merged = merge_adapter(recipe.base_model, str(adapter_dir), str(out / "merged"))
+        except OSError as exc:
+            print(f"cannot merge the adapter: {exc}", file=sys.stderr)
+            return 2
         summary["merged"] = merged["out_dir"]
         if args.eval_exact:
             from .finetune import load_model
@@ -291,7 +295,7 @@ def cmd_export_gguf(args) -> int:
         files = {args.outtype: f16}
         if args.quant != "none":
             files[args.quant] = gguf.quantize_gguf(f16, str(out / f"{name}.{args.quant}.gguf"), args.quant)
-    except (FileNotFoundError, ImportError, RuntimeError, ValueError) as exc:
+    except (OSError, ImportError, RuntimeError, ValueError) as exc:  # OSError covers FileNotFoundError
         print(f"GGUF export failed: {exc}", file=sys.stderr)
         return 2
     from transformers import AutoTokenizer

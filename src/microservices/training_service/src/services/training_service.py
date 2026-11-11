@@ -26,7 +26,8 @@ from datasets import load_from_disk
 
 from models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
-from utils.factory_bridge import backend_advice, resolve_peft_config, torch_device_and_dtype
+from utils.factory_bridge import (backend_advice, causal_lm_load_plan, resolve_peft_config,
+                                  torch_device_and_dtype)
 from utils.performance import performance_monitor, timing_context
 from config.settings import settings
 from services.training_common import TrainingArgsMixin
@@ -818,38 +819,58 @@ class TrainingService(TrainingArgsMixin):
             self.logger.warning("⚠️ Qwen models incompatible with Unsloth (bias terms prevent patching)")
             self.logger.info("Using standard BitsAndBytes 4-bit quantization instead of Unsloth")
 
-            from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            # Determine optimal dtype
-            use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
-            compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
+            # How to load depends on the hardware. NVIDIA keeps the 4-bit loading this service
+            # was tuned with; AMD, Intel, Apple and CPU follow the hardware configuration instead
+            # of always forcing bitsandbytes 4-bit (see factory_bridge.causal_lm_load_plan).
+            load_plan = causal_lm_load_plan(gpu_opts)
+            self.logger.info(f"Model loading plan: {load_plan['reason']}")
+            if load_plan["accelerator"] == "cuda":
+                from transformers import BitsAndBytesConfig
 
-            # BitsAndBytes 4-bit config for RTX 3050 4GB
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
-                bnb_4bit_compute_dtype=compute_dtype,
-                bnb_4bit_use_double_quant=True,  # Nested quantization for memory
-            )
+                # Determine optimal dtype
+                use_bf16 = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
+                compute_dtype = torch.bfloat16 if use_bf16 else torch.float16
 
-            self.logger.info(f"Loading model with BitsAndBytes 4-bit: compute_dtype={'bf16' if use_bf16 else 'fp16'}, double_quant=True")
+                # BitsAndBytes 4-bit config for RTX 3050 4GB
+                bnb_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",  # Normal Float 4-bit
+                    bnb_4bit_compute_dtype=compute_dtype,
+                    bnb_4bit_use_double_quant=True,  # Nested quantization for memory
+                )
 
-            model = AutoModelForCausalLM.from_pretrained(
-                request.base_model_dir,
-                quantization_config=bnb_config,
-                torch_dtype=compute_dtype,  # CRITICAL: Load base weights in same dtype as compute_dtype to prevent mismatch
-                device_map="auto",
-                trust_remote_code=True,
-            )
+                self.logger.info(f"Loading model with BitsAndBytes 4-bit: compute_dtype={'bf16' if use_bf16 else 'fp16'}, double_quant=True")
+
+                model = AutoModelForCausalLM.from_pretrained(
+                    request.base_model_dir,
+                    quantization_config=bnb_config,
+                    torch_dtype=compute_dtype,  # CRITICAL: Load base weights in same dtype as compute_dtype to prevent mismatch
+                    device_map="auto",
+                    trust_remote_code=True,
+                )
+
+            else:
+                model = AutoModelForCausalLM.from_pretrained(
+                    request.base_model_dir, trust_remote_code=True, **load_plan["kwargs"]
+                )
+                if load_plan["move_to"]:
+                    model = model.to(load_plan["move_to"])
 
             tokenizer = AutoTokenizer.from_pretrained(
                 request.base_model_dir,
                 trust_remote_code=True,
             )
 
-            # Store the precision used for model loading to ensure training args match
-            model._bnb_precision = "bf16" if use_bf16 else "fp16"
-            self.logger.info(f"✅ Model loaded with {model._bnb_precision} precision - training args will match this")
+            # Store the precision used for model loading to ensure training args match. On MPS and
+            # CPU there is none to record: the trainer then runs in full precision.
+            if load_plan["accelerator"] == "cuda":
+                model._bnb_precision = "bf16" if use_bf16 else "fp16"
+            elif load_plan["training_precision"]:
+                model._bnb_precision = load_plan["training_precision"]
+            if hasattr(model, "_bnb_precision"):
+                self.logger.info(f"✅ Model loaded with {model._bnb_precision} precision - training args will match this")
 
             # Log memory after model load
             if torch.cuda.is_available():
@@ -867,8 +888,9 @@ class TrainingService(TrainingArgsMixin):
             )
             self.logger.info(f"LoRA target modules: {lora_config['target_modules']}")
 
-            # Prepare model for 4-bit training
-            model = prepare_model_for_kbit_training(model)
+            # Prepare model for k-bit training (only when it was loaded quantised)
+            if load_plan["kbit"]:
+                model = prepare_model_for_kbit_training(model)
 
             peft_lora_config = LoraConfig(
                 r=lora_config["r"],

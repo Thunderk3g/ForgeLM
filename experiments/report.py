@@ -282,5 +282,104 @@ if e6:
     out += ["Most indicative n-grams for the unfair class in the TF-IDF model: "
             + ", ".join(f"`{g.strip()}`" for g in e6["tfidf_top_ngrams_for_unfair"]) + ".", ""]
 
+# ---------------------------------------------------------------- E7
+e7 = load("e7_generative_cpu")
+if e7:
+    tr = e7["training"]
+    out += ["## E7. Specialising a small instruct model on a CPU, and exporting it to GGUF", "",
+            "**Question.** Can a small instruct model be specialised with LoRA on a CPU, and does the result "
+            "survive GGUF export and 4-bit quantisation?", "",
+            f"**Setup.** {e7['base_model']} ({e7['parameters'] / 1e6:.0f}M parameters). Banking77 restricted to "
+            f"its {len(e7['intents'])} most frequent intents, as generation: the system prompt lists the intent "
+            f"names and the model must answer with one. {e7['n_train']} training conversations, {e7['n_eval']} "
+            f"test texts, greedy decoding, exact match. LoRA rank {tr['recipe']['rank']}, "
+            f"{tr['recipe']['epochs']} epochs, {tr['dtype']} on {tr['device']}: {tr['steps']} optimizer steps in "
+            f"{tr['seconds'] / 60:.0f} minutes ({tr['tokens_per_second']:.0f} tokens / s), loss "
+            f"{tr['loss_mean_first_10pct']:.3f} over the first tenth of the run, {tr['loss_mean_last_10pct']:.3f} "
+            f"over the last. {e7['threads']} CPU threads for both PyTorch and llama.cpp.", ""]
+    labels = {"1_base_zero_shot": "Base model, zero-shot (PyTorch)",
+              "2_finetuned_pytorch": "Fine-tuned, merged float32 (PyTorch)",
+              "3_gguf_f16": "Fine-tuned, GGUF f16 (llama.cpp)",
+              "4_gguf_q4_k_m": "Fine-tuned, GGUF Q4_K_M (llama.cpp)"}
+    size_key = {"2_finetuned_pytorch": "merged_float32_safetensors", "3_gguf_f16": "gguf_f16",
+                "4_gguf_q4_k_m": "gguf_q4_k_m"}
+    rows = []
+    for key, label in labels.items():
+        s = e7["stages"].get(key, {})
+        if s.get("status") == "not run":
+            rows.append([label, "not run: " + s["reason"][:120], "", "", "", "", ""])
+            continue
+        par = s.get("parity_with_pytorch")
+        f = e7["files"].get(size_key.get(key, ""))
+        speed = s.get("decode_speed")
+        rows.append([label, pct(s["accuracy"]), pct(s["lenient_accuracy"]),
+                     pct(par["agreement"]) if par else ("reference" if key == "2_finetuned_pytorch" else ""),
+                     f"{f['mb']:,.0f}" if f else "", f"{s['seconds_per_example']:.2f}",
+                     f"{speed['new_tokens_per_second']:.1f}" if speed else ""])
+    out += [table(["Model", "Exact match", "Names the right intent", "Agreement with the PyTorch fine-tune", "MB",
+                   "Seconds per test text", "Decode tokens / s"], rows), ""]
+    notes = []
+    if e7.get("merge_check"):
+        m = e7["merge_check"]
+        notes.append(f"The adapter before merging and the merged weights agreed on {pct(m['agreement_adapter_vs_merged'])} "
+                     f"of the first {m['n']} test texts.")
+    for name, trip in (e7.get("chat_template_round_trip") or {}).items():
+        notes.append(f"Chat-template round trip on the Q4_K_M file ({name.replace('_', ' ')}): "
+                     + ("the prompt and its tokens are identical to the training tokenizer's." if trip["passed"]
+                        else "FAILED: " + "; ".join(trip["reasons"])))
+    q = e7["files"].get("gguf_q4_k_m")
+    if q and not q.get("hidden_size_multiple_of_256", True):
+        notes.append(f"Q4_K_M came out at {q['bits_per_weight']} bits per weight, not about 4.5: the hidden size "
+                     f"({q['hidden_size']}) is not a multiple of 256, so llama.cpp fell back to q5_0 / q8_0 for most "
+                     "tensors.")
+    mem = e7["memory"]
+    notes.append(f"Memory: `forgelm.generative.estimate_memory_gb` gives {mem['estimate_memory_gb']['total_gb']} GB "
+                 f"for this run (float32, batch {mem['estimate_inputs']['batch_size']}, "
+                 f"{mem['estimate_inputs']['seq_len']} tokens, no gradient checkpointing); the measured peak "
+                 f"resident memory through training was {mem['measured_peak_rss_gb_through_training']} GB.")
+    notes.append("Seconds per test text include prompt processing; llama.cpp reuses the cached system prompt between "
+                 "texts, as it would in service. Decode tokens / s are measured separately on open-ended prompts "
+                 "from an empty cache.")
+    out += [f"- {n}" for n in notes] + [""]
+
+# ---------------------------------------------------------------- E8
+e8 = load("e8_prompt_or_train")
+if e8:
+    out += ["## E8. Prompt a local LLM or train a small model?", "",
+            "**Question.** With 8 labelled examples per class, is it better to prompt a local LLM (zero-shot, or "
+            "few-shot with retrieved demonstrations) or to train an LLM-free model, and at what cost?", "",
+            f"**Setup.** Banking77. Labelled set: {e8['labelled_set']['n']} texts "
+            f"({e8['labelled_set']['per_class']} per class). Test set: {e8['test_set']['n']} texts "
+            f"({e8['test_set']['source']}). LLM: {e8['llm'].get('model', '')}. Seconds per item are measured on "
+            "this CPU after models are loaded.", ""]
+    rows = [[r["system"], pct(r["accuracy"]), pct(r["macro_f1"]), f"{r['ece']:.3f}", f"{r['seconds_per_item']:.4f}",
+             "yes" if r["needs_llm_at_inference"] else "no", r["labels_needed"]] for r in e8["systems"]]
+    out += [table(["System", "Accuracy", "Macro F1", "ECE", "Seconds / item", "LLM at inference", "Labels used"],
+                  rows), "",
+            "The gate's decision (paired bootstrap interval and exact McNemar test against the cheaper options):", "",
+            "```", e8["gate_text"].rstrip(), "```", ""]
+
+# ---------------------------------------------------------------- E9
+e9 = load("e9_retrieval")
+if e9:
+    ds = e9["dataset"]
+    out += ["## E9. Retrieval for financial question answering", "",
+            "**Question.** For financial questions, how do lexical, static-embedding, encoder-embedding and hybrid "
+            "retrieval compare, and what do they cost on a CPU?", "",
+            f"**Setup.** {ds['name']} ({ds['licence']}). {ds['queries']} test queries over {ds['passages_used']:,} "
+            f"passages: all {ds['judged_relevant_passages']:,} judged-relevant passages plus "
+            f"{ds['random_distractors']:,} random distractors from {ds['full_corpus_passages']:,}. "
+            f"{ds['comparability']}", ""]
+    rows = [[r["system"], f"{r['recall@10']:.3f}", f"{r['ndcg@10']:.3f}",
+             f"{r['ndcg@10_95ci'][0]:.3f}-{r['ndcg@10_95ci'][1]:.3f}", f"{r['mrr@10']:.3f}", f"{r['recall@100']:.3f}",
+             f"{r['index_build_seconds']:.1f}", f"{r['query_ms_mean']:.1f}", f"{r['index_size_mb']:.0f}"]
+            for r in e9["rows"]]
+    out += [table(["System", "Recall@10", "nDCG@10", "nDCG@10 95% interval", "MRR@10", "Recall@100",
+                   "Index build s", "ms / query", "Index MB"], rows), "",
+            "Paired differences in nDCG@10 (95% bootstrap interval over queries):", ""]
+    out += [f"- {name}: {v['ndcg@10_difference']:+.3f} ({v['95ci'][0]:+.3f} to {v['95ci'][1]:+.3f})"
+            for name, v in e9["paired_ndcg@10_differences"].items()]
+    out += [""]
+
 (HERE / "RESULTS.md").write_text("\n".join(out))
 print(f"wrote {HERE / 'RESULTS.md'} ({len(out)} lines)")

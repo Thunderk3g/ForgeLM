@@ -143,7 +143,32 @@ export function describeError(err: unknown): { title: string; message: string; h
             "finish on the server; refresh the classifier list in a minute.",
         }
       case 404:
+        // The service's own 404s name what is missing ("no classifier named
+        // 'x'"). FastAPI's bare "Not Found" means no route matched the path at
+        // all, which for a fixed path like /hardware means the request reached
+        // a server that does not serve it under this path. The known cause is
+        // the API gateway stripping "/api/v1/factory" before forwarding, while
+        // the factory service only serves paths that keep it.
+        if (err.message === "Not Found") {
+          return {
+            title,
+            message: `${err.message} (${FACTORY_BASE}${err.path})`,
+            hint:
+              "No route matched this path. If the request went through the API gateway, the gateway may be " +
+              "forwarding it without the /api/v1/factory prefix the factory service expects. Setting " +
+              "VITE_FACTORY_API_BASE to the service's own address (port 8006, /api/v1/factory) bypasses the " +
+              "gateway, provided the service allows this page's origin (CORS).",
+          }
+        }
         return { title, message: err.message }
+      case 500:
+        return {
+          title,
+          message: err.message,
+          hint:
+            "The service failed while handling the request; its log has the traceback. When training, a base " +
+            "model that the chosen student cannot load is a common cause.",
+        }
       case 413:
         return { title, message: err.message, hint: "The request is larger than the service accepts; split it." }
       case 422:

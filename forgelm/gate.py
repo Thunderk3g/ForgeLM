@@ -149,7 +149,8 @@ class Option:
 
 
 # Verdicts on "costlier minus cheaper" accuracy, with the interval [lo, hi].
-BETTER = "better"                      # gain >= min_gain and lo > 0: worth paying for
+# The verdict reads the bootstrap interval alone; whether McNemar agrees is kept separately ("confirmed").
+BETTER = "better"                      # gain >= min_gain and lo > 0: worth paying for, if McNemar agrees
 SLIGHTLY_BETTER = "slightly_better"    # lo > 0 but gain < min_gain: real but too small to pay for
 NO_MEANINGFUL_GAIN = "no_meaningful_gain"  # hi < min_gain: a gain worth paying for is ruled out
 WORSE = "worse"                        # hi < 0
@@ -203,7 +204,8 @@ class GateReport:
             for c in self.comparisons:
                 lines.append(f"  {c['costlier']} vs {c['cheaper']}: {_signed_pts(c['gain'])} "
                              f"[{_signed_pts(c['ci_low'])}, {_signed_pts(c['ci_high'])}], "
-                             f"p={c['mcnemar_p']:.3g} -> {c['verdict']}")
+                             f"p={c['mcnemar_p']:.3g} -> {c['verdict']}"
+                             + ("" if c["settled"] else " (not settled)"))
         lines += ["", self.reason]
         return "\n".join(lines)
 
@@ -229,18 +231,28 @@ def decide(options: Sequence[Option], y_true, min_gain: float = 0.01, alpha: flo
     per item, then labels needed. Walking from the cheapest, an option is
     rejected when some costlier option beats it by at least ``min_gain``
     (absolute accuracy, 0.01 = one point) with a ``1 - alpha`` paired
-    bootstrap interval that excludes zero. The first option not rejected is
-    recommended. The costliest option can never be rejected, so with any
-    comparable option there is always a recommendation.
+    bootstrap interval that excludes zero *and* an exact McNemar p-value of
+    at most ``alpha``. The percentile bootstrap is optimistic on small
+    samples, so a gain it alone finds is not enough to make the user pay for
+    the costlier option. The first option not rejected is recommended. The
+    costliest option can never be rejected, so with any comparable option
+    there is always a recommendation.
 
-    The report then compares every other option with the recommended one.
-    A comparison is *settled* when its interval rules out a gain worth paying
-    for, or when the interval and the exact McNemar test agree that there is
-    a difference. ``too_small_to_tell`` is set when any comparison is not
-    settled, or when the test set is so small that one item is worth more
-    than ``min_gain`` (it then cannot resolve the differences that matter).
-    The recommendation stays with the cheaper side of an unsettled
-    comparison, and the reason says so.
+    The report then compares every other option with the recommended one,
+    and marks each comparison *settled* or not:
+
+    * against a costlier option, settled when the interval rules out a gain
+      worth paying for (its upper end is below ``min_gain``), or when the
+      interval and McNemar agree that the costlier option is better;
+    * against a cheaper option (set aside because something costlier beat
+      it), settled when the interval and McNemar agree that the recommended
+      option is better.
+
+    ``too_small_to_tell`` is set when any comparison is not settled, or when
+    the test set is so small that one item is worth more than ``min_gain``
+    (it then cannot resolve the differences that matter). The recommendation
+    stays with the cheaper side of an unsettled comparison, and the reason
+    says so.
     """
     if not options:
         raise ValueError("decide needs at least one option")
@@ -278,15 +290,19 @@ def decide(options: Sequence[Option], y_true, min_gain: float = 0.01, alpha: flo
             bs = paired_bootstrap(y, cheaper.predictions, costlier.predictions, n_boot, seed, confidence)
             mc = mcnemar_exact(y, cheaper.predictions, costlier.predictions)
             verdict = _verdict(bs["difference"], bs["ci_low"], bs["ci_high"], min_gain)
-            # Settled: the interval rules a worthwhile gain out, or both tests agree there is a difference.
-            # The percentile bootstrap is optimistic on small samples, so a difference it alone finds is
-            # reported as uncertain.
-            settled = verdict == NO_MEANINGFUL_GAIN or (verdict != INCONCLUSIVE and mc["p_value"] <= alpha)
+            # Both tests must agree before the costlier option counts as better: the percentile bootstrap
+            # is optimistic on small samples, and the exact test guards against acting on that.
+            confirmed = bs["ci_low"] > 0 and mc["p_value"] <= alpha
+            # Seen from the cheaper option, the question is "is the costlier one worth paying for?". It is
+            # answered when a worthwhile gain is ruled out or when a gain is confirmed. Comparisons in which
+            # the costlier option is the recommended one are re-marked in decide(), where that is known.
+            settled = bs["ci_high"] < min_gain or confirmed
             cache[key] = {"cheaper": cheaper.name, "costlier": costlier.name,
                           "accuracy_cheaper": bs["accuracy_a"], "accuracy_costlier": bs["accuracy_b"],
                           "gain": bs["difference"], "ci_low": bs["ci_low"], "ci_high": bs["ci_high"],
                           "mcnemar_p": mc["p_value"], "cheaper_only_correct": mc["a_only_correct"],
-                          "costlier_only_correct": mc["b_only_correct"], "verdict": verdict, "settled": settled}
+                          "costlier_only_correct": mc["b_only_correct"], "verdict": verdict,
+                          "confirmed": confirmed, "settled": settled}
         return cache[key]
 
     if not testable:
@@ -297,8 +313,10 @@ def decide(options: Sequence[Option], y_true, min_gain: float = 0.01, alpha: flo
     recommended: Optional[Option] = None
     rejected: Dict[str, dict] = {}
     for i, cheap in enumerate(testable):
-        beaten = next((c for c in (compare(cheap, costly) for costly in testable[i + 1:]) if c["verdict"] == BETTER),
-                      None)
+        # A cheaper option is set aside only on a gain worth paying for that both tests confirm. A gain
+        # only the bootstrap sees leaves the comparison unsettled, and the cheaper option is kept.
+        beaten = next((c for c in (compare(cheap, costly) for costly in testable[i + 1:])
+                       if c["verdict"] == BETTER and c["confirmed"]), None)
         if beaten is None:
             recommended = cheap
             break
@@ -309,8 +327,15 @@ def decide(options: Sequence[Option], y_true, min_gain: float = 0.01, alpha: flo
     for o in testable:
         if o is recommended:
             continue
-        pair = (o, recommended) if Option.cost_key(o) < Option.cost_key(recommended) else (recommended, o)
-        comparisons.append(compare(*pair))
+        if Option.cost_key(o) < Option.cost_key(recommended):
+            # Seen from the recommended (costlier) option, the question is "is it really better than this
+            # cheaper one?", which only a confirmed gain answers. Copied so the cached entry, which may
+            # also sit in ``rejected``, keeps its own reading.
+            c = dict(compare(o, recommended))
+            c["settled"] = c["confirmed"]
+        else:
+            c = compare(recommended, o)
+        comparisons.append(c)
     coarse = min_gain > 0 and n * min_gain < 1
     too_small = coarse or any(not c["settled"] for c in comparisons)
     reason = _reason(recommended, accuracy, comparisons, rejected, untested, n, min_gain, alpha, coarse)
@@ -329,27 +354,46 @@ def _reason(rec: Option, accuracy, comparisons, rejected, untested, n: int, min_
     parts = [f"Recommend {_describe(rec, accuracy[rec.name])}."]
     if rejected:
         beaten = "; ".join(f"'{c['costlier']}' beats '{name}' ({_span(c, pct)})" for name, c in rejected.items())
-        parts.append(f"Cheaper options were beaten by enough to pay for: {beaten}.")
+        parts.append("Cheaper options were beaten by enough to pay for, with the bootstrap interval and the "
+                     f"exact McNemar test agreeing: {beaten}.")
     costlier = [c for c in comparisons if c["cheaper"] == rec.name]
     if not costlier:
         parts.append("It is the costliest option compared.")
-    words = {SLIGHTLY_BETTER: "is better, but by less than the minimum gain worth paying for",
-             NO_MEANINGFUL_GAIN: "does not gain enough to be worth paying for",
-             WORSE: "is worse"}
+
+    def settled_words(c: dict) -> str:
+        # Only a gain both tests confirm is called "better"; an interval below zero that McNemar does not
+        # confirm is still enough to rule out paying more, but is not called "worse".
+        if c["verdict"] == SLIGHTLY_BETTER and c["confirmed"]:
+            return "is better, but by less than the minimum gain worth paying for"
+        if c["verdict"] == WORSE and c["mcnemar_p"] <= alpha:
+            return "is worse"
+        return "does not gain enough to be worth paying for"
+
     settled_up = [c for c in costlier if c["settled"]]
     if settled_up:
         parts.append("Of the costlier options, " + "; ".join(
-            f"'{c['costlier']}' {words[c['verdict']]} ({_span(c, pct)})" for c in settled_up) + ".")
+            f"'{c['costlier']}' {settled_words(c)} ({_span(c, pct)})" for c in settled_up) + ".")
 
     unsettled = [c for c in comparisons if not c["settled"]]
     up = [c for c in unsettled if c["cheaper"] == rec.name]
     down = [c for c in unsettled if c["costlier"] == rec.name]
-    if up:
+    # Two ways a comparison with a costlier option stays open: the interval spans both zero and the
+    # minimum gain, or the interval excludes zero but the exact test does not confirm it.
+    wide = [c for c in up if c["ci_low"] <= 0]
+    disputed = [c for c in up if c["ci_low"] > 0]
+    if wide:
         parts.append(f"The test set of {n} items is too small to tell whether paying more helps ("
-                     + "; ".join(f"'{c['costlier']}': {_span(c, pct)}" for c in up)
+                     + "; ".join(f"'{c['costlier']}': {_span(c, pct)}" for c in wide)
                      + "): the evidence neither shows a gain of " + _pts(min_gain)
                      + " or more nor rules it out, so the recommendation stays with the cheaper option until more "
                        "labelled test items show otherwise.")
+    if disputed:
+        parts.append(f"The test set of {n} items is too small to tell whether paying more helps ("
+                     + "; ".join(f"'{c['costlier']}': {_span(c, pct)}" for c in disputed)
+                     + f"): the bootstrap interval excludes zero but the exact McNemar test does not confirm the "
+                       f"difference at p <= {alpha:.2g}; with so few items on which the two disagree the gain may be "
+                       "chance, so the recommendation stays with the cheaper option until more labelled test items "
+                       "show otherwise.")
     if down:
         parts.append(f"The test set of {n} items is also too small to tell whether the recommended option is "
                      "really better than " + "; ".join(f"'{c['cheaper']}' ({_span(c, pct)})" for c in down)

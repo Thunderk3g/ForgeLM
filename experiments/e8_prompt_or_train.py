@@ -27,6 +27,8 @@ Protocol
           labels always join the 10 options.
   * Cost: seconds per item on this CPU for the whole prediction path,
     embedding included; for the LLM including shortlisting and retrieval.
+    Each system is timed over all its test items and the total divided by
+    the item count (both are stored next to the per-item figure).
     (e) taken from E2's run when its cache is reused. Shared 4-core VM, so the
     figures are indicative.
   * ECE is of the raw probabilities. No temperature is fitted: under this
@@ -98,7 +100,21 @@ lab_texts, lab_y = [train.text.iloc[i] for i in lab_idx], train.label.values[lab
 print(f"{len(lab_idx)} labelled texts, {len(test_idx)} test texts", flush=True)
 
 tag = f"{args.per_class}pc_seed{args.seed}_{len(test_idx)}"
-probs, seconds, notes = {}, {}, {}
+n_test = len(test_texts)
+probs, notes = {}, {}
+seconds, seconds_total, items_timed = {}, {}, {}
+
+
+def record_cost(key: str, total_seconds: float, n_items: int) -> None:
+    """Store a system's cost as seconds per item: the wall time measured, over the items it covered.
+
+    Every system goes through here, so none can report the total for the whole test set as a per-item
+    figure. The total and the item count are kept too, so the result file shows how each figure was made.
+    """
+    if n_items <= 0:
+        raise ValueError(f"({key}) timed over {n_items} items")
+    seconds_total[key], items_timed[key] = float(total_seconds), int(n_items)
+    seconds[key] = float(total_seconds) / n_items
 
 
 def timed(fn):
@@ -131,10 +147,10 @@ zero_shot = ZeroShotStudent("BAAI/bge-small-en-v1.5")
 zero_shot.embedder = bge
 zero_shot.fit(labels=names, descriptions=descriptions)
 probs["a"], head_s = timed(lambda: zero_shot.proba_from_embeddings(test_bge))
-seconds["a"] = enc_s + head_s
+record_cost("a", enc_s + head_s, n_test)  # encoding the test texts is part of every bge system's cost
 
 probs["b"], head_s = timed(lambda: knn_proba(test_bge, lab_bge, lab_y, args.demos))
-seconds["b"] = enc_s + head_s
+record_cost("b", enc_s + head_s, n_test)
 
 static = Embedder("minishlab/potion-base-32M", "static")
 lab_static = static.encode(lab_texts)
@@ -143,14 +159,14 @@ student_c = EmbeddingStudent("minishlab/potion-base-32M", "static")
 student_c.embedder = static
 (_, train_c) = timed(lambda: student_c.fit(None, lab_y, names, embeddings=lab_static))
 probs["c"], head_s = timed(lambda: student_c.proba_from_embeddings(test_static))
-seconds["c"] = static_s + head_s
+record_cost("c", static_s + head_s, n_test)
 notes["c"] = f"trained in {train_c:.1f}s"
 
 student_d = EmbeddingStudent("BAAI/bge-small-en-v1.5", "sentence")
 student_d.embedder = bge
 (_, train_d) = timed(lambda: student_d.fit(None, lab_y, names, embeddings=lab_bge))
 probs["d"], head_s = timed(lambda: student_d.proba_from_embeddings(test_bge))
-seconds["d"] = enc_s + head_s
+record_cost("d", enc_s + head_s, n_test)
 notes["d"] = f"trained in {train_d:.1f}s"
 
 # --- LLM systems ------------------------------------------------------------------------------------------
@@ -188,17 +204,19 @@ if reuse_e2:
     if not np.array_equal(cached["anchor_idx"], e2_anchor_idx):
         raise SystemExit(f"{e2_cache} has different anchor indices from E2's draw; delete it or investigate")
     probs["e"] = cached["anchor"][: len(test_idx)]
-    seconds["e"] = float(cached["seconds"]) / (len(cached["pool"]) + len(cached["anchor"]))
+    # E2 timed one labelling run over its pool and its anchor together.
+    record_cost("e", float(cached["seconds"]), len(cached["pool"]) + len(cached["anchor"]))
     notes["e"] = "E2's cached labels and timing (bf16, whole machine)"
     llm_info["zero_shot_source"] = str(e2_cache.name)
 elif zs_cache.exists():
     cached = np.load(zs_cache)
-    probs["e"], seconds["e"] = cached["probs"], float(cached["seconds_per_item"])
+    probs["e"] = cached["probs"]
+    record_cost("e", float(cached["seconds_per_item"]) * n_test, n_test)
     notes["e"] = f"cached in {zs_cache.name}"
     llm_info["zero_shot_source"] = zs_cache.name
 elif run_llm:
     probs["e"], total = timed(lambda: zs_teacher.label(test_texts))
-    seconds["e"] = total / len(test_texts)
+    record_cost("e", total, n_test)
     np.savez_compressed(zs_cache, probs=probs["e"], seconds_per_item=seconds["e"], test_idx=test_idx)
     notes["e"] = f"computed here ({zs_teacher.resolved_dtype})"
     llm_info["zero_shot_source"] = zs_cache.name
@@ -207,12 +225,13 @@ if fs_cache.exists():
     cached = np.load(fs_cache)
     if not (np.array_equal(cached["test_idx"], test_idx) and np.array_equal(cached["lab_idx"], lab_idx)):
         raise SystemExit(f"{fs_cache} was computed on different items; delete it")
-    probs["f"], seconds["f"] = cached["probs"], float(cached["seconds_per_item"])
+    probs["f"] = cached["probs"]
+    record_cost("f", float(cached["seconds_per_item"]) * n_test, n_test)
     llm_info["few_shot_stats"] = json.loads(str(cached["stats"]))
     notes["f"] = f"cached in {fs_cache.name}"
 elif run_llm:
     probs["f"], total = timed(lambda: fs_teacher.label(test_texts))
-    seconds["f"] = total / len(test_texts)
+    record_cost("f", total, n_test)
     llm_info["few_shot_stats"] = fs_teacher.stats()
     np.savez_compressed(fs_cache, probs=probs["f"], seconds_per_item=seconds["f"], test_idx=test_idx,
                         lab_idx=lab_idx, stats=json.dumps(llm_info["few_shot_stats"]))
@@ -268,7 +287,8 @@ for key, (label, needs_llm, n_labels) in systems.items():
         continue
     rep = classification_report(test_y, probs[key], n_classes=n_classes)
     rows.append({"system": label, "key": key, "needs_llm_at_inference": needs_llm, "labels_needed": n_labels,
-                 "seconds_per_item": round(seconds[key], 5), "notes": notes.get(key, ""), **rounded(rep)})
+                 "seconds_per_item": round(seconds[key], 6), "seconds_timed_total": round(seconds_total[key], 3),
+                 "items_timed": items_timed[key], "notes": notes.get(key, ""), **rounded(rep)})
     options.append(Option(label, probs[key].argmax(1), needs_llm_at_inference=needs_llm,
                           seconds_per_item=seconds[key], labels_needed=n_labels, notes=notes.get(key, "")))
     print(rounded({k: rows[-1][k] for k in ("system", "accuracy", "macro_f1", "ece", "seconds_per_item")}),
@@ -276,8 +296,8 @@ for key, (label, needs_llm, n_labels) in systems.items():
 
 gate = decide(options, test_y, min_gain=args.min_gain)
 print(gate.render(), flush=True)
-np.savez_compressed(ARTIFACTS / f"e8_probs_{model_tag}_k{args.demos}_o{args.options}_{tag}.npz", test_idx=test_idx, lab_idx=lab_idx, test_y=test_y,
-                    **{k: v for k, v in probs.items()})
+np.savez_compressed(ARTIFACTS / f"e8_probs_{model_tag}_k{args.demos}_o{args.options}_{tag}.npz", test_idx=test_idx,
+                    lab_idx=lab_idx, test_y=test_y, **{k: v for k, v in probs.items()})
 
 result = {
     "experiment": "E8 prompt or train? (Banking77, few labels per class)",

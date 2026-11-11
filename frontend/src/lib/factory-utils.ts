@@ -5,6 +5,11 @@
 // them and remains the authority; where it can be configured differently
 // (row and length limits are environment variables there) nothing is
 // enforced here, so a server with raised limits is never second-guessed.
+//
+// The module has no runtime imports, so tests/factory-utils.test.ts can run
+// it under plain Node (npm test) without a bundler.
+
+import type { StudentKind } from "@/types/factory"
 
 /** The service's classifier-name rule (main.py ``_NAME``, matched in full). */
 export const CLASSIFIER_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
@@ -25,6 +30,46 @@ export const DEFAULT_ALLOWED_MODELS = [
   "intfloat/multilingual-e5-small",
   "answerdotai/ModernBERT-base",
 ]
+
+/**
+ * Whether a repo id is a model2vec static-embedding model. This is the same
+ * name test forgelm's Embedder applies for backend="auto" (students.py), so
+ * the UI and the library agree on which family a repo belongs to.
+ */
+export function isStaticModel(repo: string): boolean {
+  const lowered = repo.toLowerCase()
+  return lowered.includes("potion") || lowered.includes("model2vec") || lowered.includes("m2v")
+}
+
+/**
+ * The models a student kind can actually load. The allow-list on the service
+ * is one flat list, but the students read different file formats:
+ * ``static`` loads a model2vec StaticModel, which a transformer repo does not
+ * contain; ``encoder`` loads a SentenceTransformer and ``finetuned`` an
+ * AutoModelForSequenceClassification, neither of which a potion repo (only an
+ * embedding table) can provide. The service accepts any allow-listed repo
+ * for any student and the mismatch only shows up as an HTTP 500 when the
+ * model is loaded, so the form offers only the repos that fit.
+ */
+export function modelsForStudent(student: StudentKind, models: readonly string[]): string[] {
+  if (student === "tfidf") return []
+  if (student === "static") return models.filter(isStaticModel)
+  return models.filter((m) => !isStaticModel(m))
+}
+
+/**
+ * Rows for the "Try it" table: each text next to the prediction the service
+ * returned for it, in request order. Both arrays must come from the same
+ * request; ``complete`` is false when the service returned a different number
+ * of predictions than texts were sent, which the caller reports rather than
+ * leaving rows blank.
+ */
+export function pairPredictions<P>(texts: readonly string[], predictions: readonly P[]) {
+  const n = Math.min(texts.length, predictions.length)
+  const rows: { text: string; prediction: P }[] = []
+  for (let i = 0; i < n; i++) rows.push({ text: texts[i], prediction: predictions[i] })
+  return { rows, complete: texts.length === predictions.length }
+}
 
 /**
  * Python's round(): halves go to the even neighbour. The service sizes each

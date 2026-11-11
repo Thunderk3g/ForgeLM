@@ -356,7 +356,7 @@ module("peft", get_peft_model=MagicMock(), LoraConfig=MagicMock())
 module("models"); module("models.schemas", FineTuneRequest=object, TrainingStatus=object)
 module("utils"); module("utils.logging", get_logger=lambda name=None: MagicMock())
 module("utils.factory_bridge", backend_advice=MagicMock(), resolve_peft_config=MagicMock(),
-       torch_device_and_dtype=MagicMock())
+       torch_device_and_dtype=MagicMock(), causal_lm_load_plan=MagicMock())
 module("utils.performance", performance_monitor=MagicMock(), timing_context=MagicMock(), timed=MagicMock())
 module("utils.hardware_detection", hardware_detector=MagicMock(), AdaptiveTrainingConfig=MagicMock())
 module("config"); module("config.settings", settings=MagicMock())

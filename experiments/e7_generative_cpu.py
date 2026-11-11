@@ -271,7 +271,10 @@ from peft import PeftModel  # noqa: E402  (imported here: only this check needs 
 
 base, tokenizer = load_model(base_model, device="cpu")
 adapted = PeftModel.from_pretrained(base, str(adapter_dir)).eval()
-check_records = eval_records[:N_MERGE_CHECK]
+# Banking77's test split is grouped by intent, so take evenly spaced records rather than the first N:
+# the first 50 would cover only 2 of the 10 intents.
+check_idx = sorted({int(i) for i in np.linspace(0, len(eval_records) - 1, N_MERGE_CHECK)})
+check_records = [eval_records[i] for i in check_idx]
 adapter_check = evaluate_exact(adapted, tokenizer, check_records, max_new_tokens=MAX_NEW)
 del adapted, base
 gc.collect()
@@ -282,7 +285,7 @@ model, tokenizer = load_model(str(merged_dir), device="cpu")
 log("    evaluating the merged model in PyTorch")
 tuned = evaluate_exact(model, tokenizer, eval_records, max_new_tokens=MAX_NEW, on_progress=progress("fine-tuned"))
 result["stages"]["2_finetuned_pytorch"] = score_summary(tuned)
-merge_parity = gguf.output_parity(adapter_check["outputs"], tuned["outputs"][:N_MERGE_CHECK])
+merge_parity = gguf.output_parity(adapter_check["outputs"], [tuned["outputs"][i] for i in check_idx])
 result["merge_check"] = {"n": len(check_records), "agreement_adapter_vs_merged": round(merge_parity.agreement, 4),
                          "adapter_accuracy": round(adapter_check["accuracy"], 4)}
 result["stages"]["2_finetuned_pytorch"]["decode_speed"] = decode_speed(

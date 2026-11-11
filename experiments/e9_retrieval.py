@@ -18,7 +18,7 @@ Protocol
   * Corpus: every passage judged relevant to a test query, plus distractors
     drawn uniformly at random (seed 0) from the rest of the 57,638-passage
     corpus, up to 15,000 passages. The passages are shuffled with the same
-    seed, so no index can win a tie by position. Four in five distractors of
+    seed, so no index can win a tie by position. Three in four distractors of
     the full corpus are left out, so this corpus is EASIER than the benchmark
     and the scores are NOT comparable with published FiQA numbers. They are
     comparable with each other: every system sees the same passages.

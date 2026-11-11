@@ -71,14 +71,26 @@ Found by reading the code. Items marked **fixed** were changed in this pass.
   | `model_pairs.yaml` | 5 | 125 |
   | `schemas.py` | 3 | 247 |
 
-  Counting every byte-identical Python file of 20 lines or more, 13 files are
-  duplicated and about 11,000 of the 42,000 Python lines are redundant copies.
-  `src/shared/llmforge_contracts`
-  is an unfinished start on fixing this. Not changed here: each service's
-  Dockerfile copies only its own directory, so de-duplication means changing
-  every image, which could not be built or tested in this environment.
-- `training_service.py` (2,270 lines) and `training_service_core.py` (1,576)
-  implement the same training flow twice, in-process and in a worker.
+  Counting every byte-identical Python file of 20 lines or more, 13 groups of
+  files were duplicated, about 11,000 of the 42,000 Python lines. (fixed: one
+  installable package, `src/shared/llmforge_common`, holds each module once;
+  the 60 former copies are 13-line shims that keep every import path working,
+  and every service image installs the package. About 14,500 lines removed. A
+  test fails if two byte-identical Python files of 20+ lines reappear.)
+  Near-duplicates that have genuinely diverged were left alone: the three
+  `model_service.py` files (80-90% similar), the training service's and the
+  orchestrator's `service_orchestrator.py`, the visualization service's
+  `research_logger.py`, and the data-generation service's `schemas.py`.
+  `model_pairs.yaml` still exists in five identical copies.
+- `training_service.py` and `training_service_core.py` implement the same
+  training flow twice, in-process and in a worker. (partly fixed: the five
+  helper methods that were word-for-word identical now live once in
+  `services/training_common.py`. Five same-named methods differ in behaviour
+  and stay separate; merging them needs a GPU to verify.)
+- The model loader in both training paths always used 4-bit bitsandbytes with
+  `device_map="auto"`, whatever the hardware. (fixed: `causal_lm_load_plan` in
+  the bridge keeps that for NVIDIA, and loads 16-bit on AMD unless quantising
+  is asked for, and plain device dtype on Intel, Apple and CPU.)
 - No `pyproject.toml`, no root requirements file. (fixed: `pyproject.toml`)
 - `.gitignore` ignored every `test_*.py`, so no unit test could be committed.
   The existing tests are integration scripts that need a running GPU stack.
@@ -122,7 +134,7 @@ without any of them.
 | `forgelm.planner` | task + data + constraints + hardware to an ordered, evidence-cited plan | none |
 | `forgelm.evidence` | the claim, source and strength behind each planner rule | none |
 | `forgelm.students` | zero-shot, TF-IDF, static-embedding, frozen-encoder and fine-tuned classifiers behind one interface | per student |
-| `forgelm.teachers` | local LLM (answer-letter logits), OpenAI-compatible endpoint, any callable | per teacher |
+| `forgelm.teachers` | local LLM (answer-letter logits, optional few-shot with retrieved demonstrations), OpenAI-compatible endpoint, any callable | per teacher |
 | `forgelm.distill` | teacher to student with a human-labelled anchor; synthetic-data prompts and collapse checks | none |
 | `forgelm.metrics` | accuracy, F1, ECE, Brier, temperature scaling, abstention, cascade simulation | numpy |
 | `forgelm.compress` | ONNX export, int8 quantisation, parity gate, torch-free ONNX serving | torch for export only |
@@ -130,7 +142,12 @@ without any of them.
 | `forgelm.generative` | training backend, memory estimate, PEFT config for causal LMs | none |
 | `forgelm.provenance` | evaluation contract, run record, model card, ML-BOM | none |
 | `forgelm.packs.bfsi` | use-case map, sales-call taxonomy, rule screens, call review | none |
-| `forgelm.cli` | `forgelm doctor / plan / train / predict / tabular` | none |
+| `forgelm.finetune` | portable LoRA fine-tuning of chat models (any PyTorch device, no bitsandbytes), adapter merge, exact-match evaluation, MLX-LM command and data for Apple | per call |
+| `forgelm.gguf` | llama.cpp conversion and quantisation, chat-template round-trip check, output parity | llama-cpp-python when used |
+| `forgelm.dryrun` | a few real training steps on synthetic tokens to measure peak memory, set beside the estimate | torch when used |
+| `forgelm.retrieval` | chunking with offsets, BM25, dense and fused (RRF) search, recall / MRR / nDCG, citation formatting, verbatim-quote check | none (scipy to build BM25) |
+| `forgelm.gate` | paired bootstrap, exact McNemar and a cost-ranked "is the costlier option worth it" decision that states its uncertainty | none |
+| `forgelm.cli` | `forgelm doctor / plan / train / predict / tabular / finetune / export-gguf` | none |
 
 ### Design rules
 
@@ -160,19 +177,26 @@ without any of them.
   core over HTTP under `/api/v1/factory`: `hardware`, `plan`, `usecases`,
   `generative/advice`, `classifiers` (train, list, card, predict) and
   `review-call`.
-- **api-gateway** routes `/api/v1/factory` to it.
+- **api-gateway** routes `/api/v1/factory` to it and forwards the full path
+  (the older services receive the path with their prefix stripped).
+- **frontend** has a Factory page with four tabs (hardware, plan,
+  classifiers, call review) over that API.
 
 ## 4. Verification status
 
 | Area | Status |
 |---|---|
-| `forgelm` core | unit tests in `tests/factory/`, no GPU or network needed |
-| Student ladder, distillation, compression, tabular, cascades | measured on CPU; see `experiments/RESULTS.md` |
-| factory-service | exercised through FastAPI's test client |
-| training-service changes | compile; bridge and `start_fine_tuning` have unit tests. **Not run end to end**: no GPU, Unsloth or Redis here |
-| Docker images, compose, Kubernetes manifests | edited, **not built** |
-| Backend selection for NVIDIA / AMD / Apple / Intel | tested against reference profiles, **not on real devices** |
-| Front end | unchanged; no UI for the factory yet |
+| `forgelm` core | unit tests in `tests/factory/` (about 560), no GPU or network needed |
+| Student ladder, distillation, tabular, cascades, contract screening | measured on CPU; see `experiments/RESULTS.md` (E1, E2, E4, E5, E6) |
+| ONNX export / int8 (E3), CPU fine-tune to GGUF (E7), prompt-or-train (E8), retrieval (E9) | scripted and smoke-tested; full runs are part of `experiments/run_all.sh` and land in `RESULTS.md` when complete |
+| factory-service | FastAPI test client; image built and exercised with curl in a container (all endpoints, non-root user) |
+| api-gateway factory routing | path rule unit-tested against every existing route; not run behind a live gateway |
+| training-service changes | unit tests with stubbed GPU libraries. **Not run end to end**: no GPU, Unsloth or Redis here |
+| Shared package and images | base and gateway images built and run; the Debian `apt` layer could not run here (package mirror blocked by this sandbox's network policy), so images that need it were built without it |
+| ML images (CUDA base) | Dockerfiles linted only, **not built** |
+| Kubernetes manifest for factory-service | YAML validated, **not applied** to a cluster |
+| Backend selection and loading for NVIDIA / AMD / Apple / Intel | tested against simulated devices, **not on real hardware** |
+| Front end | the Factory page type-checks and renders with mocked API responses in a headless browser. The project's `npm run build` still fails on 75 TypeScript errors in older files, none in the Factory code |
 
 ### Independent review
 
@@ -196,28 +220,45 @@ most:
   any model id a request named.
 - Two experiments compared numbers computed under different settings.
 
-Known and not fixed: `stream_logs` in the training service makes a blocking
-queue read inside an async generator, which can hold the event loop for up to
-a second per heartbeat (older behaviour); cancelling a job that is already
-running sets a flag but does not stop the trainer thread.
+The completion work in section 5 went through the same process: each
+workstream was built by one agent, checked by an independent reviewer, and
+repaired and re-checked where the reviewer found a real problem (two needed
+that: a timing figure that was a total rather than a per-item value, and a
+results table that could show predictions from an earlier request).
 
-## 5. What is still owed, in order
+Known and not fixed: cancelling a job that is already running sets a flag
+but does not stop the trainer thread (stopping it cleanly needs changes to
+the trainer callbacks that cannot be tested without a GPU). Log streaming now
+waits off the event loop, but each open stream holds a worker thread for up
+to a second at a time.
 
-1. **Run the changed training path on a real GPU** before merging to a
-   release branch. Start a job, confirm the request returns at once, and
-   confirm a `dora` request trains an adapter.
-2. **De-duplicate the services.** Move the copied modules into one installed
-   package (extend `forgelm` or finish `llmforge_contracts`) and delete the
-   copies. Needs every image rebuilt.
-3. **Collapse the two training implementations** into `TrainingCore`, with the
-   in-process path calling it.
-4. **Replace `AdaptiveTrainingConfig`'s VRAM tiers** with
-   `forgelm.generative.select_backend`, and add a measured dry run (a few real
-   steps) behind the memory estimate.
-5. **Add an MLX-LM training path** for Apple Silicon and a GGUF export step
-   with a chat-template round-trip test.
-6. **Front end**: a planning page and a classifier page over the factory API.
-7. **Prompt-optimisation and retrieval baselines** ahead of fine-tuning
-   (integrate DSPy / an existing RAG stack; do not write new ones).
-8. **Real BFSI evaluation data.** Label a few hundred reviewed call utterances
-   and replace the illustrative seed set.
+## 5. What was owed, and where it stands
+
+| Item | Status |
+|---|---|
+| De-duplicate the services | done (`llmforge_common`); near-duplicates listed above remain |
+| Collapse the two training implementations | partly: identical helpers shared; behaviour-different methods left for a GPU-verified pass |
+| Vendor-aware hardware handling and a measured dry run | done in `hardware_detection.py`, the bridge's loading plan and `forgelm.dryrun`; simulated devices only |
+| Apple Silicon training path and GGUF export | done as `forgelm.finetune` (MLX-LM command and data; the MLX run itself needs a Mac) and `forgelm.gguf` with a chat-template round-trip check |
+| Front end for the factory | done (Factory page) |
+| Prompting and retrieval baselines before fine-tuning | done in-house and small: few-shot prompting with retrieved demonstrations, a statistical gate, and BM25 / dense / hybrid retrieval. No DSPy-style prompt optimiser and no reranker |
+| Deployment of the factory service | done: Kubernetes manifest, compose settings, `.env.example` |
+
+## 6. Still owed, in order
+
+1. **Run the training service on a real GPU** before merging to a release
+   branch: confirm a job request returns at once, a `dora` request trains an
+   adapter, and the NVIDIA loading path behaves as before. Then on an AMD,
+   Apple and Intel machine if available.
+2. **Rebuild and push every image**, base images first (`docker compose build
+   base ml-base`, then the services). The training service image only works
+   with a rebuilt image now that its shared modules come from `llmforge_common`.
+3. **Merge the remaining duplicated training methods** once item 1 gives a
+   way to verify them.
+4. **Real BFSI evaluation data.** Label a few hundred reviewed call
+   utterances, including ASR transcripts and Hinglish, and replace the
+   illustrative seed set. Nothing in the BFSI pack has been validated on real
+   calls.
+5. **Prompt optimisation** (for example DSPy) and a **reranker** for
+   retrieval, if E8 and E9 show the simple baselines fall short.
+6. **Fix the 75 pre-existing TypeScript errors** so the front end builds.

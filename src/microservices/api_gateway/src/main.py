@@ -89,6 +89,32 @@ SERVICE_ROUTES = {
     '/api/v1/factory': 'llmforge-factory',
 }
 
+# Services whose own routes include the full /api/v1/<prefix> path. For these the
+# gateway forwards the path unchanged instead of stripping the matched prefix.
+FULL_PATH_PREFIXES = {
+    '/api/v1/factory',
+}
+
+
+def v1_target_path(path: str) -> str:
+    """The path to forward for a request to /api/v1/{path}.
+
+    Older services register their routes without the /api/v1/<prefix> part, so
+    the matched prefix is stripped (/api/v1/visualization/a/b -> /a/b). Services
+    listed in FULL_PATH_PREFIXES register the full path and receive it as is.
+    """
+    full_path = f"/api/v1/{path}"
+    for prefix in FULL_PATH_PREFIXES:
+        if full_path == prefix or full_path.startswith(prefix + '/'):
+            return full_path
+    matched_route = next((r for r in SERVICE_ROUTES if full_path.startswith(r)), None)
+    if matched_route:
+        prefix_to_remove = matched_route.replace('/api/v1/', '')
+        if path.startswith(prefix_to_remove):
+            return '/' + path[len(prefix_to_remove):].lstrip('/')
+    return f"/{path}" if path else ""
+
+
 # Service port mappings for direct container access
 SERVICE_PORTS = {
     'llmforge-training': 8001,
@@ -417,29 +443,8 @@ async def api_versioned_proxy(version: str, path: str, request: Request):
     if not service_name:
         raise HTTPException(status_code=404, detail=f"No service found for path: {full_path}")
     
-    # Find the matched route to strip its suffix from the path
-    matched_route = None
-    for route_prefix, svc_name in SERVICE_ROUTES.items():
-        if full_path.startswith(route_prefix) and svc_name == service_name:
-            matched_route = route_prefix
-            break
-    
-    # Strip the matched route prefix and keep what comes after
-    if matched_route:
-        # Remove /api/v1/<service> prefix, keep the rest
-        # e.g., /api/v1/visualization/preprocessing/visualize -> /preprocessing/visualize
-        prefix_to_remove = matched_route.replace('/api/v1/', '')
-        logger.info(f"[PATH DEBUG] matched_route={matched_route}, prefix_to_remove={prefix_to_remove}, path={path}")
-        if path.startswith(prefix_to_remove):
-            target_path = '/' + path[len(prefix_to_remove):].lstrip('/')
-            logger.info(f"[PATH DEBUG] Stripped prefix, target_path={target_path}")
-        else:
-            target_path = f"/{path}" if path else ""
-            logger.info(f"[PATH DEBUG] No prefix match, target_path={target_path}")
-    else:
-        target_path = f"/{path}" if path else ""
-        logger.info(f"[PATH DEBUG] No matched route, target_path={target_path}")
-    
+    target_path = v1_target_path(path)
+    logger.debug(f"[PATH] /api/v1/{path} -> {service_name}{target_path}")
     return await proxy_request(request, service_name, target_path)
 
 

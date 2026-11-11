@@ -26,7 +26,9 @@ import {
   fmtNumber,
   fmtPercent,
   labelCounts,
+  modelsForStudent,
   nonBlankLines,
+  pairPredictions,
   parseLabelledCsv,
   trainingDataProblems,
 } from "@/lib/factory-utils"
@@ -36,6 +38,7 @@ import {
   type ClassifierCardResponse,
   type ClassifierListResponse,
   type ContractVerdict,
+  type Prediction,
   type PredictRequest,
   type StudentKind,
   type TrainRequest,
@@ -50,6 +53,20 @@ const STUDENT_INFO: Record<StudentKind, string> = {
   finetuned: "Encoder fine-tuned end to end. Slow on a CPU; may exceed the gateway's 30-second wait.",
 }
 const DEFAULT_MODEL = "__default__"
+// What make_student (forgelm/students.py) loads when no model is named, so the
+// "default" choice in the form says which repo it means.
+const STUDENT_DEFAULT_MODEL: Record<StudentKind, string | null> = {
+  tfidf: null,
+  static: "minishlab/potion-base-32M",
+  encoder: "BAAI/bge-small-en-v1.5",
+  finetuned: "sentence-transformers/all-MiniLM-L6-v2",
+}
+const MODEL_HINT: Record<StudentKind, string> = {
+  tfidf: "TF-IDF has no base model.",
+  static: "Static students load model2vec models only (the potion-* repos on the allow-list).",
+  encoder: "Encoder students load sentence-transformers models; potion-* static models need the static student.",
+  finetuned: "Fine-tuned students load transformer models; potion-* static models need the static student.",
+}
 
 const SAMPLE_CSV = `text,label
 my card was blocked at the atm,card
@@ -62,7 +79,18 @@ can I prepay my personal loan,loan
 loan statement not received,loan
 `
 
-const predictAction = (a: { name: string; req: PredictRequest }) => factoryApi.predict(a.name, a.req)
+// The texts travel inside the action's result, next to the predictions the
+// service returned for them. The table is drawn from that one object, so it
+// can never pair the texts of a new request with the answers to an old one.
+interface PredictRun {
+  texts: string[]
+  threshold: number | undefined // undefined: the service's default was used
+  predictions: Prediction[]
+}
+const predictAction = async (a: { name: string; req: PredictRequest }): Promise<PredictRun> => {
+  const response = await factoryApi.predict(a.name, a.req)
+  return { texts: a.req.texts, threshold: a.req.threshold, predictions: response.predictions }
+}
 
 function ContractBadge({ passed }: { passed: boolean | null | undefined }) {
   if (passed === true)
@@ -194,6 +222,16 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
 
   const parsed = useMemo(() => (csv.trim() ? parseLabelledCsv(csv) : null), [csv])
   const counts = useMemo(() => (parsed ? labelCounts(parsed.labels) : []), [parsed])
+  const models = modelsForStudent(student, DEFAULT_ALLOWED_MODELS)
+
+  const chooseStudent = (kind: StudentKind) => {
+    setStudent(kind)
+    // A repo picked for the previous student kind may be one the new kind
+    // cannot load; fall back to the new kind's default rather than send it.
+    if (model !== DEFAULT_MODEL && !modelsForStudent(kind, DEFAULT_ALLOWED_MODELS).includes(model)) {
+      setModel(DEFAULT_MODEL)
+    }
+  }
 
   const onFile = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -223,6 +261,9 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
     }
     const s = Number(seed)
     if (!Number.isInteger(s) || s < 0) found.push("Seed must be a whole number of at least 0.")
+    if (student !== "tfidf" && model !== DEFAULT_MODEL && !models.includes(model)) {
+      found.push(`The ${student} student cannot load ${model}. ${MODEL_HINT[student]}`)
+    }
     if (!parsed) found.push("Paste or upload labelled data first.")
     else {
       found.push(...parsed.errors)
@@ -269,7 +310,7 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
               />
             </Field>
             <Field id={`${uid}-student`} label="Student">
-              <Select value={student} onValueChange={(v) => setStudent(v as StudentKind)}>
+              <Select value={student} onValueChange={(v) => chooseStudent(v as StudentKind)}>
                 <SelectTrigger id={`${uid}-student`} className="w-full" aria-describedby={`${uid}-student-info`}>
                   <SelectValue />
                 </SelectTrigger>
@@ -291,15 +332,17 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
             <Field
               id={`${uid}-model`}
               label="Base model"
-              hint={student === "tfidf" ? "TF-IDF has no base model." : "Must be on the service's allow-list."}
+              hint={MODEL_HINT[student]}
             >
               <Select value={student === "tfidf" ? DEFAULT_MODEL : model} onValueChange={setModel} disabled={student === "tfidf"}>
                 <SelectTrigger id={`${uid}-model`} className="w-full" aria-describedby={`${uid}-model-hint`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={DEFAULT_MODEL}>The student's default</SelectItem>
-                  {DEFAULT_ALLOWED_MODELS.map((m) => (
+                  <SelectItem value={DEFAULT_MODEL}>
+                    {STUDENT_DEFAULT_MODEL[student] ? `Default (${STUDENT_DEFAULT_MODEL[student]})` : "None"}
+                  </SelectItem>
+                  {models.map((m) => (
                     <SelectItem key={m} value={m}>
                       {m}
                     </SelectItem>
@@ -489,13 +532,11 @@ function TryIt({ name }: { name: string }) {
   const [threshold, setThreshold] = useState("0.5")
   const [problems, setProblems] = useState<string[]>([])
   const predict = useFactoryAction(predictAction)
-  const [sent, setSent] = useState<string[]>([])
   const { reset } = predict
 
   // A different classifier: the previous answers belong to the old one.
   useEffect(() => {
     reset()
-    setSent([])
   }, [name, reset])
 
   const submit = async (e: FormEvent) => {
@@ -507,11 +548,13 @@ function TryIt({ name }: { name: string }) {
     if (threshold.trim() === "" || !(t >= 0 && t <= 1)) found.push("Abstention threshold must be between 0 and 1.")
     setProblems(found)
     if (found.length) return
-    setSent(lines)
     await predict.run({ name, req: { texts: lines, threshold: t } })
   }
 
-  const predictions = predict.data?.predictions ?? []
+  // While a new request is out, the previous answers are hidden rather than
+  // left next to a text box that no longer holds what they answered.
+  const shown = predict.loading ? null : predict.data
+  const paired = shown ? pairPredictions(shown.texts, shown.predictions) : null
   return (
     <Card>
       <CardHeader>
@@ -556,42 +599,57 @@ function TryIt({ name }: { name: string }) {
         </form>
         {predict.loading && <LoadingState label="Predicting..." />}
         {predict.error !== null && <ErrorState error={predict.error} />}
-        {predict.data && predictions.length === 0 && <EmptyState title="No predictions returned" />}
-        {predictions.length > 0 && (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Text</TableHead>
-                  <TableHead>Label</TableHead>
-                  <TableHead className="text-right">Confidence</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {predictions.map((p, i) => (
-                  <TableRow key={i}>
-                    <TableCell className="max-w-xs whitespace-normal break-words">{sent[i] ?? ""}</TableCell>
-                    <TableCell>
-                      {p.abstained ? (
-                        <Badge variant="outline" className="border-chart-3/40 text-chart-3">
-                          abstained
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary">{p.label}</Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <div className="hidden h-1.5 w-16 overflow-hidden rounded bg-muted sm:block" aria-hidden="true">
-                          <div className="h-full bg-primary" style={{ width: `${Math.round(p.confidence * 100)}%` }} />
-                        </div>
-                        <span className="font-mono text-xs">{fmtNumber(p.confidence, 3)}</span>
-                      </div>
-                    </TableCell>
+        {paired && paired.rows.length === 0 && <EmptyState title="No predictions returned" />}
+        {shown && paired && !paired.complete && (
+          <Alert variant="destructive">
+            <AlertTitle>Unexpected answer</AlertTitle>
+            <AlertDescription>
+              {shown.texts.length} texts were sent but {shown.predictions.length} predictions came back; only the
+              first {paired.rows.length} are shown.
+            </AlertDescription>
+          </Alert>
+        )}
+        {shown && paired && paired.rows.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {shown.texts.length} {shown.texts.length === 1 ? "text" : "texts"}
+              {shown.threshold !== undefined && ` at an abstention threshold of ${shown.threshold}`}.
+            </p>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Text</TableHead>
+                    <TableHead>Label</TableHead>
+                    <TableHead className="text-right">Confidence</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {paired.rows.map(({ text, prediction: p }, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="max-w-xs whitespace-normal break-words">{text}</TableCell>
+                      <TableCell>
+                        {p.abstained ? (
+                          <Badge variant="outline" className="border-chart-3/40 text-chart-3">
+                            abstained
+                          </Badge>
+                        ) : (
+                          <Badge variant="secondary">{p.label}</Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          <div className="hidden h-1.5 w-16 overflow-hidden rounded bg-muted sm:block" aria-hidden="true">
+                            <div className="h-full bg-primary" style={{ width: `${Math.round(p.confidence * 100)}%` }} />
+                          </div>
+                          <span className="font-mono text-xs">{fmtNumber(p.confidence, 3)}</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </div>
         )}
       </CardContent>

@@ -155,6 +155,68 @@ def test_decide_says_too_small_to_tell_when_the_interval_spans_a_worthwhile_gain
     assert "test items would be needed" in report.reason
 
 
+def _discordant_pair(n=200, both_right=50, extra=5):
+    """A cheap system right on ``both_right`` items and a costlier one right on those plus ``extra`` more.
+
+    With 5 discordant items, all won by the costlier system, the percentile bootstrap interval for the gain
+    is about [+0.5, +5.0] points, while the exact McNemar p-value is 2 / 2^5 = 0.0625.
+    """
+    y = np.zeros(n, dtype=int)
+    cheap = np.ones(n, dtype=int)
+    cheap[:both_right] = 0
+    costly = cheap.copy()
+    costly[both_right:both_right + extra] = 0
+    return y, cheap, costly
+
+
+def test_a_gain_only_the_bootstrap_sees_does_not_make_the_user_pay():
+    y, cheap, llm = _discordant_pair()
+    report = decide([Option("cheap", cheap),
+                     Option("llm", llm, needs_llm_at_inference=True, seconds_per_item=0.5)], y)
+    (cmp,) = report.comparisons
+    # The bootstrap alone would call this a worthwhile gain; McNemar does not confirm it.
+    assert cmp["verdict"] == "better" and cmp["ci_low"] > 0 and cmp["gain"] >= report.min_gain
+    assert cmp["mcnemar_p"] == pytest.approx(2 / 32) and not cmp["confirmed"]
+    assert not cmp["settled"]
+    # So the cheaper option is kept, as the docstring promises, and nothing was rejected.
+    assert report.recommended == "cheap" and report.rejected == {}
+    assert report.too_small_to_tell
+    assert "beats" not in report.reason and "set aside" not in report.reason
+    assert "McNemar test does not confirm" in report.reason and "too small to tell" in report.reason
+    assert "(not settled)" in report.render()
+    # The same pattern with more discordant items is confirmed by both tests, and the costlier option wins.
+    y, cheap, llm = _discordant_pair(n=400, both_right=100, extra=12)
+    report = decide([Option("cheap", cheap), Option("llm", llm, needs_llm_at_inference=True)], y)
+    (cmp,) = report.comparisons
+    assert cmp["confirmed"] and cmp["settled"] and cmp["mcnemar_p"] <= 0.05
+    assert report.recommended == "llm" and set(report.rejected) == {"cheap"}
+    assert not report.too_small_to_tell
+
+
+def test_an_interval_below_zero_rules_out_paying_more_without_calling_it_worse():
+    # The mirror image: the costlier option loses the 5 discordant items. Its interval lies below zero, which
+    # rules out a gain worth paying for (settled), but McNemar (p = 0.0625) does not confirm it is worse.
+    y, llm, cheap = _discordant_pair()
+    report = decide([Option("cheap", cheap), Option("llm", llm, needs_llm_at_inference=True)], y)
+    (cmp,) = report.comparisons
+    assert cmp["verdict"] == "worse" and cmp["ci_high"] < 0 and cmp["settled"] and not cmp["confirmed"]
+    assert report.recommended == "cheap" and not report.too_small_to_tell
+    assert "is worse" not in report.reason and "does not gain enough" in report.reason
+
+
+def test_comparisons_with_a_cheaper_option_are_settled_only_when_both_tests_confirm():
+    # 'mid' is rejected because 'llm' clearly beats it; 'cheap' is rejected the same way. Against the
+    # recommended 'llm', each cheaper option's comparison counts as settled only if the gain is confirmed.
+    y = np.random.default_rng(0).integers(0, 5, 1000)
+    report = decide([Option("cheap", _system(y, 0.55, 1)), Option("mid", _system(y, 0.70, 2), seconds_per_item=1),
+                     Option("llm", _system(y, 0.90, 3), needs_llm_at_inference=True)], y)
+    assert report.recommended == "llm"
+    for c in report.comparisons:
+        assert c["costlier"] == "llm" and c["settled"] == c["confirmed"] is True
+    for c in report.rejected.values():
+        assert c["verdict"] == "better" and c["confirmed"]
+
+
 def test_accuracy_only_options_are_listed_but_not_compared():
     y = np.arange(100) % 2
     report = decide([Option("reported elsewhere", accuracy=0.99),
@@ -167,6 +229,60 @@ def test_accuracy_only_options_are_listed_but_not_compared():
     with pytest.raises(ValueError, match="unique"):
         decide([Option("a", y), Option("a", y)], y)
     assert set(report.to_dict()) >= {"options", "comparisons", "recommended", "reason", "too_small_to_tell"}
+
+
+# --------------------------------------------------------------------------
+# E8's cost bookkeeping (read from the script's source: running it needs models)
+# --------------------------------------------------------------------------
+
+E8 = ROOT / "experiments" / "e8_prompt_or_train.py"
+
+
+def _e8_tree():
+    import ast
+
+    return ast.parse(E8.read_text(), filename=str(E8))
+
+
+def test_e8_record_cost_divides_the_measured_total_by_the_items():
+    import ast
+
+    (fn,) = [n for n in ast.walk(_e8_tree()) if isinstance(n, ast.FunctionDef) and n.name == "record_cost"]
+    ns = {"seconds": {}, "seconds_total": {}, "items_timed": {}}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(E8), "exec"), ns)
+    ns["record_cost"]("a", 0.23, 20)
+    assert ns["seconds"]["a"] == pytest.approx(0.0115)
+    assert ns["seconds_total"]["a"] == pytest.approx(0.23) and ns["items_timed"]["a"] == 20
+    with pytest.raises(ValueError):
+        ns["record_cost"]("b", 1.0, 0)
+
+
+def test_e8_every_system_cost_goes_through_record_cost():
+    # The bug this guards against: wall time over the whole test set written straight into ``seconds`` and
+    # reported as seconds per item, 1,000x too high on the full run.
+    import ast
+
+    tree = _e8_tree()
+    helper = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "record_cost")
+    inside = {id(n) for n in ast.walk(helper)}
+    for node in ast.walk(tree):
+        targets = node.targets if isinstance(node, ast.Assign) else \
+            [node.target] if isinstance(node, (ast.AugAssign, ast.AnnAssign)) else []
+        for t in targets:
+            for sub in ast.walk(t):
+                if isinstance(sub, ast.Subscript) and isinstance(sub.value, ast.Name) and \
+                        sub.value.id in ("seconds", "seconds_total", "items_timed"):
+                    assert id(node) in inside, f"line {node.lineno} writes {sub.value.id}[...] directly"
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "record_cost"]
+    keys = {}
+    for call in calls:
+        assert len(call.args) == 3, f"line {call.lineno}: record_cost needs (key, total_seconds, n_items)"
+        keys.setdefault(call.args[0].value, []).append(call)
+    assert set(keys) == set("abcdef")
+    # The LLM-free systems are timed over the test texts, so their item count is n_test.
+    for key in "abcd":
+        for call in keys[key]:
+            assert isinstance(call.args[2], ast.Name) and call.args[2].id == "n_test", f"({key}) line {call.lineno}"
 
 
 # --------------------------------------------------------------------------

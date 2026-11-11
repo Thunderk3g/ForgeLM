@@ -747,7 +747,10 @@ def compare_with_estimate(measurement: Dict[str, Any], available_gb: Optional[fl
         available_gb, basis = available_memory_gb(measurement)
 
     measured = measurement.get("total_gb")
-    estimate_fits = None if available_gb is None else fits(estimate["total_gb"], available_gb, headroom)
+    # estimate_memory_gb counts parameters in billions (decimal GB); measurements and available
+    # memory are in GiB. Convert so the comparison is like with like (the difference is about 7%).
+    estimate_gib = estimate["total_gb"] * 1e9 / 1024**3
+    estimate_fits = None if available_gb is None else fits(estimate_gib, available_gb, headroom)
     measured_fits: Optional[bool]
     if measurement.get("out_of_memory"):
         measured_fits = False
@@ -765,7 +768,7 @@ def compare_with_estimate(measurement: Dict[str, Any], available_gb: Optional[fl
         measured_text = f"measured {measured:.2f} GiB ({measurement.get('measure')})"
     available_text = "available memory unknown" if available_gb is None else \
         f"{available_gb:.2f} GiB available ({basis}), {headroom:.0%} of it usable"
-    summary = (f"estimate {estimate['total_gb']:.2f} GiB, {measured_text}, {available_text}: "
+    summary = (f"estimate {estimate_gib:.2f} GiB, {measured_text}, {available_text}: "
                f"{verdict.replace('_', ' ')}")
 
     return {
@@ -777,7 +780,7 @@ def compare_with_estimate(measurement: Dict[str, Any], available_gb: Optional[fl
         "estimate_fits": estimate_fits,
         "measured_fits": measured_fits,
         # Positive when the estimate was the more cautious of the two.
-        "estimate_minus_measured_gb": None if measured is None else round(estimate["total_gb"] - measured, 2),
+        "estimate_minus_measured_gb": None if measured is None else round(estimate_gib - measured, 2),
         "verdict": verdict,
         "summary": summary,
     }

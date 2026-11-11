@@ -374,3 +374,19 @@ def test_predict_and_review_call_cap_the_number_and_length_of_texts(service, cli
     assert client.post(f"{API}/review-call", json={"utterances": [long_text]}).status_code == 413
     assert client.post(f"{API}/review-call", json={"utterances": ok + ["one more"],
                                                    "classifier": "m"}).status_code == 413
+
+
+def test_an_empty_allow_list_variable_means_the_defaults(tmp_path, monkeypatch):
+    """docker-compose passes FACTORY_ALLOWED_MODELS through as "" when it is unset."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    monkeypatch.setenv("FACTORY_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("FACTORY_ALLOWED_MODELS", "")
+    path = Path(__file__).resolve().parents[2] / "src/microservices/factory_service/src/main.py"
+    spec = importlib.util.spec_from_file_location("factory_main_empty_allow", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert "minishlab/potion-base-32M" in module.ALLOWED_MODELS
