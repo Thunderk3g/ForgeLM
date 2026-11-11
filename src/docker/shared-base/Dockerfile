@@ -19,6 +19,14 @@ COPY src/docker/shared-base/requirements-common.txt /tmp/requirements-common.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir --timeout=300 --retries=3 -r /tmp/requirements-common.txt
 
+# The modules every service shares (GPU client, orchestrator registration, logging,
+# settings ...). Each service's own copy of these files is now a shim that imports
+# this package, so a service image without it fails on its first import. It is pure
+# Python and installed without dependencies: the requirements above already provide
+# what its modules import, and --no-deps keeps pip from touching them.
+COPY src/shared/llmforge_common /opt/llmforge_common
+RUN pip install --no-cache-dir --no-deps /opt/llmforge_common
+
 # Set working directory
 WORKDIR /app
 

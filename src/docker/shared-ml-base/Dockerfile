@@ -44,6 +44,16 @@ RUN pip install --no-cache-dir --timeout=300 --retries=3 \
 COPY src/docker/shared-ml-base/requirements-ml.txt /tmp/requirements-ml.txt
 RUN pip install --no-cache-dir --timeout=600 --retries=2 -r /tmp/requirements-ml.txt
 
+# The modules every service shares (GPU client, orchestrator registration, logging,
+# settings ...). Each service's own copy of these files is now a shim that imports
+# this package, so a service image without it fails on its first import. It is pure
+# Python and installed without dependencies: the requirements above already provide
+# what its modules import, and --no-deps keeps pip from touching them. It comes
+# after the last requirements layer so that a change to the package rebuilds one
+# small layer and none of the multi-gigabyte PyTorch ones.
+COPY src/shared/llmforge_common /opt/llmforge_common
+RUN pip install --no-cache-dir --no-deps /opt/llmforge_common
+
 # Set environment variables for ML services
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

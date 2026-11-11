@@ -1,6 +1,13 @@
 # API Gateway Service Dockerfile
 FROM llmforge-base:latest
 
+# llmforge_common holds the modules this service shares with the others; the files
+# of the same name under its src/ are shims that import it. The base image installs
+# it too. Installing it again here means this image carries the copy from the same
+# checkout as the service code below, even when it is built on an older base image.
+COPY src/shared/llmforge_common /opt/llmforge_common
+RUN pip install --no-cache-dir --no-deps /opt/llmforge_common
+
 # Copy API Gateway source code
 COPY src/microservices/api_gateway/ /app/
 

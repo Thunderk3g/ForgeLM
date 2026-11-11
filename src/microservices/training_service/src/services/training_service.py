@@ -27,8 +27,9 @@ from datasets import load_from_disk
 from models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
 from utils.factory_bridge import backend_advice, resolve_peft_config, torch_device_and_dtype
-from utils.performance import performance_monitor, timing_context, timed
+from utils.performance import performance_monitor, timing_context
 from config.settings import settings
+from services.training_common import TrainingArgsMixin
 
 # Import GPU orchestration
 import sys
@@ -347,8 +348,20 @@ else:
             self.log_queue = log_queue
 
 
-class TrainingService:
-    """Advanced training service with adaptive hardware optimization"""
+class TrainingService(TrainingArgsMixin):
+    """Advanced training service with adaptive hardware optimization
+
+    The per-training-type argument helpers (``_get_instruction_training_args``,
+    ``_get_chat_completion_args``, ``_get_reasoning_training_args``,
+    ``_apply_training_type_optimizations``, ``get_chat_sft_config``) come from
+    ``TrainingArgsMixin``. ``TrainingCore`` inherits the same ones.
+    """
+
+    def _unsloth_available(self) -> bool:
+        # The mixin asks the class instead of importing Unsloth itself, because
+        # this module and the worker module decide the flag differently (see
+        # training_common.py). Read on each call, as the helpers always did.
+        return UNSLOTH_AVAILABLE
 
     def __init__(self):
         self.logger = get_logger(__name__)
@@ -1298,121 +1311,6 @@ class TrainingService:
 
         return TrainingArguments(**args)
 
-    def _get_instruction_training_args(self, adaptive_config: Dict[str, Any], request: FineTuneRequest) -> Dict[str, Any]:
-        """Get training arguments optimized for instruction tuning"""
-        adaptive_args = adaptive_config["training_args"]
-        return {
-            "per_device_train_batch_size": adaptive_args["per_device_train_batch_size"],
-            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"],
-            "warmup_steps": 5,
-            "learning_rate": request.learning_rate,
-            "weight_decay": 0.01,
-            "lr_scheduler_type": "linear",
-            "logging_steps": adaptive_args.get("logging_steps", 10),
-            "save_steps": adaptive_args.get("save_steps", 100),
-            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
-            "dataloader_pin_memory": adaptive_args.get("dataloader_pin_memory", False),
-            "remove_unused_columns": False,
-        }
-
-    def _get_chat_completion_args(self, adaptive_config: Dict[str, Any], request: FineTuneRequest) -> Dict[str, Any]:
-        """Get training arguments optimized for chat completion"""
-        adaptive_args = adaptive_config["training_args"]
-        return {
-            "per_device_train_batch_size": max(1, adaptive_args["per_device_train_batch_size"] // 2),
-            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"] * 2,
-            "warmup_steps": 10,
-            "learning_rate": request.learning_rate * 0.8,
-            "weight_decay": 0.005,
-            "lr_scheduler_type": "cosine",
-            "logging_steps": adaptive_args.get("logging_steps", 5),
-            "save_steps": adaptive_args.get("save_steps", 200),
-            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
-            "dataloader_pin_memory": False,
-            "remove_unused_columns": False,
-            "group_by_length": True,
-            "prediction_loss_only": False,
-        }
-
-    def _get_reasoning_training_args(self, adaptive_config: Dict[str, Any], request: FineTuneRequest) -> Dict[str, Any]:
-        """Get training arguments optimized for reasoning/GRPO training"""
-        adaptive_args = adaptive_config["training_args"]
-        return {
-            "per_device_train_batch_size": 1,
-            "gradient_accumulation_steps": adaptive_args["gradient_accumulation_steps"] * 4,
-            "warmup_steps": 20,
-            "learning_rate": request.learning_rate * 0.5,
-            "weight_decay": 0.001,
-            "lr_scheduler_type": "cosine",
-            "logging_steps": adaptive_args.get("logging_steps", 5),
-            "save_steps": adaptive_args.get("save_steps", 500),
-            "dataloader_num_workers": 0,  # FIXED: Force single worker to prevent semaphore leaks
-            "dataloader_pin_memory": False,
-            "remove_unused_columns": False,
-            "group_by_length": False,
-            "prediction_loss_only": False,
-        }
-
-    def _apply_training_type_optimizations(
-        self, args: Dict[str, Any], training_type: str, gpu_opts: Dict[str, Any], adaptive_config: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Apply training type specific Unsloth optimizations"""
-        
-        if not UNSLOTH_AVAILABLE:
-            return args
-        
-        if training_type == "chat":
-            chat_optimizations = {
-                "gradient_checkpointing": True,
-                # "eval_accumulation_steps": 4,  # Not a TrainingArguments parameter
-            }
-            
-            # GRPO specific settings if reasoning is enabled
-            if adaptive_config.get("enable_reasoning", False):
-                chat_optimizations.update({
-                    "group_by_length": False,
-                    "prediction_loss_only": False,
-                })
-            
-            args.update(chat_optimizations)
-            
-        elif training_type == "reasoning":
-            reasoning_optimizations = {
-                "gradient_checkpointing": True,
-                # "eval_accumulation_steps": 8,  # Not a TrainingArguments parameter
-                "group_by_length": False,
-                "prediction_loss_only": False,
-            }
-            args.update(reasoning_optimizations)
-            
-        return args
-
-    def get_chat_sft_config(self, request: FineTuneRequest, adaptive_config: Dict[str, Any]) -> Dict[str, Any]:
-        """Get SFTConfig optimized for chat completion"""
-        
-        chat_config = adaptive_config.get("chat_config", {})
-        
-        sft_config = {
-            "dataset_text_field": "text",
-            "max_seq_length": min(request.max_seq_length, 4096),
-            "packing": True,
-            "dataset_num_proc": 1,  # FIXED: Force single process to prevent semaphore leaks
-            "chars_per_token": 3.5,
-        }
-        
-        # Chat specific configurations
-        if UNSLOTH_AVAILABLE:
-            sft_config.update({
-                "dataset_kwargs": {
-                    "add_special_tokens": False,
-                    "chat_template": chat_config.get("template_type", "chatml"),
-                },
-                "use_unsloth_template": True,
-                "assistant_only_loss": chat_config.get("assistant_only_loss", True),
-            })
-        
-        return sft_config
-    
     def _get_optimal_precision_settings(self, model=None):
         """Get optimal precision settings using Unsloth's built-in detection"""
         try:
@@ -2015,7 +1913,19 @@ class TrainingService:
             raise
 
     async def stream_logs(self, task_id: str):
-        """Stream training logs for a task"""
+        """Stream training logs for a task
+
+        Yields one JSON string per log entry: first whatever is already in the
+        task's queue, then new entries as the trainer thread adds them, with a
+        heartbeat for every second in which nothing arrived, until the task's
+        completion flag is set.
+
+        Each open stream occupies one thread of the event loop's default
+        executor while it waits. If the client disconnects during a wait, that
+        thread still finishes its read (within a second); an entry that
+        arrives in that moment is taken from the queue and not delivered, the
+        same fate as an entry that was being sent when the client left.
+        """
         try:
             if task_id not in task_log_queues:
                 raise KeyError(f"Task {task_id} not found")
@@ -2038,8 +1948,14 @@ class TrainingService:
             # Stream new logs until task completion
             while not task_completion_flags.get(task_id, False):
                 try:
-                    # Wait for new log with timeout
-                    log_entry = log_queue.get(timeout=1.0)
+                    # Wait up to a second for a new entry, in a worker thread.
+                    # log_queue is a thread queue (the trainer thread fills
+                    # it), so its get() blocks the calling thread. Called
+                    # directly here it froze the event loop, and with it health
+                    # checks, status requests and every other stream, for up
+                    # to a second per pass. The arguments are block=True,
+                    # timeout=1.0, the same wait as before.
+                    log_entry = await asyncio.to_thread(log_queue.get, True, 1.0)
                     yield json.dumps(log_entry)
                 except queue.Empty:
                     # Yield heartbeat
