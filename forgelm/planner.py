@@ -199,8 +199,9 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
         S.append(_step(hw, "TF-IDF + logistic regression",
                        "TfidfStudent().fit(...)",
                        "the baseline everything else must beat; trains in seconds and every prediction "
-                       "decomposes into n-gram weights",
-                       ["e1-ladder"], ["sklearn"], student="tfidf"))
+                       "decomposes into n-gram weights. With enough labels it can be the model to ship: on "
+                       "unfair-term screening it matched a fine-tuned encoder",
+                       ["e1-ladder", "e6-screening"], ["sklearn"], student="tfidf"))
         S.append(_step(hw, "static embeddings + logistic regression",
                        "EmbeddingStudent('minishlab/potion-base-32M')",
                        "a lookup table and a matrix multiply: sub-millisecond on one CPU core, no torch at "
@@ -224,9 +225,11 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
             cpu_big = hw.device_class == "cpu" and "MiniLM" not in enc["model"] and "e5-small" not in enc["model"]
             S.append(_step(hw, f"fine-tune an encoder ({enc['model'].split('/')[-1]})",
                            f"FineTunedStudent('{enc['model']}')",
-                           f"{enc['why']}; end-to-end fine-tuning overtakes frozen embeddings once each class "
-                           "has enough examples",
-                           ["e1-ladder", "encoders-beat-zero-shot-llm"], ["torch", "transformers"],
+                           f"{enc['why']}. Whether it beats a frozen encoder depends on the task: on short "
+                           "banking intents it did not (90.5% against 93.1% with all labels), on longer legal "
+                           "sentences with 5,500 labels it did (ROC AUC 0.969 against 0.949). Run both and "
+                           "compare on the same hold-out",
+                           ["e1-ladder", "e6-screening", "encoders-beat-zero-shot-llm"], ["torch", "transformers"],
                            student="finetuned", model=enc["model"],
                            note="trains on CPU but slowly; budget an hour or more" if cpu_big else ""))
         else:

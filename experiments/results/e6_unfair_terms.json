@@ -1,0 +1,184 @@
+{
+  "experiment": "E6 compliance screening on LexGLUE UNFAIR-ToS (binary: potentially unfair term or not)",
+  "dataset": {
+    "name": "coastalcph/lex_glue, config unfair_tos",
+    "train": 5532,
+    "validation": 2275,
+    "test": 1607,
+    "positive_rate_test": 0.107,
+    "note": "licence not confirmed on the dataset card; benchmark use only"
+  },
+  "screening_rule": "threshold set for 90% recall on validation, applied unchanged to test",
+  "rows": [
+    {
+      "model": "tfidf + LR",
+      "roc_auc": 0.9726,
+      "f1_at_0.5": 0.7821,
+      "precision_at_0.5": 0.8714,
+      "recall_at_0.5": 0.7093,
+      "screen_threshold": 0.053,
+      "screen_recall": 0.907,
+      "screen_precision": 0.52,
+      "fraction_flagged_for_review": 0.1867,
+      "ece": 0.0101,
+      "train_seconds": 11.2
+    },
+    {
+      "model": "static potion-32M + LR",
+      "roc_auc": 0.9427,
+      "f1_at_0.5": 0.6245,
+      "precision_at_0.5": 0.866,
+      "recall_at_0.5": 0.4884,
+      "screen_threshold": 0.0631,
+      "screen_recall": 0.8837,
+      "screen_precision": 0.351,
+      "fraction_flagged_for_review": 0.2694,
+      "ece": 0.0136,
+      "train_seconds": 3.5
+    },
+    {
+      "model": "frozen bge-small + LR",
+      "roc_auc": 0.9485,
+      "f1_at_0.5": 0.6022,
+      "precision_at_0.5": 0.8351,
+      "recall_at_0.5": 0.4709,
+      "screen_threshold": 0.0731,
+      "screen_recall": 0.9244,
+      "screen_precision": 0.3795,
+      "fraction_flagged_for_review": 0.2607,
+      "ece": 0.0179,
+      "train_seconds": 213.9
+    },
+    {
+      "model": "fine-tuned MiniLM-L6 (22M)",
+      "roc_auc": 0.9691,
+      "f1_at_0.5": 0.7872,
+      "precision_at_0.5": 0.7895,
+      "recall_at_0.5": 0.7849,
+      "screen_threshold": 0.0406,
+      "screen_recall": 0.907,
+      "screen_precision": 0.5417,
+      "fraction_flagged_for_review": 0.1792,
+      "ece": 0.0196,
+      "train_seconds": 927.8
+    },
+    {
+      "model": "zero-shot local LLM (Qwen2.5-1.5B), no training",
+      "roc_auc": 0.7888,
+      "f1_at_0.5": 0.3498,
+      "precision_at_0.5": 0.3034,
+      "recall_at_0.5": 0.4128,
+      "screen_threshold": 0.0086,
+      "screen_recall": 0.8314,
+      "screen_precision": 0.2085,
+      "fraction_flagged_for_review": 0.4269,
+      "ece": 0.1192,
+      "seconds_per_item": 0.631,
+      "note": "threshold from 500 validation sentences"
+    }
+  ],
+  "tfidf_top_ngrams_for_unfair": [
+    "word__we may",
+    "word__liable",
+    "word__for any",
+    "word__be liable",
+    "word__may change",
+    "word__any content",
+    "word__any",
+    "word__terminate",
+    "word__or",
+    "word__liable for",
+    "word__we",
+    "word__courts"
+  ],
+  "llm_teacher": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "dtype": "bfloat16",
+    "seconds_per_item": 0.631,
+    "teacher_positive_rate_on_pool": 0.14,
+    "true_positive_rate_on_pool": 0.107,
+    "students": [
+      {
+        "model": "static potion-32M + LR, trained on LLM soft labels only (1000 sentences)",
+        "roc_auc": 0.78,
+        "f1_at_0.5": 0.2814,
+        "precision_at_0.5": 0.4066,
+        "recall_at_0.5": 0.2151,
+        "screen_threshold": 0.0686,
+        "screen_recall": 0.8721,
+        "screen_precision": 0.1665,
+        "fraction_flagged_for_review": 0.5607,
+        "ece": 0.0196
+      },
+      {
+        "model": "static potion-32M + LR, same 1000 sentences with human labels",
+        "roc_auc": 0.8715,
+        "f1_at_0.5": 0.5391,
+        "precision_at_0.5": 0.8214,
+        "recall_at_0.5": 0.4012,
+        "screen_threshold": 0.0253,
+        "screen_recall": 0.9012,
+        "screen_precision": 0.1952,
+        "fraction_flagged_for_review": 0.4941,
+        "ece": 0.0215
+      },
+      {
+        "model": "frozen bge-small + LR, trained on LLM soft labels only (1000 sentences)",
+        "roc_auc": 0.7447,
+        "f1_at_0.5": 0.2464,
+        "precision_at_0.5": 0.3269,
+        "recall_at_0.5": 0.1977,
+        "screen_threshold": 0.0612,
+        "screen_recall": 0.8663,
+        "screen_precision": 0.1546,
+        "fraction_flagged_for_review": 0.5999,
+        "ece": 0.0244
+      },
+      {
+        "model": "frozen bge-small + LR, same 1000 sentences with human labels",
+        "roc_auc": 0.901,
+        "f1_at_0.5": 0.4192,
+        "precision_at_0.5": 0.8421,
+        "recall_at_0.5": 0.2791,
+        "screen_threshold": 0.0424,
+        "screen_recall": 0.9302,
+        "screen_precision": 0.2302,
+        "fraction_flagged_for_review": 0.4325,
+        "ece": 0.011
+      }
+    ]
+  },
+  "environment": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ram_gb": 15.71,
+    "device_class": "cpu",
+    "cpu_flags": [
+      "avx",
+      "avx2",
+      "avx512f",
+      "avx512bw",
+      "avx512_vnni",
+      "avx_vnni",
+      "amx_int8",
+      "amx_bf16",
+      "fma",
+      "f16c"
+    ],
+    "python": "3.13.18",
+    "packages": {
+      "torch": "2.15.0",
+      "transformers": "5.22.2",
+      "peft": "0.21.2",
+      "sentence_transformers": "6.2.0",
+      "model2vec": "0.10.0",
+      "onnxruntime": "1.29.0",
+      "sklearn": "1.9.1",
+      "lightgbm": "4.7.0",
+      "interpret": "0.7.8",
+      "tabicl": "2.2.0"
+    },
+    "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"
+  },
+  "generated_utc": "2026-11-11T14:54:07Z"
+}

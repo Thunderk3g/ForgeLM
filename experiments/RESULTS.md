@@ -203,3 +203,28 @@ Escalating to the real local LLM from E2 instead of a perfect reviewer (1,000 te
 | fine-tuned MiniLM-L6 (22M) | 95% | 13.8% | 89.8% | 59.2% | 56.5% | 40.6% | 87.6% |
 | fine-tuned MiniLM-L6 (22M) | 97% | 23.2% | 89.8% | 59.2% | 65.5% | 45.3% | 85.1% |
 | fine-tuned MiniLM-L6 (22M) | 99% | 42.8% | 89.8% | 59.2% | 77.1% | 48.4% | 77.5% |
+
+## E6. Compliance screening: potentially unfair contract terms
+
+**Question.** To catch 90% of the unfair terms, how much of the text must a person read?
+
+**Setup.** LexGLUE UNFAIR-ToS as a binary task (10.7% positive), 5532 training, 2275 validation and 1607 test sentences. Threshold set for 90% recall on validation, applied unchanged to test.
+
+| Model | ROC AUC | Recall at the screening threshold | Precision there | Share of sentences sent for review | F1 at 0.5 |
+|---|---|---|---|---|---|
+| tfidf + LR | 0.973 | 90.7% | 52.0% | 18.7% | 0.782 |
+| static potion-32M + LR | 0.943 | 88.4% | 35.1% | 26.9% | 0.625 |
+| frozen bge-small + LR | 0.949 | 92.4% | 38.0% | 26.1% | 0.602 |
+| fine-tuned MiniLM-L6 (22M) | 0.969 | 90.7% | 54.2% | 17.9% | 0.787 |
+| zero-shot local LLM (Qwen2.5-1.5B), no training | 0.789 | 83.1% | 20.8% | 42.7% | 0.350 |
+
+Students trained with no human labels, on Qwen/Qwen2.5-1.5B-Instruct soft labels (0.631 s per sentence; the teacher marked 14.0% of the pool positive, the true rate is 10.7%):
+
+| Model | ROC AUC | Recall at the screening threshold | Precision there | Share of sentences sent for review | F1 at 0.5 |
+|---|---|---|---|---|---|
+| static potion-32M + LR, trained on LLM soft labels only (1000 sentences) | 0.780 | 87.2% | 16.7% | 56.1% | 0.281 |
+| static potion-32M + LR, same 1000 sentences with human labels | 0.872 | 90.1% | 19.5% | 49.4% | 0.539 |
+| frozen bge-small + LR, trained on LLM soft labels only (1000 sentences) | 0.745 | 86.6% | 15.5% | 60.0% | 0.246 |
+| frozen bge-small + LR, same 1000 sentences with human labels | 0.901 | 93.0% | 23.0% | 43.2% | 0.419 |
+
+Most indicative n-grams for the unfair class in the TF-IDF model: `word__we may`, `word__liable`, `word__for any`, `word__be liable`, `word__may change`, `word__any content`, `word__any`, `word__terminate`, `word__or`, `word__liable for`, `word__we`, `word__courts`.

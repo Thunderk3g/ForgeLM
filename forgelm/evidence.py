@@ -85,7 +85,12 @@ EVIDENCE: Dict[str, dict] = {
     },
     "e6-screening": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "Screening LexGLUE UNFAIR-ToS sentences for potentially unfair terms (10.7% positive), with the "
+                 "threshold set for 90% recall on validation: TF-IDF and a fine-tuned 22M encoder each caught 90.7% "
+                 "of unfair terms on test while sending 18-19% of sentences to review; frozen-embedding students sent "
+                 "26-27%. A zero-shot 1.5B local LLM caught 83.1% while sending 42.7%, and students trained only on its "
+                 "labels sent 56-60%. TF-IDF's top features ('we may', 'liable', 'terminate', 'courts') are directly "
+                 "auditable.",
         "source": "experiments/results/e6_unfair_terms.json",
     },
     # ---- published -----------------------------------------------------
