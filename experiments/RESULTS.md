@@ -268,3 +268,41 @@ Most indicative n-grams for the unfair class in the TF-IDF model: `word__we may`
 - Q4_K_M came out at 5.98 bits per weight, not about 4.5: the hidden size (960) is not a multiple of 256, so llama.cpp fell back to q5_0 / q8_0 for most tensors.
 - Memory: `forgelm.generative.estimate_memory_gb` gives 2.69 GB for this run (float32, batch 4, 173 tokens, no gradient checkpointing); the measured peak resident memory through training was 6.881 GB.
 - Seconds per test text include prompt processing; llama.cpp reuses the cached system prompt between texts, as it would in service. Decode tokens / s are measured separately on open-ended prompts from an empty cache.
+
+## E8. Prompt a local LLM or train a small model?
+
+**Question.** With 8 labelled examples per class, is it better to prompt a local LLM (zero-shot, or few-shot with retrieved demonstrations) or to train an LLM-free model, and at what cost?
+
+**Setup.** Banking77. Labelled set: 616 texts (8 per class). Test set: 1000 texts (E2's anchor items from the Banking77 test split). LLM: Qwen/Qwen2.5-1.5B-Instruct. Seconds per item are measured on this CPU after models are loaded.
+
+| System | Accuracy | Macro F1 | ECE | Seconds / item | LLM at inference | Labels used |
+|---|---|---|---|---|---|---|
+| zero-shot embedding similarity (bge-small) | 67.5% | 66.3% | 0.293 | 0.0026 | no | 0 |
+| nearest-neighbour vote, k=5 (bge-small) | 85.9% | 85.2% | 0.051 | 0.0026 | no | 616 |
+| static potion-32M + LR | 81.4% | 81.0% | 0.364 | 0.0000 | no | 616 |
+| frozen bge-small + LR | 87.5% | 87.0% | 0.462 | 0.0026 | no | 616 |
+| LLM zero-shot, 10 options | 59.2% | 58.0% | 0.346 | 0.5636 | yes | 0 |
+| LLM few-shot, 5 retrieved demos | 66.9% | 66.4% | 0.225 | 0.7668 | yes | 616 |
+
+The gate's decision (paired bootstrap interval and exact McNemar test against the cheaper options):
+
+```
+Gate on 1000 test items (minimum gain worth paying for: 1.0 points)
+
+option                                      accuracy      95% interval  LLM    s/item  labels
+static potion-32M + LR                         0.814       0.789-0.838   no    0.0000     616
+frozen bge-small + LR                          0.875       0.854-0.895   no    0.0026     616  <- recommended
+zero-shot embedding similarity (bge-small)     0.675       0.646-0.704   no    0.0026       0
+nearest-neighbour vote, k=5 (bge-small)        0.859       0.838-0.880   no    0.0026     616
+LLM zero-shot, 10 options                      0.592       0.561-0.622  yes    0.5636       0
+LLM few-shot, 5 retrieved demos                0.669       0.640-0.698  yes    0.7668     616
+
+Costlier minus cheaper, paired bootstrap 95% interval and exact McNemar p:
+  frozen bge-small + LR vs static potion-32M + LR: +6.1 [+3.9, +8.3], p=5.69e-08 -> better
+  zero-shot embedding similarity (bge-small) vs frozen bge-small + LR: -20.0 [-23.0, -16.9], p=1.47e-36 -> worse
+  nearest-neighbour vote, k=5 (bge-small) vs frozen bge-small + LR: -1.6 [-3.2, +0.0], p=0.0722 -> no_meaningful_gain
+  LLM zero-shot, 10 options vs frozen bge-small + LR: -28.3 [-31.6, -25.1], p=3.08e-58 -> worse
+  LLM few-shot, 5 retrieved demos vs frozen bge-small + LR: -20.6 [-23.6, -17.7], p=2.34e-39 -> worse
+
+Recommend 'frozen bge-small + LR' (accuracy 0.875, no LLM at inference, 0.0026 s per item). Cheaper options were beaten by enough to pay for, with the bootstrap interval and the exact McNemar test agreeing: 'frozen bge-small + LR' beats 'static potion-32M + LR' (+6.1 points, 95% interval +3.9 to +8.3, McNemar p=5.7e-08). Of the costlier options, 'zero-shot embedding similarity (bge-small)' is worse (-20.0 points, 95% interval -23.0 to -16.9, McNemar p=1.5e-36); 'nearest-neighbour vote, k=5 (bge-small)' does not gain enough to be worth paying for (-1.6 points, 95% interval -3.2 to +0.0, McNemar p=0.072); 'LLM zero-shot, 10 options' is worse (-28.3 points, 95% interval -31.6 to -25.1, McNemar p=3.1e-58); 'LLM few-shot, 5 retrieved demos' is worse (-20.6 points, 95% interval -23.6 to -17.7, McNemar p=2.3e-39). The intervals on 1000 test items are narrow enough to settle these comparisons.
+```

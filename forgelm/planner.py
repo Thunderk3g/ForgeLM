@@ -178,7 +178,8 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
                        "the cheapest large gain measured here: 8 labels per class with a frozen encoder "
                        "reached 85.8% on a 77-class task, against 68.0% zero-shot and 59-67% for students "
                        "trained on 2,000 texts labelled by a small local LLM or a zero-shot model",
-                       ["e1-ladder", "e2-teacher"], ["sentence_transformers", "sklearn"], student="encoder"))
+                       ["e1-ladder", "e2-teacher", "e8-prompt-or-train"], ["sentence_transformers", "sklearn"],
+                       student="encoder"))
         if c.teacher_available and task.n_unlabelled > 0:
             S.append(_step(hw, "teacher-label the unlabelled pool, then train a student",
                            "distill(LocalLLMTeacher or ChatCompletionsTeacher, EmbeddingStudent, pool, anchor)",
@@ -212,8 +213,15 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
                        if not task.multilingual else
                        "EmbeddingStudent('intfloat/multilingual-e5-small', backend='sentence')",
                        "strongest option when labels are scarce: the encoder is not updated, so a handful of "
-                       "examples per class cannot overfit it",
-                       ["e1-ladder"], ["sentence_transformers", "sklearn"], student="encoder"))
+                       "examples per class cannot overfit it. With 8 labels per class it beat a local 1.5B LLM "
+                       "prompted with retrieved examples by 20 points at 1/300 of the cost",
+                       ["e1-ladder", "e8-prompt-or-train"], ["sentence_transformers", "sklearn"], student="encoder"))
+        S.append(_step(hw, "decide between the candidates on the same hold-out",
+                       "forgelm.gate.decide(options, y_true): cheapest option that no costlier one beats by a "
+                       "margin worth paying for",
+                       "uses a paired bootstrap interval and an exact McNemar test, and says when the test set is "
+                       "too small to tell",
+                       ["e8-prompt-or-train"]))
         if k < 16 and task.n_classes <= 10:
             S.append(_step(hw, "SetFit (contrastive few-shot)",
                            "setfit.SetFitModel + Trainer on the same few examples",

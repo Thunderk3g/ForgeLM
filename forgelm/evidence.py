@@ -107,6 +107,15 @@ EVIDENCE: Dict[str, dict] = {
                  "estimated 2.69 GB against a measured 6.88 GB peak resident memory.",
         "source": "experiments/results/e7_generative_cpu.json",
     },
+    "e8-prompt-or-train": {
+        "level": "measured",
+        "claim": "With 8 labels per class on Banking77 (1,000 test texts), a frozen bge-small encoder with a "
+                 "logistic-regression head scored 87.5% at 0.003 s per text. A local 1.5B LLM scored 59.2% "
+                 "zero-shot and 66.9% with 5 retrieved demonstrations, at 0.56-0.77 s per text: retrieved "
+                 "demonstrations helped the LLM by 7.7 points but it stayed 20.6 points behind the trained small "
+                 "model (paired bootstrap and exact McNemar agree, p < 1e-38).",
+        "source": "experiments/results/e8_prompt_or_train.json",
+    },
     # ---- published -----------------------------------------------------
     "peft-benchmark": {
         "level": "published",

@@ -1,0 +1,383 @@
+{
+  "experiment": "E8 prompt or train? (Banking77, few labels per class)",
+  "question": "With 8 labelled examples per class, prompt a local LLM or train an LLM-free student, and at what cost?",
+  "smoke": false,
+  "labelled_set": {
+    "per_class": 8,
+    "n": 616,
+    "seed": 0,
+    "source": "Banking77 train split, stratified_sample"
+  },
+  "test_set": {
+    "n": 1000,
+    "source": "E2's anchor items from the Banking77 test split"
+  },
+  "llm": {
+    "model": "Qwen/Qwen2.5-1.5B-Instruct",
+    "licence": "Apache-2.0",
+    "options": 10,
+    "demos": 5,
+    "ran_forward_passes": true,
+    "load_seconds": 0.9,
+    "demo_embedding_seconds": 1.91,
+    "zero_shot_source": "e2_teacher_Qwen2.5-1.5B-Instruct_2000_1000.npz",
+    "few_shot_stats": {
+      "teacher": "llm:Qwen/Qwen2.5-1.5B-Instruct",
+      "items_labelled": 1000,
+      "seconds": 766.84,
+      "seconds_per_item": 0.7668,
+      "k_demos": 5,
+      "demonstrations_per_item": 5.0,
+      "demonstrations_histogram": {
+        "5": 1000
+      }
+    },
+    "dtype": "bfloat16",
+    "prompts": {
+      "zero_shot": {
+        "mean_tokens": 134.1,
+        "max_tokens": 152
+      },
+      "few_shot": {
+        "mean_tokens": 246.3,
+        "max_tokens": 290
+      },
+      "few_shot_options_mean": 10.0,
+      "few_shot_shortlist_changed_share": 0.08,
+      "sample_size": 50
+    }
+  },
+  "systems": [
+    {
+      "system": "zero-shot embedding similarity (bge-small)",
+      "key": "a",
+      "needs_llm_at_inference": false,
+      "labels_needed": 0,
+      "seconds_per_item": 0.002603,
+      "seconds_timed_total": 2.603,
+      "items_timed": 1000,
+      "notes": "",
+      "n": 1000,
+      "accuracy": 0.675,
+      "macro_precision": 0.7073,
+      "macro_recall": 0.6789,
+      "macro_f1": 0.6626,
+      "ece": 0.2928,
+      "brier": 0.5516,
+      "nll": 1.5503
+    },
+    {
+      "system": "nearest-neighbour vote, k=5 (bge-small)",
+      "key": "b",
+      "needs_llm_at_inference": false,
+      "labels_needed": 616,
+      "seconds_per_item": 0.00264,
+      "seconds_timed_total": 2.64,
+      "items_timed": 1000,
+      "notes": "",
+      "n": 1000,
+      "accuracy": 0.859,
+      "macro_precision": 0.8664,
+      "macro_recall": 0.8525,
+      "macro_f1": 0.8522,
+      "ece": 0.0512,
+      "brier": 0.2207,
+      "nll": 1.7046
+    },
+    {
+      "system": "static potion-32M + LR",
+      "key": "c",
+      "needs_llm_at_inference": false,
+      "labels_needed": 616,
+      "seconds_per_item": 4.9e-05,
+      "seconds_timed_total": 0.049,
+      "items_timed": 1000,
+      "notes": "trained in 1.6s",
+      "n": 1000,
+      "accuracy": 0.814,
+      "macro_precision": 0.8317,
+      "macro_recall": 0.8118,
+      "macro_f1": 0.81,
+      "ece": 0.364,
+      "brier": 0.4319,
+      "nll": 1.154
+    },
+    {
+      "system": "frozen bge-small + LR",
+      "key": "d",
+      "needs_llm_at_inference": false,
+      "labels_needed": 616,
+      "seconds_per_item": 0.002596,
+      "seconds_timed_total": 2.596,
+      "items_timed": 1000,
+      "notes": "trained in 1.1s",
+      "n": 1000,
+      "accuracy": 0.875,
+      "macro_precision": 0.8823,
+      "macro_recall": 0.8718,
+      "macro_f1": 0.8702,
+      "ece": 0.4621,
+      "brier": 0.4286,
+      "nll": 1.1147
+    },
+    {
+      "system": "LLM zero-shot, 10 options",
+      "key": "e",
+      "needs_llm_at_inference": true,
+      "labels_needed": 0,
+      "seconds_per_item": 0.563598,
+      "seconds_timed_total": 1690.794,
+      "items_timed": 3000,
+      "notes": "E2's cached labels and timing (bf16, whole machine)",
+      "n": 1000,
+      "accuracy": 0.592,
+      "macro_precision": 0.6482,
+      "macro_recall": 0.5892,
+      "macro_f1": 0.5796,
+      "ece": 0.3456,
+      "brier": 0.7379,
+      "nll": 4.466
+    },
+    {
+      "system": "LLM few-shot, 5 retrieved demos",
+      "key": "f",
+      "needs_llm_at_inference": true,
+      "labels_needed": 616,
+      "seconds_per_item": 0.766842,
+      "seconds_timed_total": 766.842,
+      "items_timed": 1000,
+      "notes": "computed here (bfloat16)",
+      "n": 1000,
+      "accuracy": 0.669,
+      "macro_precision": 0.6965,
+      "macro_recall": 0.6686,
+      "macro_f1": 0.6642,
+      "ece": 0.2253,
+      "brier": 0.5466,
+      "nll": 2.1595
+    }
+  ],
+  "gate": {
+    "n_items": 1000,
+    "min_gain": 0.01,
+    "confidence": 0.95,
+    "options": [
+      {
+        "name": "static potion-32M + LR",
+        "cost_rank": 0,
+        "accuracy": 0.814,
+        "accuracy_ci": [
+          0.789,
+          0.838
+        ],
+        "needs_llm_at_inference": false,
+        "seconds_per_item": 4.872073599835858e-05,
+        "labels_needed": 616,
+        "has_predictions": true,
+        "notes": "trained in 1.6s"
+      },
+      {
+        "name": "frozen bge-small + LR",
+        "cost_rank": 1,
+        "accuracy": 0.875,
+        "accuracy_ci": [
+          0.854,
+          0.895
+        ],
+        "needs_llm_at_inference": false,
+        "seconds_per_item": 0.0025962192340048206,
+        "labels_needed": 616,
+        "has_predictions": true,
+        "notes": "trained in 1.1s"
+      },
+      {
+        "name": "zero-shot embedding similarity (bge-small)",
+        "cost_rank": 2,
+        "accuracy": 0.675,
+        "accuracy_ci": [
+          0.646,
+          0.704
+        ],
+        "needs_llm_at_inference": false,
+        "seconds_per_item": 0.002602578727004584,
+        "labels_needed": 0,
+        "has_predictions": true,
+        "notes": ""
+      },
+      {
+        "name": "nearest-neighbour vote, k=5 (bge-small)",
+        "cost_rank": 3,
+        "accuracy": 0.859,
+        "accuracy_ci": [
+          0.838,
+          0.88
+        ],
+        "needs_llm_at_inference": false,
+        "seconds_per_item": 0.002640188551002211,
+        "labels_needed": 616,
+        "has_predictions": true,
+        "notes": ""
+      },
+      {
+        "name": "LLM zero-shot, 10 options",
+        "cost_rank": 4,
+        "accuracy": 0.592,
+        "accuracy_ci": [
+          0.561,
+          0.622
+        ],
+        "needs_llm_at_inference": true,
+        "seconds_per_item": 0.5635978935349998,
+        "labels_needed": 0,
+        "has_predictions": true,
+        "notes": "E2's cached labels and timing (bf16, whole machine)"
+      },
+      {
+        "name": "LLM few-shot, 5 retrieved demos",
+        "cost_rank": 5,
+        "accuracy": 0.669,
+        "accuracy_ci": [
+          0.64,
+          0.698
+        ],
+        "needs_llm_at_inference": true,
+        "seconds_per_item": 0.7668419289919984,
+        "labels_needed": 616,
+        "has_predictions": true,
+        "notes": "computed here (bfloat16)"
+      }
+    ],
+    "comparisons": [
+      {
+        "cheaper": "static potion-32M + LR",
+        "costlier": "frozen bge-small + LR",
+        "accuracy_cheaper": 0.814,
+        "accuracy_costlier": 0.875,
+        "gain": 0.061,
+        "ci_low": 0.039,
+        "ci_high": 0.083,
+        "mcnemar_p": 5.6862817546381464e-08,
+        "cheaper_only_correct": 33,
+        "costlier_only_correct": 94,
+        "verdict": "better",
+        "confirmed": true,
+        "settled": true
+      },
+      {
+        "cheaper": "frozen bge-small + LR",
+        "costlier": "zero-shot embedding similarity (bge-small)",
+        "accuracy_cheaper": 0.875,
+        "accuracy_costlier": 0.675,
+        "gain": -0.2,
+        "ci_low": -0.23,
+        "ci_high": -0.169,
+        "mcnemar_p": 1.4706658602217003e-36,
+        "cheaper_only_correct": 238,
+        "costlier_only_correct": 38,
+        "verdict": "worse",
+        "confirmed": false,
+        "settled": true
+      },
+      {
+        "cheaper": "frozen bge-small + LR",
+        "costlier": "nearest-neighbour vote, k=5 (bge-small)",
+        "accuracy_cheaper": 0.875,
+        "accuracy_costlier": 0.859,
+        "gain": -0.016,
+        "ci_low": -0.032,
+        "ci_high": 0.0,
+        "mcnemar_p": 0.07223792719176259,
+        "cheaper_only_correct": 43,
+        "costlier_only_correct": 27,
+        "verdict": "no_meaningful_gain",
+        "confirmed": false,
+        "settled": true
+      },
+      {
+        "cheaper": "frozen bge-small + LR",
+        "costlier": "LLM zero-shot, 10 options",
+        "accuracy_cheaper": 0.875,
+        "accuracy_costlier": 0.592,
+        "gain": -0.283,
+        "ci_low": -0.316,
+        "ci_high": -0.251,
+        "mcnemar_p": 3.0794788439310405e-58,
+        "cheaper_only_correct": 318,
+        "costlier_only_correct": 35,
+        "verdict": "worse",
+        "confirmed": false,
+        "settled": true
+      },
+      {
+        "cheaper": "frozen bge-small + LR",
+        "costlier": "LLM few-shot, 5 retrieved demos",
+        "accuracy_cheaper": 0.875,
+        "accuracy_costlier": 0.669,
+        "gain": -0.206,
+        "ci_low": -0.236,
+        "ci_high": -0.177,
+        "mcnemar_p": 2.3442396321525954e-39,
+        "cheaper_only_correct": 240,
+        "costlier_only_correct": 34,
+        "verdict": "worse",
+        "confirmed": false,
+        "settled": true
+      }
+    ],
+    "recommended": "frozen bge-small + LR",
+    "reason": "Recommend 'frozen bge-small + LR' (accuracy 0.875, no LLM at inference, 0.0026 s per item). Cheaper options were beaten by enough to pay for, with the bootstrap interval and the exact McNemar test agreeing: 'frozen bge-small + LR' beats 'static potion-32M + LR' (+6.1 points, 95% interval +3.9 to +8.3, McNemar p=5.7e-08). Of the costlier options, 'zero-shot embedding similarity (bge-small)' is worse (-20.0 points, 95% interval -23.0 to -16.9, McNemar p=1.5e-36); 'nearest-neighbour vote, k=5 (bge-small)' does not gain enough to be worth paying for (-1.6 points, 95% interval -3.2 to +0.0, McNemar p=0.072); 'LLM zero-shot, 10 options' is worse (-28.3 points, 95% interval -31.6 to -25.1, McNemar p=3.1e-58); 'LLM few-shot, 5 retrieved demos' is worse (-20.6 points, 95% interval -23.6 to -17.7, McNemar p=2.3e-39). The intervals on 1000 test items are narrow enough to settle these comparisons.",
+    "too_small_to_tell": false,
+    "rejected": {
+      "static potion-32M + LR": {
+        "cheaper": "static potion-32M + LR",
+        "costlier": "frozen bge-small + LR",
+        "accuracy_cheaper": 0.814,
+        "accuracy_costlier": 0.875,
+        "gain": 0.061,
+        "ci_low": 0.039,
+        "ci_high": 0.083,
+        "mcnemar_p": 5.6862817546381464e-08,
+        "cheaper_only_correct": 33,
+        "costlier_only_correct": 94,
+        "verdict": "better",
+        "confirmed": true,
+        "settled": true
+      }
+    },
+    "untested": []
+  },
+  "gate_text": "Gate on 1000 test items (minimum gain worth paying for: 1.0 points)\n\noption                                      accuracy      95% interval  LLM    s/item  labels\nstatic potion-32M + LR                         0.814       0.789-0.838   no    0.0000     616\nfrozen bge-small + LR                          0.875       0.854-0.895   no    0.0026     616  <- recommended\nzero-shot embedding similarity (bge-small)     0.675       0.646-0.704   no    0.0026       0\nnearest-neighbour vote, k=5 (bge-small)        0.859       0.838-0.880   no    0.0026     616\nLLM zero-shot, 10 options                      0.592       0.561-0.622  yes    0.5636       0\nLLM few-shot, 5 retrieved demos                0.669       0.640-0.698  yes    0.7668     616\n\nCostlier minus cheaper, paired bootstrap 95% interval and exact McNemar p:\n  frozen bge-small + LR vs static potion-32M + LR: +6.1 [+3.9, +8.3], p=5.69e-08 -> better\n  zero-shot embedding similarity (bge-small) vs frozen bge-small + LR: -20.0 [-23.0, -16.9], p=1.47e-36 -> worse\n  nearest-neighbour vote, k=5 (bge-small) vs frozen bge-small + LR: -1.6 [-3.2, +0.0], p=0.0722 -> no_meaningful_gain\n  LLM zero-shot, 10 options vs frozen bge-small + LR: -28.3 [-31.6, -25.1], p=3.08e-58 -> worse\n  LLM few-shot, 5 retrieved demos vs frozen bge-small + LR: -20.6 [-23.6, -17.7], p=2.34e-39 -> worse\n\nRecommend 'frozen bge-small + LR' (accuracy 0.875, no LLM at inference, 0.0026 s per item). Cheaper options were beaten by enough to pay for, with the bootstrap interval and the exact McNemar test agreeing: 'frozen bge-small + LR' beats 'static potion-32M + LR' (+6.1 points, 95% interval +3.9 to +8.3, McNemar p=5.7e-08). Of the costlier options, 'zero-shot embedding similarity (bge-small)' is worse (-20.0 points, 95% interval -23.0 to -16.9, McNemar p=1.5e-36); 'nearest-neighbour vote, k=5 (bge-small)' does not gain enough to be worth paying for (-1.6 points, 95% interval -3.2 to +0.0, McNemar p=0.072); 'LLM zero-shot, 10 options' is worse (-28.3 points, 95% interval -31.6 to -25.1, McNemar p=3.1e-58); 'LLM few-shot, 5 retrieved demos' is worse (-20.6 points, 95% interval -23.6 to -17.7, McNemar p=2.3e-39). The intervals on 1000 test items are narrow enough to settle these comparisons.",
+  "environment": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ram_gb": 15.71,
+    "device_class": "cpu",
+    "cpu_flags": [
+      "avx",
+      "avx2",
+      "avx512f",
+      "avx512bw",
+      "avx512_vnni",
+      "avx_vnni",
+      "amx_int8",
+      "amx_bf16",
+      "fma",
+      "f16c"
+    ],
+    "python": "3.13.18",
+    "packages": {
+      "torch": "2.15.0",
+      "transformers": "5.22.2",
+      "peft": "0.21.2",
+      "sentence_transformers": "6.2.0",
+      "model2vec": "0.10.0",
+      "onnxruntime": "1.29.0",
+      "sklearn": "1.9.1",
+      "lightgbm": "4.7.0",
+      "interpret": "0.7.8",
+      "tabicl": "2.2.0"
+    },
+    "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"
+  },
+  "generated_utc": "2026-11-11T16:39:43Z"
+}
