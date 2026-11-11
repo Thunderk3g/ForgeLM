@@ -300,7 +300,8 @@ def _sysfs_gpus(root: str = "/sys/class/drm") -> List[Accelerator]:
     for card in sorted(base.glob("card[0-9]")):
         vendor = _read(str(card / "device" / "vendor")).strip().lower()
         vram = _read(str(card / "device" / "mem_info_vram_total")).strip()
-        if vendor == "0x1002" and vram.isdigit() and int(vram) > 0:
+        # Integrated graphics report a few hundred MiB of "VRAM"; they are not training devices.
+        if vendor == "0x1002" and vram.isdigit() and int(vram) >= 2 * GIB:
             found.append(Accelerator("rocm", "amd", f"AMD GPU ({card.name})", round(int(vram) / GIB, 2)))
     return found
 

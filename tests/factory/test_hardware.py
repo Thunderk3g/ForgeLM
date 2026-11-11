@@ -66,3 +66,18 @@ def test_vnni_detection():
     assert reference_profile("cpu-server").has_vnni
     assert not reference_profile("cpu-laptop").has_vnni
     assert reference_profile("apple-16gb").has_vnni  # arm dot-product
+
+
+def test_sysfs_ignores_integrated_amd_graphics(tmp_path):
+    from forgelm.hardware import _sysfs_gpus
+
+    for name, vram in (("card0", 512 * 1024**2), ("card1", 16 * 1024**3)):
+        dev = tmp_path / name / "device"
+        dev.mkdir(parents=True)
+        (dev / "vendor").write_text("0x1002\n")
+        (dev / "mem_info_vram_total").write_text(f"{vram}\n")
+    intel = tmp_path / "card2" / "device"
+    intel.mkdir(parents=True)
+    (intel / "vendor").write_text("0x8086\n")
+    found = _sysfs_gpus(str(tmp_path))
+    assert [(a.vendor, a.memory_gb) for a in found] == [("amd", 16.0)]
