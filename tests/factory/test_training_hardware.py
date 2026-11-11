@@ -576,7 +576,9 @@ def test_xpu_memory_is_read_however_the_torch_build_offers_it(detection, monkeyp
     full = config.generate_optimal_config(request(model_name=SMALL))
     assert full["gpu_optimizations"]["enabled"] is True and full["effective_memory_gb"] == 0.0
     assert full["training_args"]["per_device_train_batch_size"] == 1 and full["lora_config"]["r"] == 8
-    assert profile.accelerator_notes[0] in config.get_hardware_summary()["warnings"]
+    summary = config.get_hardware_summary()
+    assert profile.accelerator_notes[0] in summary["warnings"]
+    assert summary["gpu"] == f"{ARC} (Intel XPU, memory not reported)"
 
 
 def test_detection_survives_a_torch_without_the_newer_attributes(detection, monkeypatch):
@@ -733,6 +735,21 @@ def test_rocm_decision_does_not_need_forgelm(detection, bridge, monkeypatch):
     assert without == pytest.approx(3.0 * 2.0 * 1.5 + 0.8) and without >= with_forgelm  # the cautious side
     assert config._get_gpu_optimizations(SMALL)["load_bits"] == 16
     assert config._get_gpu_optimizations(LARGE)["load_bits"] == 8
+
+
+def test_unsloth_enhancements_do_not_claim_flash_attention_off_nvidia(bridge, monkeypatch):
+    """With Unsloth installed, the enhancement block agrees with flash_attention being off; NVIDIA keeps it."""
+    module = _load_detection(_current_source(), "current_unsloth", unsloth_bf16=True, bridge=bridge)
+    monkeypatch.delenv("FORGELM_ROCM_ALLOW_4BIT", raising=False)
+    for torch, expected in ((make_torch("cuda", "NVIDIA GeForce RTX 4090", 24.0), "flash_attention_2"),
+                            (make_torch("rocm", RADEON, 16.0, None), "sdpa"), (make_torch("mps"), "sdpa"),
+                            (make_torch("xpu", ARC, 16.0), "sdpa")):
+        profile, _ = detect(module, monkeypatch, torch, container_gb=None)
+        config = module.AdaptiveTrainingConfig(profile)
+        for kind in ("instruction", "chat", "reasoning"):
+            enhanced = config.generate_enhanced_adaptive_config(request(model_name=SMALL), kind)
+            assert enhanced["unsloth_enhancements"]["unsloth_attention_implementation"] == expected
+            assert enhanced["advanced_optimizations"]["use_flash_attention"] is (expected == "flash_attention_2")
 
 
 def test_module_works_when_the_bridge_cannot_be_imported(monkeypatch):

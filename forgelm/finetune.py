@@ -509,11 +509,28 @@ def generate(model, tokenizer, messages: Sequence[dict], max_new_tokens: int = 6
     with torch.no_grad():
         out = model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), **settings)
     seconds = time.time() - started
-    new = out[0, ids.shape[1]:]
-    text = tokenizer.decode(new, skip_special_tokens=True).strip()
+    new = out[0, ids.shape[1]:].tolist()
+    # Count the tokens of the reply, not the end-of-turn token that stopped
+    # it: llama.cpp leaves that token out of its completion count, and the two
+    # throughput figures are compared side by side.
+    stop = _stop_ids(model, tokenizer)
+    n_reply = next((i for i, t in enumerate(new) if t in stop), len(new))
+    text = tokenizer.decode(new[:n_reply], skip_special_tokens=True).strip()
     if not return_details:
         return text
-    return {"text": text, "prompt_tokens": int(ids.shape[1]), "new_tokens": int(new.shape[0]), "seconds": seconds}
+    return {"text": text, "prompt_tokens": int(ids.shape[1]), "new_tokens": n_reply, "seconds": seconds}
+
+
+def _stop_ids(model, tokenizer) -> set:
+    """Token ids that end a reply: the generation config's EOS ids and the tokenizer's."""
+    ids = set()
+    config = getattr(model, "generation_config", None)
+    for value in (getattr(config, "eos_token_id", None), getattr(tokenizer, "eos_token_id", None)):
+        if isinstance(value, int):
+            ids.add(value)
+        elif isinstance(value, (list, tuple)):
+            ids.update(int(v) for v in value)
+    return ids
 
 
 def normalise_answer(text: str) -> str:

@@ -1051,7 +1051,12 @@ class AdaptiveTrainingConfig:
                 "process_supervision_support": True,
                 "step_wise_gradients": True,
             })
-        
+
+        if self._accelerator() in _VENDOR_ACCELERATORS:
+            # Flash attention is off on these devices (see gpu_optimizations), so
+            # do not report it here either; PyTorch's own SDPA attention is used.
+            base_enhancements["unsloth_attention_implementation"] = "sdpa"
+
         return base_enhancements
     
     def _get_gpu_optimizations(self, model_name: Optional[str] = None,
@@ -1476,7 +1481,10 @@ class AdaptiveTrainingConfig:
                         f"{self.profile.system_memory_gb:.1f}GB unified memory)")
         elif accelerator == "xpu":
             name = getattr(self.profile, "accelerator_name", "") or self.profile.gpu_name
-            gpu_text = f"{name} (Intel XPU, {self._tier_memory_gb():.1f}GB)"
+            memory_gb = self._tier_memory_gb()
+            # Some XPU builds report no memory at all; "0.0GB" would read as an empty device.
+            memory_text = f"{memory_gb:.1f}GB" if memory_gb > 0 else "memory not reported"
+            gpu_text = f"{name} (Intel XPU, {memory_text})"
         elif accelerator == "rocm":
             gpu_text = f"{self.profile.gpu_name} (AMD ROCm, {self.profile.gpu_memory_gb:.1f}GB)"
         else:
