@@ -322,7 +322,7 @@ if e7:
     if e7.get("merge_check"):
         m = e7["merge_check"]
         notes.append(f"The adapter before merging and the merged weights agreed on {pct(m['agreement_adapter_vs_merged'])} "
-                     f"of the first {m['n']} test texts.")
+                     f"of {m['n']} test texts spread evenly across the intents.")
     for name, trip in (e7.get("chat_template_round_trip") or {}).items():
         notes.append(f"Chat-template round trip on the Q4_K_M file ({name.replace('_', ' ')}): "
                      + ("the prompt and its tokens are identical to the training tokenizer's." if trip["passed"]

@@ -347,7 +347,7 @@ def _plan_generation(task: TaskSpec, c: Constraints, hw: HardwareProfile, deploy
                    f"(rsLoRA) is an option to try, together with a learning-rate sweep, because it changes "
                    f"the adapter scale",
                    "; ".join(choice.reasons),
-                   ["peft-benchmark", "lora-lr", "vram-heuristic"],
+                   ["e7-generative", "peft-benchmark", "lora-lr", "vram-heuristic"],
                    ["torch", "transformers", "peft", "trl"] if choice.backend != "mlx_lm" else ["mlx_lm"],
                    feasible=choice.feasible, memory=choice.memory, available_gb=choice.available_gb,
                    backend=choice.to_dict(), lora=cfg))
@@ -356,7 +356,10 @@ def _plan_generation(task: TaskSpec, c: Constraints, hw: HardwareProfile, deploy
     plan.deployment.append(f"format: {dchoice.serve_format}")
     plan.deployment.append(f"runtime: {dchoice.serve_runtime}")
     plan.deployment.append("re-run the evaluation contract on the quantised artefact; measure against your own "
-                           "16-bit model rather than quoting perplexity tables")
+                           "16-bit model rather than quoting perplexity tables (Q4_K_M lost 3.3 points on a 360M "
+                           "model in E7 while f16 lost nothing; `forgelm export-gguf` checks the chat template)")
+    plan.guardrails.append("measure memory with a few real steps (forgelm.dryrun) before a long run: the estimate "
+                           "was 2.6x too low in E7")
     plan.not_recommended += [
         {"what": "DoRA, PiSSA, OLoRA as defaults",
          "why": "no consistent gain over well-tuned LoRA; available as advanced options. Sweep the learning "

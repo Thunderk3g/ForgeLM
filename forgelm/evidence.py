@@ -98,6 +98,15 @@ EVIDENCE: Dict[str, dict] = {
                  "auditable.",
         "source": "experiments/results/e6_unfair_terms.json",
     },
+    "e7-generative": {
+        "level": "measured",
+        "claim": "On a 4-core CPU, LoRA (rank 16, 3 epochs, 19 minutes) took SmolLM2-360M-Instruct from 1.3% to "
+                 "89.0% exact match on a 10-intent Banking77 generation task. GGUF f16 export kept every answer "
+                 "(100% agreement) at half the size and twice the speed; Q4_K_M lost 3.3 points (92.7% agreement) "
+                 "at 271 MB and 0.25 s per text. The chat template survived export. The memory heuristic "
+                 "estimated 2.69 GB against a measured 6.88 GB peak resident memory.",
+        "source": "experiments/results/e7_generative_cpu.json",
+    },
     # ---- published -----------------------------------------------------
     "peft-benchmark": {
         "level": "published",
@@ -237,7 +246,8 @@ EVIDENCE: Dict[str, dict] = {
     "vram-heuristic": {
         "level": "assumption",
         "claim": "The memory estimate is a heuristic fitted to published minimum-VRAM tables that disagree by "
-                 "up to 2x; confirm with a short real run.",
+                 "up to 2x, and in E7 it was 2.6x below the measured peak on a CPU run; confirm with a short real "
+                 "run (forgelm.dryrun) before committing to a model size.",
         "source": "forgelm/generative.py",
     },
     "latency-rule": {

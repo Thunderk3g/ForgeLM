@@ -248,3 +248,23 @@ Students trained with no human labels, on Qwen/Qwen2.5-1.5B-Instruct soft labels
 | frozen bge-small + LR, same 1000 sentences with human labels | 0.901 | 93.0% | 23.0% | 43.2% | 0.419 |
 
 Most indicative n-grams for the unfair class in the TF-IDF model: `word__we may`, `word__liable`, `word__for any`, `word__be liable`, `word__may change`, `word__any content`, `word__any`, `word__terminate`, `word__or`, `word__liable for`, `word__we`, `word__courts`.
+
+## E7. Specialising a small instruct model on a CPU, and exporting it to GGUF
+
+**Question.** Can a small instruct model be specialised with LoRA on a CPU, and does the result survive GGUF export and 4-bit quantisation?
+
+**Setup.** HuggingFaceTB/SmolLM2-360M-Instruct (362M parameters). Banking77 restricted to its 10 most frequent intents, as generation: the system prompt lists the intent names and the model must answer with one. 400 training conversations, 300 test texts, greedy decoding, exact match. LoRA rank 16, 3 epochs, float32 on cpu: 150 optimizer steps in 19 minutes (182 tokens / s), loss 0.482 over the first tenth of the run, 0.033 over the last. 4 CPU threads for both PyTorch and llama.cpp.
+
+| Model | Exact match | Names the right intent | Agreement with the PyTorch fine-tune | MB | Seconds per test text | Decode tokens / s |
+|---|---|---|---|---|---|---|
+| Base model, zero-shot (PyTorch) | 1.3% | 1.3% |  |  | 1.77 |  |
+| Fine-tuned, merged float32 (PyTorch) | 89.0% | 89.0% | reference | 1,447 | 0.78 | 19.7 |
+| Fine-tuned, GGUF f16 (llama.cpp) | 89.0% | 89.0% | 100.0% | 726 | 0.36 | 33.1 |
+| Fine-tuned, GGUF Q4_K_M (llama.cpp) | 85.7% | 85.7% | 92.7% | 271 | 0.25 | 53.5 |
+
+- The adapter before merging and the merged weights agreed on 100.0% of 50 test texts spread evenly across the intents.
+- Chat-template round trip on the Q4_K_M file (generic conversation): the prompt and its tokens are identical to the training tokenizer's.
+- Chat-template round trip on the Q4_K_M file (task prompt): the prompt and its tokens are identical to the training tokenizer's.
+- Q4_K_M came out at 5.98 bits per weight, not about 4.5: the hidden size (960) is not a multiple of 256, so llama.cpp fell back to q5_0 / q8_0 for most tensors.
+- Memory: `forgelm.generative.estimate_memory_gb` gives 2.69 GB for this run (float32, batch 4, 173 tokens, no gradient checkpointing); the measured peak resident memory through training was 6.881 GB.
+- Seconds per test text include prompt processing; llama.cpp reuses the cached system prompt between texts, as it would in service. Decode tokens / s are measured separately on open-ended prompts from an empty cache.
