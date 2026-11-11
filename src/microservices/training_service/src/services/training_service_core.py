@@ -30,6 +30,7 @@ except (ImportError, NotImplementedError) as e:
     print(f"Worker: Unsloth not available ({e})")
 from models.schemas import FineTuneRequest
 from utils.logging import get_logger
+from utils.factory_bridge import resolve_peft_config, torch_device_and_dtype
 
 # Import ML dependencies with error handling
 try:
@@ -904,14 +905,17 @@ class TrainingCore:
             tokenizer = AutoTokenizer.from_pretrained(
                 request.base_model_dir, trust_remote_code=True
             )
+            # Device and precision for any accelerator vendor, not only CUDA.
+            _device, _dtype = torch_device_and_dtype()
+            self.logger.info(f"Loading on device={_device} dtype={_dtype}")
             model = AutoModelForCausalLM.from_pretrained(
                 request.base_model_dir,
                 trust_remote_code=True,
-                device_map="auto",
-                torch_dtype=(
-                    torch.float16 if torch.cuda.is_available() else torch.float32
-                ),
+                device_map="auto" if _device == "cuda" else None,
+                torch_dtype=_dtype,
             )
+            if _device in ("mps", "xpu"):
+                model = model.to(_device)
 
             # Add padding token if missing
             if tokenizer.pad_token is None:
@@ -923,17 +927,11 @@ class TrainingCore:
                 raise InterruptedError("Training cancelled during model loading")
 
             # Apply PEFT if available
-            if PEFT_AVAILABLE and request.peft_method in ["lora", "qlora"]:
-                self._update_status("configuring", "Applying PEFT configuration...")
-
-                peft_config = LoraConfig(
-                    r=16,
-                    lora_alpha=32,
-                    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-                    lora_dropout=0.0,  # Optimized for Unsloth fast patching
-                    bias="none",
-                    task_type="CAUSAL_LM",
-                )
+            # The adapter follows the request (method, rank, alpha, dropout, target modules).
+            # Unsupported method names raise instead of silently training the full model.
+            peft_config = resolve_peft_config(request) if PEFT_AVAILABLE else None
+            if peft_config is not None:
+                self._update_status("configuring", f"Applying PEFT configuration ({request.peft_method})...")
                 model = get_peft_model(model, peft_config)
 
             # Load dataset
@@ -1225,161 +1223,6 @@ class TrainingCore:
         
         return sft_config
 
-    def _detect_model_precision(self, model) -> str:
-        """Detect the actual precision of the loaded model"""
-        try:
-            # Try multiple ways to get model dtype
-            model_dtype = None
-            
-            # Method 1: Direct dtype attribute
-            if hasattr(model, 'dtype'):
-                model_dtype = model.dtype
-            # Method 2: Through model.model (for wrapped models)
-            elif hasattr(model, 'model') and hasattr(model.model, 'dtype'):
-                model_dtype = model.model.dtype
-            # Method 3: Check first parameter dtype
-            elif hasattr(model, 'parameters'):
-                try:
-                    model_dtype = next(model.parameters()).dtype
-                except (StopIteration, AttributeError):
-                    pass
-            # Method 4: For Unsloth models
-            elif hasattr(model, 'base_model') and hasattr(model.base_model, 'dtype'):
-                model_dtype = model.base_model.dtype
-            
-            # Normalize dtype to string
-            if model_dtype is not None:
-                if model_dtype == torch.bfloat16:
-                    return "bfloat16"
-                elif model_dtype == torch.float16:
-                    return "float16"
-                elif model_dtype == torch.float32:
-                    return "float32"
-                else:
-                    return str(model_dtype).split('.')[-1]  # Extract dtype name
-            
-            # Fallback: assume float16 for safety
-            self.logger.warning("Could not detect model precision, defaulting to float16")
-            return "float16"
-            
-        except Exception as e:
-            self.logger.error(f"Error detecting model precision: {e}")
-            return "float16"  # Safe fallback
-
-    def _get_optimal_precision_settings(self, model=None, gpu_opts=None) -> Dict[str, Any]:
-        """Get optimal precision settings for Unsloth training"""
-        try:
-            # Detect model precision if model is available
-            model_precision = None
-            if model is not None:
-                model_precision = self._detect_model_precision(model)
-                self.logger.info(f"Detected model precision: {model_precision}")
-            
-            # Check Unsloth hardware support
-            if UNSLOTH_AVAILABLE:
-                try:
-                    supports_bf16 = is_bfloat16_supported()
-                    self.logger.info(f"Unsloth hardware bf16 support: {supports_bf16}")
-                except Exception as e:
-                    self.logger.warning(f"Could not check Unsloth bf16 support: {e}")
-                    supports_bf16 = torch.cuda.is_available() and hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported()
-            else:
-                supports_bf16 = torch.cuda.is_available() and hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported()
-            
-            # Decision logic based on model and hardware
-            if model_precision == "bfloat16":
-                if supports_bf16:
-                    return {
-                        "fp16": False,
-                        "bf16": True,
-                        "reason": f"Model is bf16, hardware supports bf16"
-                    }
-                else:
-                    self.logger.warning("Model is bf16 but hardware doesn't support bf16, using fp16 with potential conversion")
-                    return {
-                        "fp16": True,
-                        "bf16": False,
-                        "reason": "Model is bf16 but hardware doesn't support bf16"
-                    }
-            elif model_precision == "float16":
-                return {
-                    "fp16": True,
-                    "bf16": False,
-                    "reason": "Model is fp16"
-                }
-            else:
-                # Model is fp32 or unknown, choose based on hardware
-                if supports_bf16:
-                    return {
-                        "fp16": False,
-                        "bf16": True,
-                        "reason": f"Model is {model_precision}, using hardware optimal bf16"
-                    }
-                else:
-                    return {
-                        "fp16": True,
-                        "bf16": False,
-                        "reason": f"Model is {model_precision}, hardware optimal fp16"
-                    }
-                    
-        except Exception as e:
-            self.logger.error(f"Error determining optimal precision: {e}")
-            # Emergency fallback
-            return {
-                "fp16": True,
-                "bf16": False,
-                "reason": "Emergency fallback to fp16"
-            }
-
-    def _validate_precision_settings(self, training_args, model=None) -> TrainingArguments:
-        """Validate and fix precision settings to prevent Unsloth errors"""
-        try:
-            # Get optimal settings
-            optimal_settings = self._get_optimal_precision_settings(model)
-            
-            # Check current settings
-            current_fp16 = getattr(training_args, 'fp16', False)
-            current_bf16 = getattr(training_args, 'bf16', False)
-            
-            # Detect issues
-            needs_adjustment = False
-            
-            # Issue 1: Both fp16 and bf16 enabled
-            if current_fp16 and current_bf16:
-                self.logger.warning("Both fp16 and bf16 are enabled, this will cause conflicts")
-                needs_adjustment = True
-            
-            # Issue 2: Model-training precision mismatch
-            if model is not None:
-                model_precision = self._detect_model_precision(model)
-                if model_precision == "bfloat16" and current_fp16 and not current_bf16:
-                    self.logger.warning("Model is bf16 but training args specify fp16 - this causes Unsloth errors")
-                    needs_adjustment = True
-                elif model_precision == "float16" and current_bf16 and not current_fp16:
-                    self.logger.warning("Model is fp16 but training args specify bf16 - potential inefficiency")
-                    needs_adjustment = True
-            
-            # Apply fixes if needed
-            if needs_adjustment:
-                self.logger.info(f"Adjusting precision settings: {optimal_settings['reason']}")
-                
-                # Convert training args to dict, modify, and recreate
-                args_dict = training_args.to_dict()
-                args_dict['fp16'] = optimal_settings['fp16']
-                args_dict['bf16'] = optimal_settings['bf16']
-                
-                # Recreate training arguments
-                training_args = TrainingArguments(**args_dict)
-                
-                self.logger.info(f"Fixed precision settings - fp16: {optimal_settings['fp16']}, bf16: {optimal_settings['bf16']}")
-            else:
-                self.logger.info(f"Precision settings look good - fp16: {current_fp16}, bf16: {current_bf16}")
-            
-            return training_args
-            
-        except Exception as e:
-            self.logger.error(f"Error validating precision settings: {e}")
-            return training_args  # Return original if validation fails
 
     def _create_memory_optimized_training_args(self, request: FineTuneRequest) -> TrainingArguments:
         """Create memory-optimized training arguments for Qwen2.5 in worker process"""

@@ -84,6 +84,9 @@ SERVICE_ROUTES = {
     
     # Chat comparison service routes
     '/chat': 'llmforge-chat-comparison',
+
+    # Factory service routes (hardware, planning, LLM-free classifiers, BFSI screening)
+    '/api/v1/factory': 'llmforge-factory',
 }
 
 # Service port mappings for direct container access
@@ -93,6 +96,7 @@ SERVICE_PORTS = {
     'llmforge-data-generation': 8003,
     'llmforge-visualization': 8004,
     'llmforge-model-management': 8005,
+    'llmforge-factory': 8006,
 }
 
 # Service discovery client

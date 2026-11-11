@@ -279,6 +279,33 @@ services:
     networks:
       - llmforge-network
 
+  # Factory Service - CPU only: planning, LLM-free classifiers, BFSI screening
+  factory-service:
+    build:
+      context: .
+      dockerfile: src/docker/services/factory_service.dockerfile
+    container_name: llmforge-factory
+    restart: unless-stopped
+    ports:
+      - "8006:8006"
+    environment:
+      - SERVICE_HOST=0.0.0.0
+      - SERVICE_PORT=8006
+      - FACTORY_MODELS_DIR=/app/models/factory
+      - HF_HOME=/app/models/hf_cache
+    volumes:
+      - ./models/factory:/app/models/factory
+      - ./models/hf_cache:/app/models/hf_cache
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - llmforge-network
+
   # Visualization Service - Self-contained multi-stage build
   visualization-service:
     build:

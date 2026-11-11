@@ -26,6 +26,7 @@ from datasets import load_from_disk
 
 from models.schemas import FineTuneRequest, TrainingStatus
 from utils.logging import get_logger
+from utils.factory_bridge import backend_advice, resolve_peft_config, torch_device_and_dtype
 from utils.performance import performance_monitor, timing_context, timed
 from config.settings import settings
 
@@ -392,28 +393,6 @@ class TrainingService:
     # GPU lock methods removed - now using GPULockManager
 
     @timed("fine_tune") 
-    async def start_fine_tuning(self, request: FineTuneRequest) -> str:
-        """Async wrapper for fine_tune method with GPU orchestration"""
-        task_id = str(uuid.uuid4())
-        
-        # Estimate training duration based on request
-        estimated_duration = self._estimate_training_duration(request)
-        
-        # Use GPU lock manager for training
-        def fine_tune_wrapper():
-            return self.fine_tune(request, task_id)
-        
-        try:
-            await self.gpu_lock_manager.with_gpu_for_training(
-                fine_tune_wrapper,
-                estimated_duration=estimated_duration,
-                priority=GPULockPriority.HIGH
-            )
-            return task_id
-        except Exception as e:
-            self.logger.error(f"Fine-tuning with GPU lock failed: {e}")
-            raise
-    
     def _estimate_training_duration(self, request: FineTuneRequest) -> int:
         """Estimate training duration in seconds based on request parameters"""
         base_time_per_epoch = 900  # 15 minutes per epoch base estimate
@@ -1064,14 +1043,17 @@ class TrainingService:
             tokenizer = AutoTokenizer.from_pretrained(
                 request.base_model_dir, trust_remote_code=True
             )
+            # Device and precision for any accelerator vendor, not only CUDA.
+            _device, _dtype = torch_device_and_dtype()
+            self.logger.info(f"Loading on device={_device} dtype={_dtype}")
             model = AutoModelForCausalLM.from_pretrained(
                 request.base_model_dir,
                 trust_remote_code=True,
-                device_map="auto",
-                torch_dtype=(
-                    torch.float16 if torch.cuda.is_available() else torch.float32
-                ),
+                device_map="auto" if _device == "cuda" else None,
+                torch_dtype=_dtype,
             )
+            if _device in ("mps", "xpu"):
+                model = model.to(_device)
 
             # Add padding token if missing
             if tokenizer.pad_token is None:
@@ -1079,15 +1061,10 @@ class TrainingService:
                 model.resize_token_embeddings(len(tokenizer))
 
             # Apply PEFT if available
-            if PEFT_AVAILABLE and request.peft_method in ["lora", "qlora"]:
-                peft_config = LoraConfig(
-                    r=16,
-                    lora_alpha=32,
-                    target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-                    lora_dropout=0.0,  # Optimized for Unsloth fast patching
-                    bias="none",
-                    task_type="CAUSAL_LM",
-                )
+            # The adapter follows the request (method, rank, alpha, dropout, target modules).
+            # Unsupported method names raise instead of silently training the full model.
+            peft_config = resolve_peft_config(request) if PEFT_AVAILABLE else None
+            if peft_config is not None:
                 model = get_peft_model(model, peft_config)
 
             # Determine training type first  
@@ -1679,20 +1656,55 @@ class TrainingService:
         return sessions
 
     async def start_fine_tuning(self, request: FineTuneRequest) -> str:
-        """Async wrapper for fine_tune method"""
+        """Start a fine-tuning job in the background and return its task id at once.
+
+        This method used to be defined twice. The later definition won, and it
+        submitted the job inside ``with ThreadPoolExecutor()``; leaving that
+        block waits for the job, so the request (and the whole event loop:
+        health checks, status, log streaming) hung until training finished.
+        The earlier definition, which took the cross-service GPU lock, was
+        never reachable.
+
+        Now there is one definition. Training runs on a dedicated single
+        worker thread, so jobs queue instead of competing for the GPU. Set
+        ``TRAINING_USE_GPU_LOCK=true`` to also hold the Redis-backed GPU lock
+        for the duration of the job (off by default, matching the behaviour
+        deployments have had so far).
+        """
         import asyncio
         import concurrent.futures
 
-        # Generate task ID
         task_id = str(uuid.uuid4())
+        if getattr(self, "_fine_tune_executor", None) is None:
+            self._fine_tune_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="fine-tune"
+            )
+            self._background_jobs = set()
+        loop = asyncio.get_running_loop()
 
-        # Run the fine_tune method in a thread pool to avoid blocking
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Start training in background and return task_id immediately
-            future = executor.submit(self.fine_tune, request, task_id)
-            # Don't wait for completion, just return the task_id
+        async def run_in_thread():
+            return await loop.run_in_executor(self._fine_tune_executor, self.fine_tune, request, task_id)
 
+        async def job():
+            try:
+                if os.environ.get("TRAINING_USE_GPU_LOCK", "false").lower() == "true":
+                    await self.gpu_lock_manager.with_gpu_for_training(
+                        run_in_thread,
+                        estimated_duration=self._estimate_training_duration(request),
+                        priority=GPULockPriority.HIGH,
+                    )
+                else:
+                    await run_in_thread()
+            except Exception as e:  # fine_tune records its own failures; this covers lock errors
+                self.logger.error(f"Fine-tuning job {task_id} failed: {e}")
+                try:
+                    self._update_status_file_error(task_id, str(e))
+                except Exception:
+                    pass
+
+        task = asyncio.create_task(job())
+        self._background_jobs.add(task)
+        task.add_done_callback(self._background_jobs.discard)
         return task_id
 
     async def list_training_jobs(self) -> List[Dict[str, Any]]:
@@ -2209,6 +2221,8 @@ class TrainingService:
 
             return {
                 "hardware_summary": hardware_summary,
+                # Vendor-neutral view (NVIDIA / AMD / Apple / Intel / CPU) and fine-tuning capacity.
+                "factory": backend_advice(),
                 "detected_profile": {
                     "gpu_name": self.hardware_profile.gpu_name,
                     "gpu_memory_gb": self.hardware_profile.gpu_memory_gb,

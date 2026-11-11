@@ -388,3 +388,20 @@ test_*.py
 *.hdf5
 *.pkl
 *.pickle
+
+# =============================================================================
+# FORGELM FACTORY
+# =============================================================================
+
+# The factory test-suite is real, committed code (the test_*.py rule above was
+# written for ad-hoc scratch scripts).
+!tests/factory/
+!tests/factory/test_*.py
+
+# Experiment intermediates (cached teacher labels, saved students, ONNX files, logs).
+# The result JSON in experiments/results/ is committed.
+experiments/artifacts/
+
+# Models trained by the factory service
+models/factory/
+models/hf_cache/

@@ -7,6 +7,12 @@ COPY src/microservices/training_service/ /app/
 # Install any service-specific dependencies
 # (training service uses ML base dependencies)
 
+# The hardware-agnostic forgelm core (PEFT mapping, device selection, capacity estimates).
+# Pure Python and installed without dependencies, so it cannot disturb the pinned ML stack.
+COPY pyproject.toml /opt/forgelm/pyproject.toml
+COPY forgelm /opt/forgelm/forgelm
+RUN touch /opt/forgelm/README.md && pip install --no-cache-dir --no-deps /opt/forgelm
+
 # Set working directory
 WORKDIR /app
 
