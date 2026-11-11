@@ -128,7 +128,8 @@ def passage_text(pid):
 
 
 passages = [Passage(pid, passage_text(pid)) for pid in chosen]
-log(f"{len(test_qids)} queries, {len(passages)} passages ({len(relevant)} judged relevant, {n_distractors} distractors)")
+log(f"{len(test_qids)} queries, {len(passages)} passages "
+    f"({len(relevant)} judged relevant, {n_distractors} distractors)")
 words = np.array([len(p.text.split()) for p in passages])
 
 
@@ -171,9 +172,9 @@ def build_dense(name, model, backend, query_prefix="", max_seq_length=None):
         if cache is not None:
             np.savez(cache, vectors=index.vectors, ids=np.array([p.id for p in passages]), seconds=seconds)
     log(f"{name}: built in {seconds:.1f}s{' (from cache)' if cached else ''}, model load {load_seconds:.1f}s")
-    return index, {"build_seconds": seconds, "build_seconds_from_cache": cached, "model_load_seconds": round(load_seconds, 2),
-                   "model": model, "backend": backend, "query_prefix": query_prefix or None,
-                   "max_seq_length": max_seq_length, "model_weights_mb": model_megabytes(embedder),
+    return index, {"build_seconds": seconds, "build_seconds_from_cache": cached,
+                   "model_load_seconds": round(load_seconds, 2), "model": model, "backend": backend,
+                   "query_prefix": query_prefix or None, "max_seq_length": max_seq_length, "model_weights_mb": model_megabytes(embedder),
                    "dimensions": int(index.vectors.shape[1])}
 
 
@@ -244,7 +245,7 @@ result = {
     "dataset": {
         "name": "BeIR/fiqa (corpus, queries) + BeIR/fiqa-qrels (test.tsv)",
         "licence": "cc-by-sa-4.0 per the BeIR/fiqa dataset card",
-        "full_corpus_passages": int(len(corpus)), "passages_used": len(passages),
+        "full_corpus_passages": len(corpus), "passages_used": len(passages),
         "judged_relevant_passages": len(relevant), "random_distractors": n_distractors, "seed": args.seed,
         "queries": len(test_qids), "passage_words_mean": round(float(words.mean()), 1),
         "passage_words_p95": int(np.percentile(words, 95)),

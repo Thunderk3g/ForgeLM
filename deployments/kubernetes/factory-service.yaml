@@ -1,0 +1,215 @@
+# Factory Service: hardware probing, planning, LLM-free classifiers and BFSI
+# call screening (src/microservices/factory_service). CPU only: no GPU request,
+# no GPU node selector, no ML base image.
+#
+# Apply after namespace.yaml, configmaps.yaml and storage.yaml. The Service is
+# named llmforge-factory because that is the host name the API gateway's
+# direct-connection fallback dials for /api/v1/factory routes (SERVICE_PORTS in
+# src/microservices/api_gateway/src/main.py). The factory service does not
+# register with the orchestrator, so that fallback is the only route the
+# gateway has to it.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-config
+  namespace: llmforge
+data:
+  # Trained classifiers. Mounted from factory-models-pvc below.
+  FACTORY_MODELS_DIR: "/app/models/factory"
+  # Hugging Face repo ids a training request may name as "model"; anything else
+  # is refused. This is the service's own default, written out so that it can
+  # be changed here.
+  FACTORY_ALLOWED_MODELS: "minishlab/potion-base-32M,minishlab/potion-base-8M,BAAI/bge-small-en-v1.5,sentence-transformers/all-MiniLM-L6-v2,intfloat/multilingual-e5-small,answerdotai/ModernBERT-base"
+  # Request size limits (rows per training request, texts per predict or
+  # review-call request, characters per text).
+  FACTORY_MAX_TRAIN_ROWS: "50000"
+  FACTORY_MAX_PREDICT_ROWS: "10000"
+  FACTORY_MAX_TEXT_CHARS: "20000"
+
+---
+# Trained classifiers are small (a TF-IDF or static-embedding student is a few
+# MB, a fine-tuned encoder a few hundred MB), so 20Gi holds many of them.
+# ReadWriteOnce, hence one replica and the Recreate strategy below.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: factory-models-pvc
+  namespace: llmforge
+  labels:
+    app: llmforge-factory
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmforge-factory
+  namespace: llmforge
+  labels:
+    app: llmforge-factory
+    component: factory-service
+    app.kubernetes.io/name: factory-service
+    app.kubernetes.io/part-of: llmforge-platform
+spec:
+  # One replica on purpose. Each pod keeps the classifiers it has loaded in
+  # memory, so a second replica would go on serving the old model after the
+  # first one retrained it, and the models volume is ReadWriteOnce.
+  replicas: 1
+  # Recreate rather than RollingUpdate: a new pod cannot attach the
+  # ReadWriteOnce volume while the old pod on another node still holds it, so
+  # a rolling update could wait forever.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: llmforge-factory
+  template:
+    metadata:
+      labels:
+        app: llmforge-factory
+        component: factory-service
+        app.kubernetes.io/name: factory-service
+        app.kubernetes.io/part-of: llmforge-platform
+      # No prometheus.io annotations: the service has no /metrics endpoint.
+    spec:
+      # The image runs as uid/gid 1000 (src/docker/services/factory_service.dockerfile).
+      # fsGroup makes the mounted volumes writable by that group.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: factory-service
+        image: llmforge/factory-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8006
+          name: http
+        envFrom:
+        - configMapRef:
+            name: factory-config
+        env:
+        - name: SERVICE_HOST
+          value: "0.0.0.0"
+        - name: SERVICE_PORT
+          value: "8006"
+        # Share downloaded base models with the training service, which mounts
+        # the same claim at the same path.
+        - name: HF_HOME
+          value: "/home/llmforge/.cache/huggingface"
+        - name: TOKENIZERS_PARALLELISM
+          value: "false"
+        # PyTorch and the BLAS libraries size their thread pools from the
+        # node's core count, not from the CPU limit. Without these a pod limited
+        # to 2 CPUs on a 32-core node starts 32 threads per pool and spends its
+        # quota being throttled. Keep them equal to limits.cpu.
+        - name: OMP_NUM_THREADS
+          value: "2"
+        - name: MKL_NUM_THREADS
+          value: "2"
+        - name: OPENBLAS_NUM_THREADS
+          value: "2"
+        # Only needed for gated or private repos; the default allow-list has none.
+        - name: HF_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: llmforge-secrets
+              key: huggingface-token
+              optional: true
+        # Measured on the built image (CPU only, x86-64): the service starts in
+        # about two seconds and uses about 130 MiB after training and serving
+        # a TF-IDF student; that training request took about 1 s of one core.
+        # Encoder students were not measured. The request leaves room for
+        # torch and one small encoder (bge-small, MiniLM: about 130 MB of
+        # weights) once loaded; the limit leaves room for fine-tuning the
+        # largest allowed model (ModernBERT-base, about 150M parameters, whose
+        # AdamW training state alone is roughly 2.4 GB in fp32). Raise both if
+        # FACTORY_ALLOWED_MODELS names bigger models, and keep limits.cpu equal
+        # to the *_NUM_THREADS values above.
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "4Gi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: factory-models
+          mountPath: /app/models/factory
+        - name: model-cache
+          mountPath: /home/llmforge/.cache
+        - name: tmp
+          mountPath: /tmp
+        # Training requests are answered synchronously but run in FastAPI's
+        # thread pool, so /health keeps answering while a classifier trains.
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8006
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 12
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8006
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8006
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: factory-models
+        persistentVolumeClaim:
+          claimName: factory-models-pvc
+      # Defined in storage.yaml (ReadWriteMany, shared across services).
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: model-cache-pvc
+      # The root filesystem is read-only; Python, Hugging Face and PyTorch
+      # still need a scratch directory.
+      - name: tmp
+        emptyDir:
+          sizeLimit: 2Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmforge-factory
+  namespace: llmforge
+  labels:
+    app: llmforge-factory
+    component: factory-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8006
+    targetPort: 8006
+    protocol: TCP
+    name: http
+  selector:
+    app: llmforge-factory

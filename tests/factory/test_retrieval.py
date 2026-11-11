@@ -318,7 +318,8 @@ def test_verify_quotes_catches_an_invented_quote_and_accepts_a_real_one():
     # A quote is only supported by the passages actually given.
     assert len(verify_quotes(answer, [OTHER])) == 2
     # Changed case or wording is not verbatim; short quotes are not checked.
-    assert verify_quotes('"A Creditor shall provide the consumer"', [SOURCE]) == ["A Creditor shall provide the consumer"]
+    changed = "A Creditor shall provide the consumer"
+    assert verify_quotes(f'"{changed}"', [SOURCE]) == [changed]
     assert verify_quotes('"A creditor shall provide the consumer"', [SOURCE]) == []
     assert verify_quotes('The "APR" applies.', [OTHER]) == []
     assert verify_quotes("No quotations here.", []) == []

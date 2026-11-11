@@ -90,6 +90,8 @@ def paired_bootstrap(y_true, pred_a, pred_b, n_boot: int = 5000, seed: int = 0,
     """
     if not 0.0 < confidence < 1.0:
         raise ValueError("confidence must be between 0 and 1")
+    if n_boot < 1:
+        raise ValueError("n_boot must be >= 1")
     ca, cb = _correct(y_true, pred_a), _correct(y_true, pred_b)
     diff = cb.astype(np.float64) - ca.astype(np.float64)
     lo, hi = _interval(_bootstrap_means(diff, n_boot, seed), confidence)
@@ -187,13 +189,14 @@ class GateReport:
 
     def render(self) -> str:
         pct = f"{self.confidence:.0%}"
+        w = max([len("option")] + [len(o["name"]) for o in self.options])
         lines = [f"Gate on {self.n_items} test items (minimum gain worth paying for: {_pts(self.min_gain)})", "",
-                 f"{'option':32} {'accuracy':>9} {pct + ' interval':>17} {'LLM':>4} {'s/item':>9} {'labels':>7}"]
+                 f"{'option':{w}} {'accuracy':>9} {pct + ' interval':>17} {'LLM':>4} {'s/item':>9} {'labels':>7}"]
         for o in self.options:
             acc = "-" if o["accuracy"] is None else f"{o['accuracy']:.3f}"
             ci = "-" if o["accuracy_ci"] is None else f"{o['accuracy_ci'][0]:.3f}-{o['accuracy_ci'][1]:.3f}"
             mark = "  <- recommended" if o["name"] == self.recommended else ""
-            lines.append(f"{o['name'][:32]:32} {acc:>9} {ci:>17} {'yes' if o['needs_llm_at_inference'] else 'no':>4} "
+            lines.append(f"{o['name']:{w}} {acc:>9} {ci:>17} {'yes' if o['needs_llm_at_inference'] else 'no':>4} "
                          f"{o['seconds_per_item']:>9.4f} {o['labels_needed']:>7}{mark}")
         if self.comparisons:
             lines += ["", f"Costlier minus cheaper, paired bootstrap {pct} interval and exact McNemar p:"]

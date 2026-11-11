@@ -163,7 +163,7 @@ function Deploy-Services {
     
     # Start remaining services
     Write-Info "Starting remaining services..."
-    docker compose up -d data-generation-service visualization-service
+    docker compose up -d data-generation-service visualization-service factory-service
     
     Write-Success "All services started!"
 }
@@ -180,6 +180,7 @@ function Test-ServiceHealth {
         @{Name="Data Generation"; Port=8003; Path="/health"}
         @{Name="Visualization"; Port=8004; Path="/health"}
         @{Name="Model Management"; Port=8005; Path="/health"}
+        @{Name="Factory"; Port=8006; Path="/health"}
     )
     
     Write-Info "Waiting for services to initialize..."
@@ -247,6 +248,7 @@ function Show-ServiceUrls {
     Write-ColorOutput "Data Generation:    http://localhost:8003" "White"
     Write-ColorOutput "Visualization:      http://localhost:8004" "White"
     Write-ColorOutput "Model Management:   http://localhost:8005" "White"
+    Write-ColorOutput "Factory:            http://localhost:8006" "White"
     Write-ColorOutput "Orchestrator:       http://localhost:8080" "White"
     Write-ColorOutput ""
     Write-ColorOutput "Redis:              localhost:6379" "Yellow"

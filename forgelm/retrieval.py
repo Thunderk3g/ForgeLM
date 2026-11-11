@@ -520,7 +520,7 @@ def evaluate_rankings(rankings: Mapping[str, Sequence[str]], qrels: Qrels, ks: S
     so a run that silently lost its judgements is visible. Ids are compared
     as given: convert them to one type (str) first.
     """
-    ks = sorted(set(int(k) for k in ks))
+    ks = sorted({int(k) for k in ks})
     per_metric: Dict[str, List[float]] = {f"{m}@{k}": [] for k in ks for m in ("recall", "mrr", "ndcg")}
     skipped = 0
     for qid, ranked in rankings.items():

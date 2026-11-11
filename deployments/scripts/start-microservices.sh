@@ -81,7 +81,7 @@ setup_environment() {
     
     # Create necessary directories
     mkdir -p data/{datasets,models,logs}
-    mkdir -p models/{base,finetuned}
+    mkdir -p models/{base,finetuned,factory,hf_cache}
     mkdir -p datasets
     mkdir -p logs
     
@@ -112,6 +112,9 @@ build_images() {
     
     print_status "Building model management service..."
     docker-compose build model-management-service
+    
+    print_status "Building factory service..."
+    docker-compose build factory-service
     
     print_success "All Docker images built successfully"
 }
@@ -174,7 +177,8 @@ start_app_services() {
         chat-comparison-service \
         data-generation-service \
         visualization-service \
-        model-management-service
+        model-management-service \
+        factory-service
     
     print_status "Waiting for application services to be ready..."
     
@@ -184,6 +188,7 @@ start_app_services() {
     wait_for_service "data-generation-service" 8003
     wait_for_service "visualization-service" 8004
     wait_for_service "model-management-service" 8005
+    wait_for_service "factory-service" 8006
     
     print_success "Application services started"
 }
@@ -234,7 +239,7 @@ show_status() {
     print_status "Service Health Checks:"
     echo
     
-    local services=("orchestrator:8080" "api-gateway:8000" "training-service:8001" "chat-comparison-service:8002" "data-generation-service:8003" "visualization-service:8004" "model-management-service:8005")
+    local services=("orchestrator:8080" "api-gateway:8000" "training-service:8001" "chat-comparison-service:8002" "data-generation-service:8003" "visualization-service:8004" "model-management-service:8005" "factory-service:8006")
     
     for service_port in "${services[@]}"; do
         IFS=':' read -r service port <<< "$service_port"
@@ -256,6 +261,7 @@ show_status() {
     echo "  • Data Generation: http://localhost:8003"
     echo "  • Visualization: http://localhost:8004"
     echo "  • Model Management: http://localhost:8005"
+    echo "  • Factory: http://localhost:8006"
 }
 
 # Stop all services

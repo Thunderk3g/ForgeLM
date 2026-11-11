@@ -85,6 +85,7 @@ build_images() {
         "data_generation_service"
         "visualization_service"
         "model_management_service"
+        "factory_service"
     )
     
     for service in "${services[@]}"; do
@@ -114,6 +115,7 @@ push_images() {
         "data_generation_service"
         "visualization_service"
         "model_management_service"
+        "factory_service"
     )
     
     for service in "${services[@]}"; do
@@ -294,6 +296,7 @@ deploy_microservices() {
         "data-generation"
         "visualization"
         "model-management"
+        "factory"
     )
     
     for service in "${services[@]}"; do
