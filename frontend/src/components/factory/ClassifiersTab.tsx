@@ -652,8 +652,11 @@ export function ClassifiersTab({ list }: { list: QueryResult<ClassifierListRespo
 
   const select = (name: string) => {
     setSelected(name)
-    // On a narrow screen the details are below the list; bring them into view.
-    detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    // Below the xl breakpoint the details sit under the list and the form;
+    // bring them into view. Side by side, scrolling would only jump the page.
+    if (window.matchMedia("(max-width: 1279px)").matches) {
+      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    }
   }
 
   const onTrained = (result: TrainResponse) => {

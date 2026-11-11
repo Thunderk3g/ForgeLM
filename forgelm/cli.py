@@ -278,15 +278,15 @@ def cmd_export_gguf(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     model_dir = args.model  # the parser requires exactly one of --model and --adapter
-    if args.adapter:
-        from .finetune import merge_adapter
-
-        model_dir = merge_adapter(args.base_model, args.adapter, str(out / "merged"))["out_dir"]
-    script = args.convert_script
-    if args.fetch_converter and not script:
-        script = gguf.fetch_convert_script(str(out / "llama_cpp"))
-    name = Path(model_dir).name or "model"
     try:
+        if args.adapter:
+            from .finetune import merge_adapter
+
+            model_dir = merge_adapter(args.base_model, args.adapter, str(out / "merged"))["out_dir"]
+        script = args.convert_script
+        if args.fetch_converter and not script:
+            script = gguf.fetch_convert_script(str(out / "llama_cpp"))
+        name = Path(model_dir).name or "model"
         f16 = gguf.convert_to_gguf(model_dir, str(out / f"{name}.{args.outtype}.gguf"), script, outtype=args.outtype)
         files = {args.outtype: f16}
         if args.quant != "none":

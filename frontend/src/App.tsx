@@ -8,11 +8,12 @@ import DocsPage from './components/DocsPage'
 import LLMForgeApp from './components/llmforge-app'
 import { ComparisonChatInterface } from './components/comparison-chat-interface'
 import { VisualizationDashboard } from './components/VisualizationDashboard'
+import FactoryPage from './components/factory/FactoryPage'
 
 // API
 import { healthCheck } from './lib/api'
 
-type PageType = "home" | "training" | "workflow" | "docs" | "chat" | "analytics"
+type PageType = "home" | "training" | "workflow" | "docs" | "chat" | "analytics" | "factory"
 
 function App() {
   const [currentPage, setCurrentPage] = useState<PageType>("home")
@@ -47,6 +48,8 @@ function App() {
         return <DocsPage onNavigate={handleNavigation} />
       case "chat":
         return <ComparisonChatInterface />
+      case "factory":
+        return <FactoryPage onNavigate={handleNavigation} />
       case "analytics":
         return (
           <main className="container mx-auto max-w-7xl p-4 md:p-6 lg:p-8">
