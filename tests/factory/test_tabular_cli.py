@@ -110,7 +110,10 @@ def test_recommend_rules():
         return [r["model"] for r in recommend(**kw)]
 
     default = models(n_rows=2000, n_features=20)
-    assert default[:2] == ["logreg", "lightgbm"] and "tabicl" in default and "tabpfn-v2" in default
+    assert default[:3] == ["logreg", "lightgbm", "ebm"] and "tabicl" in default and "tabpfn-v2" in default
+    assert default.count("ebm") == 1
+    small = {r["model"]: r["why"] for r in recommend(n_rows=500, n_features=20)}
+    assert "calibrat" in small["lightgbm"]  # E4: untuned LightGBM is badly calibrated on little data
     assert "tabpfn-2.5+" not in default
     assert "tabpfn-v2" not in models(n_rows=2000, n_features=20, n_classes=25)
     assert "tabicl" not in models(n_rows=50_000, n_features=20, gpu=False)

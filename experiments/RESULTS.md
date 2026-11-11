@@ -100,6 +100,72 @@ Reference points on the same anchor (human labels):
 | frozen bge-small + LR | same 2000 texts, human labels | 91.2% |
 | frozen bge-small + LR | 8 human labels per class (616 labels, mean of 3 seeds) | 85.9% ± 1.2 |
 
+## E4. Tabular: classical models against an in-context foundation model
+
+**Question.** On risk-style tables, which model family wins at each training-set size, how well calibrated is it, and what does inference cost?
+
+**Setup.** Two binary tasks, a fixed 5000-row test set each, 3 random training draws per size. Library defaults, no search: this compares out-of-the-box behaviour, and a tuned GBDT would score somewhat higher. TabICL (BSD-3-Clause) ran on CPU and was not run above 2,000 rows.
+
+**scikit-learn/credit-card-clients (UCI default of credit card clients)** - ROC AUC (best per column in bold):
+
+| Model | 100 rows | 500 rows | 2,000 rows | 10,000 rows |
+|---|---|---|---|---|
+| logreg | 0.674 | 0.710 | 0.728 | 0.736 |
+| hist_gbdt | 0.630 | 0.731 | 0.755 | **0.783** |
+| lightgbm | 0.684 | 0.714 | 0.745 | 0.773 |
+| ebm | 0.699 | 0.752 | 0.774 | 0.782 |
+| tabicl | **0.719** | **0.753** | **0.778** | not run |
+
+Brier score / ECE (lower is better):
+
+| Model | 100 rows | 500 rows | 2,000 rows | 10,000 rows |
+|---|---|---|---|---|
+| logreg | 0.168 / 0.063 | 0.155 / 0.034 | 0.148 / 0.038 | 0.147 / 0.034 |
+| hist_gbdt | 0.173 / 0.055 | 0.149 / 0.031 | 0.143 / 0.023 | 0.138 / 0.009 |
+| lightgbm | 0.196 / 0.176 | 0.190 / 0.170 | 0.161 / 0.110 | 0.140 / 0.032 |
+| ebm | 0.171 / 0.082 | 0.146 / 0.024 | 0.140 / 0.013 | 0.138 / 0.015 |
+| tabicl | 0.153 / 0.049 | 0.145 / 0.030 | 0.140 / 0.028 | not run |
+
+Seconds to fit / to score 5,000 rows:
+
+| Model | 100 rows | 500 rows | 2,000 rows | 10,000 rows |
+|---|---|---|---|---|
+| logreg | 0.1 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 | 0.1 / 0.0 |
+| hist_gbdt | 1.4 / 0.1 | 0.1 / 0.0 | 0.2 / 0.0 | 0.3 / 0.0 |
+| lightgbm | 4.7 / 0.0 | 0.2 / 0.1 | 0.3 / 0.1 | 0.5 / 0.0 |
+| ebm | 3.9 / 0.0 | 4.9 / 0.0 | 3.5 / 0.0 | 6.3 / 0.0 |
+| tabicl | 2.3 / 35.8 | 0.5 / 35.0 | 0.5 / 50.8 | not run |
+
+**scikit-learn/adult-census-income (UCI Adult)** - ROC AUC (best per column in bold):
+
+| Model | 100 rows | 500 rows | 2,000 rows | 10,000 rows |
+|---|---|---|---|---|
+| logreg | **0.860** | 0.886 | 0.899 | 0.905 |
+| hist_gbdt | 0.824 | 0.886 | 0.900 | 0.922 |
+| lightgbm | 0.797 | 0.867 | 0.896 | 0.919 |
+| ebm | 0.823 | 0.887 | 0.909 | **0.925** |
+| tabicl | 0.856 | **0.896** | **0.912** | not run |
+
+Brier score / ECE (lower is better):
+
+| Model | 100 rows | 500 rows | 2,000 rows | 10,000 rows |
+|---|---|---|---|---|
+| logreg | 0.125 / 0.032 | 0.111 / 0.019 | 0.105 / 0.015 | 0.102 / 0.009 |
+| hist_gbdt | 0.139 / 0.049 | 0.111 / 0.023 | 0.104 / 0.020 | 0.091 / 0.010 |
+| lightgbm | 0.181 / 0.153 | 0.143 / 0.123 | 0.116 / 0.077 | 0.093 / 0.022 |
+| ebm | 0.141 / 0.064 | 0.109 / 0.011 | 0.099 / 0.012 | 0.089 / 0.010 |
+| tabicl | 0.126 / 0.030 | 0.106 / 0.009 | 0.098 / 0.012 | not run |
+
+Seconds to fit / to score 5,000 rows:
+
+| Model | 100 rows | 500 rows | 2,000 rows | 10,000 rows |
+|---|---|---|---|---|
+| logreg | 0.0 / 0.0 | 0.0 / 0.0 | 0.1 / 0.0 | 0.3 / 0.0 |
+| hist_gbdt | 0.1 / 0.0 | 0.2 / 0.0 | 0.2 / 0.0 | 1.5 / 0.0 |
+| lightgbm | 0.1 / 0.0 | 0.2 / 0.1 | 0.3 / 0.1 | 0.5 / 0.1 |
+| ebm | 2.3 / 0.0 | 2.3 / 0.0 | 4.2 / 0.0 | 19.6 / 0.0 |
+| tabicl | 0.4 / 23.7 | 0.4 / 25.5 | 0.4 / 41.1 | not run |
+
 ## E5. Abstention and cascades
 
 **Question.** If the small model answers only when confident, how much traffic can it take at a stated accuracy, and does sending the rest to a larger model help?

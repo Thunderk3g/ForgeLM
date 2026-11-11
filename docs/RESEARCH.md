@@ -159,7 +159,14 @@ hypothesis to test, not a result.
   to any foundation model, on the same split, with calibration metrics.
 - When each decision needs stated reasons, an Explainable Boosting Machine is
   the champion and everything else is a challenger.
-- E4 measures this ladder on credit-default and census-income data.
+- E4 measured this ladder on credit-default and census-income data. TabICL was
+  best or tied from 100 to 2,000 rows, but by at most 0.02 AUC over an EBM,
+  within the seed spread from 500 rows up, and it took 24 to 51 s to score
+  5,000 rows on a CPU against well under a second for the rest. The EBM was at
+  or near the top at every size and well calibrated; LightGBM at its defaults
+  was badly calibrated with 2,000 rows or fewer. The planner therefore lists
+  the EBM as a primary candidate, not an afterthought, and warns about
+  untuned LightGBM probabilities on small data. **[measured]**
 
 ## 4. Compression and inference runtimes
 

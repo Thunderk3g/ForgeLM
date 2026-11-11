@@ -66,7 +66,11 @@ EVIDENCE: Dict[str, dict] = {
     },
     "e4-tabular": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "On UCI credit-default and census-income data (5,000-row test sets, 3 draws per size, library "
+                 "defaults), the in-context model TabICL was best or tied from 100 to 2,000 training rows but led an "
+                 "Explainable Boosting Machine by at most 0.02 AUC, inside the seed spread from 500 rows up, and took "
+                 "24-51 s to score 5,000 rows on CPU. The EBM was at or near the top at every size up to 10,000 rows "
+                 "and well calibrated. LightGBM at defaults had ECE 0.11-0.18 with 2,000 rows or fewer.",
         "source": "experiments/results/e4_tabular.json",
     },
     "e5-cascade": {

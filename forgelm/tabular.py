@@ -201,7 +201,12 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
         add("lightgbm", "challenger", "accuracy ceiling to quantify what explainability costs")
     else:
         add("logreg", "baseline", "always fit; cheap, calibrated, exposes leakage when it scores too well")
-        add("lightgbm", "baseline", "tuned GBDT is the bar every newer model must clear")
+        add("lightgbm", "baseline", "tuned GBDT is the bar every newer model must clear"
+            + ("; at library defaults it was badly calibrated with this little data (ECE 0.11-0.18 in E4), "
+               "so tune it or calibrate it before reading its probabilities" if n_rows <= 2_000 else ""))
+        add("ebm", "candidate",
+            "at or within noise of the best model at every size measured (100 to 10,000 rows), well "
+            "calibrated, instant to score, and exactly explainable: often the model to ship")
 
     fm_ok = not temporal_or_grouped and n_rows <= 100_000 and n_features <= 500
     if temporal_or_grouped:
@@ -211,8 +216,10 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
         if gpu or n_rows <= 5_000:
             role = "challenger" if needs_inherent_explainability else "candidate"
             add("tabicl", role,
-                "BSD-3 weights; in-context learner, no hyper-parameter search; strongest published results on "
-                "small-to-medium IID data" + ("" if gpu else " (CPU is workable at this size, slow beyond it)"))
+                "BSD-3 weights; in-context learner, no hyper-parameter search; best or tied from 100 to 2,000 "
+                "rows in E4, but by at most 0.02 AUC over an EBM"
+                + ("" if gpu else ", and scoring is slow on CPU (24-51 s per 5,000 rows in E4, against "
+                                  "well under a second for the others)"))
             if n_rows <= 10_000 and n_classes <= 10:
                 add("tabpfn-v2", role, "permissive v2 weights only; pin the checkpoint, newer defaults are "
                                        "non-commercial")
@@ -228,6 +235,4 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
     else:
         add("(excluded: tabpfn-2.5+, tabfm, limix-2, sap-rpt-1-oss)", "note",
             "published weights are non-commercial; an enterprise licence is needed for production")
-    if needs_inherent_explainability is False and not out[0]["model"].startswith("ebm"):
-        add("ebm", "candidate", "worth a run whenever decisions may later need explaining")
     return out
