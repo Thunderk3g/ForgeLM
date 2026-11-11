@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from common import ARTIFACTS, load_banking77, rounded, stratified_sample, write_result
+from common import ARTIFACTS, STUDENT_LABELS, banking77_anchor, load_banking77, rounded, write_result
 from forgelm.metrics import (apply_temperature, apply_threshold, fit_temperature, risk_coverage,
                              simulate_cascade, threshold_for_accuracy)
 
 train, test, names = load_banking77()
 test_y = test.label.values
-anchor_idx = stratified_sample(train.label.values, 5, np.random.default_rng(1234))
+anchor_idx = banking77_anchor(train.label.values)
 anchor_y = train.label.values[anchor_idx]
 
 # The E2 teacher cache for the default run (2,000 pool texts, 1,000 anchor texts). Named explicitly so a
@@ -37,9 +37,7 @@ if e2_cache.exists():
     llm = {"idx": cached["anchor_idx"], "pred": cached["anchor"].argmax(1), "name": e2_cache.stem}
 
 out = []
-labels_of = {"tfidf": "tfidf + LR", "static": "static potion-32M + LR", "encoder": "frozen bge-small + LR",
-             "finetuned": "fine-tuned MiniLM-L6 (22M)", "modernbert": "fine-tuned ModernBERT-base (149M)"}
-for key, label in labels_of.items():
+for key, label in STUDENT_LABELS.items():
     path = ARTIFACTS / f"e1_{key}_probs.npz"
     if not path.exists():
         continue

@@ -281,14 +281,14 @@ class GGUFChat:
     in service, and it makes throughput measured here depend on the prompts.
     """
 
-    def __init__(self, path: str, n_threads: Optional[int] = None, n_ctx: int = 2048, n_gpu_layers: int = 0):
+    def __init__(self, path: str, n_threads: Optional[int] = None, n_ctx: int = 2048):
         llama_cpp = _require_llama_cpp()
         if not Path(path).is_file():
             raise FileNotFoundError(f"GGUF file not found: {path}")
         self.path = str(path)
         # verbose=False also silences llama.cpp's load log on stderr.
         self.llm = llama_cpp.Llama(model_path=self.path, n_ctx=n_ctx, n_threads=n_threads,
-                                   n_threads_batch=n_threads, n_gpu_layers=n_gpu_layers, verbose=False)
+                                   n_threads_batch=n_threads, n_gpu_layers=0, verbose=False)
 
     def chat_details(self, messages: Sequence[dict], max_tokens: int = 64, fresh: bool = False) -> Dict[str, object]:
         """The reply with token counts and seconds, in the shape ``generate(return_details=True)`` uses.

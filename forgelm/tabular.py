@@ -221,7 +221,8 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
                 "rows in E4; it led an EBM by up to 0.033 AUC at 100 rows and by 0.01 or less from 500 rows up"
                 + ("" if gpu else ", and scoring is slow on CPU (24-51 s per 5,000 rows in E4, against "
                                   "well under a second for the others)"))
-            if n_rows <= 10_000 and n_classes <= 10:
+            lim = FOUNDATION_MODEL_LICENCES["tabpfn-v2"]
+            if n_rows <= lim["max_rows"] and n_features <= lim["max_features"] and n_classes <= lim["max_classes"]:
                 add("tabpfn-v2", role, "permissive v2 weights only; pin the checkpoint, newer defaults are "
                                        "non-commercial")
         else:
@@ -234,6 +235,7 @@ def recommend(n_rows: int, n_features: int, n_classes: int = 2, has_text_columns
     if not commercial_use:
         add("tabpfn-2.5+", "candidate", "non-commercial weights; research or evaluation under licence only")
     else:
-        add("(excluded: tabpfn-2.5+, tabfm, limix-2, sap-rpt-1-oss)", "note",
+        noncommercial = [k for k, v in FOUNDATION_MODEL_LICENCES.items() if not v["commercial"]]
+        add(f"(excluded: {', '.join(noncommercial)})", "note",
             "published weights are non-commercial; an enterprise licence is needed for production")
     return out

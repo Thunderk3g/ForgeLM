@@ -15,9 +15,7 @@ from __future__ import annotations
 
 import os
 
-import numpy as np
-
-from common import ARTIFACTS, environment, load_banking77, rounded, write_result
+from common import ARTIFACTS, load_banking77, rounded, write_result
 from forgelm.bench import benchmark
 from forgelm.compress import OnnxClassifier, export_and_gate
 from forgelm.hardware import probe

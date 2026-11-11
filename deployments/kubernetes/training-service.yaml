@@ -74,26 +74,18 @@ spec:
             configMapKeyRef:
               name: llmforge-config
               key: CUDA_LAUNCH_BLOCKING
-        - name: MAX_TRAINING_JOBS
-          valueFrom:
-            configMapKeyRef:
-              name: training-config
-              key: MAX_TRAINING_JOBS
-        - name: HUGGINGFACE_TOKEN
+        # The Hugging Face libraries read HF_TOKEN; nothing reads HUGGINGFACE_TOKEN.
+        - name: HF_TOKEN
           valueFrom:
             secretKeyRef:
               name: llmforge-secrets
               key: huggingface-token
-        - name: REDIS_HOST
+        - name: CONTAINER_MEMORY_LIMIT_GB
           valueFrom:
-            configMapKeyRef:
-              name: llmforge-config
-              key: REDIS_HOST
-        - name: REDIS_PORT
-          valueFrom:
-            configMapKeyRef:
-              name: llmforge-config
-              key: REDIS_PORT
+            resourceFieldRef:
+              containerName: training-service
+              resource: limits.memory
+              divisor: "1Gi"
         resources:
           requests:
             cpu: "4"
@@ -214,126 +206,3 @@ spec:
 #       target:
 #         type: Utilization
 #         averageUtilization: 80
-
----
-# Training Job Custom Resource Definition
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  name: trainingjobs.llmforge.io
-spec:
-  group: llmforge.io
-  versions:
-  - name: v1
-    served: true
-    storage: true
-    schema:
-      openAPIV3Schema:
-        type: object
-        properties:
-          spec:
-            type: object
-            properties:
-              baseModel:
-                type: string
-                description: "Base model path or identifier"
-              dataset:
-                type: string
-                description: "Dataset path or identifier"
-              outputDir:
-                type: string
-                description: "Output directory for fine-tuned model"
-              trainingConfig:
-                type: object
-                properties:
-                  epochs:
-                    type: integer
-                    minimum: 1
-                    maximum: 100
-                    default: 1
-                  batchSize:
-                    type: integer
-                    minimum: 1
-                    maximum: 128
-                    default: 4
-                  learningRate:
-                    type: number
-                    minimum: 0.00001
-                    maximum: 0.01
-                    default: 0.0002
-                  gradientAccumulationSteps:
-                    type: integer
-                    minimum: 1
-                    maximum: 64
-                    default: 4
-                  maxSeqLength:
-                    type: integer
-                    minimum: 128
-                    maximum: 8192
-                    default: 2048
-                  peftMethod:
-                    type: string
-                    enum: ["lora", "qlora", "dora", "oft", "pissa"]
-                    default: "qlora"
-              priority:
-                type: string
-                enum: ["low", "normal", "high", "critical"]
-                default: "normal"
-          status:
-            type: object
-            properties:
-              phase:
-                type: string
-                enum: ["pending", "running", "succeeded", "failed", "cancelled"]
-              startTime:
-                type: string
-                format: date-time
-              completionTime:
-                type: string
-                format: date-time
-              progress:
-                type: object
-                properties:
-                  currentEpoch:
-                    type: integer
-                  totalEpochs:
-                    type: integer
-                  currentStep:
-                    type: integer
-                  totalSteps:
-                    type: integer
-                  loss:
-                    type: number
-                  accuracy:
-                    type: number
-              message:
-                type: string
-              logs:
-                type: array
-                items:
-                  type: string
-    subresources:
-      status: {}
-    additionalPrinterColumns:
-    - name: Status
-      type: string
-      description: The status of the training job
-      jsonPath: .status.phase
-    - name: Progress
-      type: string
-      description: Current progress
-      jsonPath: .status.progress
-    - name: Started
-      type: date
-      description: When the job was started
-      jsonPath: .status.startTime
-    - name: Age
-      type: date
-      jsonPath: .metadata.creationTimestamp
-  scope: Namespaced
-  names:
-    plural: trainingjobs
-    singular: trainingjob
-    kind: TrainingJob
-    shortNames:
-    - tj

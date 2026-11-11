@@ -6,9 +6,8 @@ Question
   would be served in: merged weights, GGUF, and 4-bit quantisation?
 
 Protocol
-  * Base model HuggingFaceTB/SmolLM2-360M-Instruct (Apache-2.0). If it cannot
-    be downloaded, Qwen/Qwen2.5-0.5B-Instruct (Apache-2.0); the result names
-    the model that was used.
+  * Base model HuggingFaceTB/SmolLM2-360M-Instruct (Apache-2.0); --base-model
+    picks another, and the result names the model used.
   * Task: Banking77 (CC BY 4.0) restricted to its 10 most frequent intents in
     the training split, posed as generation. The system prompt lists the 10
     intent names; the model must answer with one of them and nothing else.
@@ -62,14 +61,14 @@ from pathlib import Path
 
 import numpy as np
 
-from common import ARTIFACTS, environment, load_banking77, rounded, write_result
+from common import ARTIFACTS, load_banking77, rounded, write_result
 from forgelm import gguf
+from forgelm.bench import directory_size_mb
 from forgelm.finetune import (FineTuneRecipe, evaluate_chat, evaluate_exact, finetune_lora, generate, load_model,
                               merge_adapter, normalise_answer)
 from forgelm.generative import estimate_memory_gb
 
 PRIMARY_MODEL = "HuggingFaceTB/SmolLM2-360M-Instruct"
-FALLBACK_MODEL = "Qwen/Qwen2.5-0.5B-Instruct"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--smoke", action="store_true", help="2 intents, 16 training examples, 20 test texts, 1 epoch")
@@ -98,12 +97,6 @@ def peak_rss_gb() -> float:
     # ru_maxrss is in KiB on Linux: the high-water mark of this process since
     # it started, so each reading covers every stage before it.
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 ** 2, 3)
-
-
-def size_mb(path) -> float:
-    path = Path(path)
-    files = [path] if path.is_file() else [p for p in path.rglob("*") if p.is_file()]
-    return round(sum(p.stat().st_size for p in files) / 1e6, 1)
 
 
 # ---------------------------------------------------------------- data
@@ -183,25 +176,11 @@ def decode_speed(chat) -> dict:
 
 
 # ---------------------------------------------------------------- base model
-def resolve_base(requested: str):
-    from huggingface_hub import snapshot_download
-
-    tried = []
-    candidates = [requested] + ([FALLBACK_MODEL] if requested == PRIMARY_MODEL else [])
-    for name in candidates:
-        try:
-            snapshot_download(name, allow_patterns=["*.json", "*.safetensors", "*.txt", "*.jinja", "*.model"])
-            return name, tried
-        except Exception as exc:  # any download failure sends us to the fallback
-            tried.append({"model": name, "error": f"{type(exc).__name__}: {exc}"[:300]})
-            log(f"could not download {name}: {exc}")
-    raise SystemExit(f"no base model could be downloaded: {tried}")
-
-
-base_model, download_failures = resolve_base(args.base_model)
+base_model = args.base_model
 log("base model", base_model)
+# base_model_download_failures stays in the result (always empty now) so the result keys do not change.
 result = {"experiment": "E7 LoRA fine-tuning on CPU and GGUF export (Banking77, 10 intents, generative)",
-          "smoke": args.smoke, "base_model": base_model, "base_model_download_failures": download_failures,
+          "smoke": args.smoke, "base_model": base_model, "base_model_download_failures": [],
           "intents": intent_names, "n_train": len(train_records), "n_eval": len(eval_records),
           "max_new_tokens": MAX_NEW, "threads": THREADS, "system_prompt": SYSTEM, "references": references,
           "scoring": "exact match after normalise_answer; lenient = reply names exactly one intent and it is right",
@@ -294,7 +273,7 @@ log("    accuracy", tuned["accuracy"], "merge agreement", merge_parity.agreement
 del model
 gc.collect()
 
-files = {"adapter": {"path": str(adapter_dir), "mb": size_mb(adapter_dir)},
+files = {"adapter": {"path": str(adapter_dir), "mb": round(directory_size_mb(adapter_dir), 1)},
          "merged_float32_safetensors": {"path": str(merged_dir), "mb": round(merge_info["weights_bytes"] / 1e6, 1)}}
 result["files"] = files
 result["gguf_versions"] = gguf.installed_versions()
@@ -310,10 +289,12 @@ def run_gguf():
     script = os.environ.get(gguf.CONVERT_ENV) or gguf.fetch_convert_script(str(ARTIFACTS / "llama_cpp"))
     t = time.time()
     f16 = gguf.convert_to_gguf(str(merged_dir), str(WORK / "model.f16.gguf"), script, outtype="f16")
-    files["gguf_f16"] = {"path": f16, "mb": size_mb(f16), "seconds_to_convert": round(time.time() - t, 1)}
+    files["gguf_f16"] = {"path": f16, "mb": round(directory_size_mb(f16), 1),
+                         "seconds_to_convert": round(time.time() - t, 1)}
     t = time.time()
     q4 = gguf.quantize_gguf(f16, str(WORK / "model.Q4_K_M.gguf"), "Q4_K_M", n_threads=THREADS)
-    files["gguf_q4_k_m"] = {"path": q4, "mb": size_mb(q4), "seconds_to_quantise": round(time.time() - t, 1)}
+    files["gguf_q4_k_m"] = {"path": q4, "mb": round(directory_size_mb(q4), 1),
+                            "seconds_to_quantise": round(time.time() - t, 1)}
     # "Q4_K_M" is a recipe, not a guarantee of 4.5 bits: k-quants work on rows
     # of 256 weights, and llama.cpp falls back to q5_0 / q8_0 for any tensor
     # whose rows are not a multiple of that. Bits per weight show what it did.
@@ -377,11 +358,6 @@ if not args.keep_weights:
 
 headline = {k: v.get("accuracy", v.get("status")) for k, v in result["stages"].items()}
 log("accuracy by stage", headline)
-if args.smoke:
-    path = ARTIFACTS / "e7_generative_cpu_smoke.json"
-    payload = dict(result, environment=environment(), generated_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                   warning="SMOKE RUN: 2 intents, tiny data, 1 epoch. Proves the pipeline runs; measures nothing.")
-    path.write_text(json.dumps(payload, indent=2, default=float))
-    log("wrote", path)
-else:
-    write_result("e7_generative_cpu", result)
+write_result("e7_generative_cpu", result, smoke=args.smoke,
+             warning="SMOKE RUN: 2 intents, tiny data, 1 epoch. Proves the pipeline runs; measures nothing."
+             if args.smoke else None)

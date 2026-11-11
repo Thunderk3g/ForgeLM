@@ -7,58 +7,10 @@ data:
   # Service Configuration
   ORCHESTRATOR_URL: "http://llmforge-orchestrator:8080"
   
-  # API Gateway Config
-  API_HOST: "0.0.0.0"
-  API_PORT: "8000"
-  
   # Training Service Config
-  BASE_MODEL_DIR: "/app/models/base"
-  DATASET_DIR: "/app/data/prepared"
-  OUTPUT_DIR: "/app/models/finetuned"
   CUDA_VISIBLE_DEVICES: "0"
   TOKENIZERS_PARALLELISM: "false"
   CUDA_LAUNCH_BLOCKING: "0"
-  
-  # Redis Config
-  REDIS_HOST: "llmforge-redis"
-  REDIS_PORT: "6379"
-  REDIS_DB: "0"
-  
-  # Monitoring Config
-  PROMETHEUS_HOST: "llmforge-prometheus"
-  PROMETHEUS_PORT: "9090"
-  
-  # Logging Config
-  LOG_LEVEL: "INFO"
-  LOG_FORMAT: "json"
-  
-  # Performance Config
-  MAX_CONCURRENT_JOBS: "3"
-  MEMORY_OPTIMIZATION: "true"
-  BACKGROUND_OPTIMIZATION: "true"
-  
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: training-config
-  namespace: llmforge
-data:
-  # Training specific configuration
-  MAX_TRAINING_JOBS: "2"
-  DEFAULT_EPOCHS: "1"
-  DEFAULT_BATCH_SIZE: "4"
-  DEFAULT_LEARNING_RATE: "0.0002"
-  GRADIENT_ACCUMULATION_STEPS: "4"
-  MAX_SEQ_LENGTH: "2048"
-  
-  # GPU Configuration
-  GPU_MEMORY_FRACTION: "0.9"
-  MIXED_PRECISION: "true"
-  
-  # Unsloth Configuration
-  UNSLOTH_ENABLED: "true"
-  UNSLOTH_OPTIMIZATION_LEVEL: "high"
   
 ---
 apiVersion: v1

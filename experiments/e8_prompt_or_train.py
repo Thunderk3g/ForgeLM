@@ -49,7 +49,7 @@ import time
 
 import numpy as np
 
-from common import ARTIFACTS, environment, load_banking77, rounded, stratified_sample, write_result
+from common import ARTIFACTS, e2_draws, load_banking77, rounded, stratified_sample, write_result
 from forgelm.gate import Option, decide
 from forgelm.metrics import classification_report
 from forgelm.students import Embedder, EmbeddingStudent, ZeroShotStudent
@@ -88,10 +88,8 @@ train, test, names = load_banking77()
 descriptions = [n.replace("_", " ") for n in names]
 n_classes = len(names)
 
-# The E2 anchor: replay E2's draws exactly (pool first, then anchor) so the test items are the same.
-rng = np.random.default_rng(7)
-rng.choice(len(train), size=2000, replace=False)
-e2_anchor_idx = np.sort(rng.choice(len(test), size=1000, replace=False))
+# The E2 anchor: E2's draws at its defaults, so the test items are the same.
+_, e2_anchor_idx = e2_draws(len(train), len(test))
 test_idx = e2_anchor_idx[: (20 if args.smoke else args.test)]
 test_texts, test_y = [test.text.iloc[i] for i in test_idx], test.label.values[test_idx]
 
@@ -309,11 +307,4 @@ result = {
     "test_set": {"n": int(len(test_idx)), "source": "E2's anchor items from the Banking77 test split"},
     "llm": llm_info, "systems": rows, "gate": gate.to_dict(), "gate_text": gate.render(),
 }
-if args.smoke:
-    path = ARTIFACTS / "e8_prompt_or_train_smoke.json"
-    path.write_text(json.dumps(dict(result, environment=environment(),
-                                    generated_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())),
-                               indent=2, default=float))
-    print(f"wrote {path}")
-else:
-    write_result("e8_prompt_or_train", result)
+write_result("e8_prompt_or_train", result, smoke=args.smoke)

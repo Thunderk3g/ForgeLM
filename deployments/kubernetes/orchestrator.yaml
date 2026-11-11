@@ -52,16 +52,6 @@ spec:
             secretKeyRef:
               name: llmforge-secrets
               key: redis-url
-        - name: LOG_LEVEL
-          valueFrom:
-            configMapKeyRef:
-              name: llmforge-config
-              key: LOG_LEVEL
-        - name: PROMETHEUS_ENABLED
-          valueFrom:
-            configMapKeyRef:
-              name: llmforge-config
-              key: PROMETHEUS_ENABLED
         resources:
           requests:
             cpu: "200m"

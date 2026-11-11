@@ -23,7 +23,6 @@ import uvicorn
 
 # Import core training components (now local to this microservice)
 from services.training_service import TrainingService
-from services.training_worker import process_manager
 from models.schemas import FineTuneRequest, TrainingStatus
 from services.service_orchestrator import register_with_orchestrator
 
@@ -168,7 +167,8 @@ async def health_check():
             "service": "training",
             "version": "1.0.0",
             "gpu_available": gpu_info.get('available', False),
-            "active_jobs": process_manager.get_active_job_count() if process_manager else 0,
+            # Always 0, as before: the removed worker's process_manager counted threads nothing started.
+            "active_jobs": 0,
             "system_resources": {
                 "gpu_memory_used": gpu_info.get('memory_used_mb', 0),
                 "gpu_memory_total": gpu_info.get('memory_total_mb', 0),
@@ -535,8 +535,7 @@ async def update_metrics():
     while True:
         try:
             if training_service:
-                active_jobs = process_manager.get_active_job_count() if process_manager else 0
-                active_training_jobs.set(active_jobs)
+                active_training_jobs.set(0)  # as before; see the active_jobs note in /health
                 
                 gpu_info = training_service.get_gpu_status()
                 gpu_utilization.set(gpu_info.get('utilization_percent', 0))

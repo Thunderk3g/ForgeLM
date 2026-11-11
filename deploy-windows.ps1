@@ -1,12 +1,11 @@
 #!/usr/bin/env pwsh
 # Windows GPU Sharing Deployment Script for LLMForge
-# Optimized for Windows Docker Desktop with RTX 4060 8GB
+# Windows Docker Desktop deployment: base images first, GPU services started one at a time
 
 param(
     [string]$Action = "deploy",
     [switch]$SkipChecks = $false,
-    [switch]$BuildOnly = $false,
-    [switch]$Verbose = $false
+    [switch]$BuildOnly = $false
 )
 
 # Set error handling
@@ -111,16 +110,8 @@ function Build-Services {
         exit 1
     }
     
-    # Build GPU services
-    Write-Info "Building GPU-enabled services..."
-    docker compose build training-service chat-comparison-service model-management-service
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to build GPU services!"
-        exit 1
-    }
-    
-    # Build remaining services
-    Write-Info "Building remaining services..."
+    # Build the services
+    Write-Info "Building services..."
     docker compose build
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to build all services!"
@@ -274,11 +265,10 @@ function Show-Usage {
     Write-Output "Options:"
     Write-Output "  -SkipChecks   Skip prerequisite checks"
     Write-Output "  -BuildOnly    Build images but don't start services"
-    Write-Output "  -Verbose      Enable verbose output"
     Write-Output ""
     Write-Output "Examples:"
     Write-Output "  .\deploy-windows.ps1 deploy"
-    Write-Output "  .\deploy-windows.ps1 build -Verbose"
+    Write-Output "  .\deploy-windows.ps1 build"
     Write-Output "  .\deploy-windows.ps1 status"
 }
 

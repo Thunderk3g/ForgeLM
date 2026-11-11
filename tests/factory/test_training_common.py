@@ -1,15 +1,16 @@
-"""The helpers shared by the two training implementations, and log streaming.
+"""The training-argument helpers in ``training_common.py``, and log streaming.
 
-``training_service.py`` and ``training_service_core.py`` need the GPU stack
-(torch, Unsloth, Redis) to import, so they are never imported in this process.
-As in ``test_services.py``, single methods are cut out of the source with
-``ast`` and run against fakes. ``training_common.py`` imports nothing heavy
-and is loaded directly from its path. One group of tests does import the two
-modules whole, in a child process where the GPU stack is replaced by stand-ins.
+``training_service.py`` needs the GPU stack (torch, Unsloth, Redis) to import,
+so it is never imported in this process. As in ``test_services.py``, single
+methods are cut out of the source with ``ast`` and run against fakes.
+``training_common.py`` imports nothing heavy and is loaded directly from its
+path. One group of tests does import the module whole, in a child process
+where the GPU stack is replaced by stand-ins.
 
 Nothing here trains a model. What these tests show is that the shared helpers
-return what the two original copies returned and that log streaming no longer
-holds the event loop; the training flow itself still needs a run on a GPU.
+return what the two original copies returned (``TrainingService`` and the
+since-removed ``TrainingCore``) and that log streaming no longer holds the
+event loop; the training flow itself still needs a run on a GPU.
 """
 
 import ast
@@ -32,17 +33,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ROOT / "src/microservices/training_service/src/services"
 SERVICE_FILE = SERVICES / "training_service.py"
-CORE_FILE = SERVICES / "training_service_core.py"
 COMMON_FILE = SERVICES / "training_common.py"
 
 # The methods that were word-for-word copies in both classes and now live in the mixin.
 MERGED = ["_get_instruction_training_args", "_get_chat_completion_args", "_get_reasoning_training_args",
           "_apply_training_type_optimizations", "get_chat_sft_config"]
-
-# Methods both classes still define under the same name because they behave differently
-# (argument lists, fallbacks, return values). Merging one of these changes training.
-SAME_NAME_DIFFERENT_BEHAVIOUR = {"__init__", "_create_adaptive_training_args", "_detect_model_precision",
-                                 "_get_optimal_precision_settings", "_validate_precision_settings"}
 
 # The commit the consolidation started from. Used only by the tests that re-run the
 # original methods, which skip when the commit is not in the checkout.
@@ -230,9 +225,9 @@ def test_training_common_imports_nothing_heavy():
     assert len(guarded) == 1 and "models.schemas" in ast.unparse(guarded[0])
 
 
-# ---- how the two classes use them ------------------------------------------
+# ---- how the class uses them ------------------------------------------------
 
-@pytest.mark.parametrize("path,class_name", [(SERVICE_FILE, "TrainingService"), (CORE_FILE, "TrainingCore")])
+@pytest.mark.parametrize("path,class_name", [(SERVICE_FILE, "TrainingService")])
 def test_each_class_inherits_the_helpers_and_defines_no_method_twice(common, path, class_name):
     cls = _class_node(path, class_name)
     assert [ast.unparse(base) for base in cls.bases] == ["TrainingArgsMixin"]
@@ -248,7 +243,7 @@ def test_each_class_inherits_the_helpers_and_defines_no_method_twice(common, pat
         assert callable(getattr(common.TrainingArgsMixin, name))
 
 
-@pytest.mark.parametrize("path,class_name", [(SERVICE_FILE, "TrainingService"), (CORE_FILE, "TrainingCore")])
+@pytest.mark.parametrize("path,class_name", [(SERVICE_FILE, "TrainingService")])
 def test_each_class_answers_with_its_own_modules_unsloth_flag(common, path, class_name):
     # Run the class's real _unsloth_available in a stand-in for its module's globals.
     module_globals = {"UNSLOTH_AVAILABLE": False}
@@ -264,31 +259,6 @@ def test_each_class_answers_with_its_own_modules_unsloth_flag(common, path, clas
     assert helpers._apply_training_type_optimizations(dict(ARGS_BEFORE), "reasoning", {}, FULL) == REASONING
 
 
-def test_methods_sharing_a_name_across_the_classes_are_only_the_known_different_ones():
-    service = {n.name for n in _methods(SERVICE_FILE, "TrainingService")}
-    core = {n.name for n in _methods(CORE_FILE, "TrainingCore")}
-    # _unsloth_available is the one-line hook each class must define for the mixin.
-    assert (service & core) - {"_unsloth_available"} == SAME_NAME_DIFFERENT_BEHAVIOUR
-
-
-def test_the_same_name_methods_left_in_place_really_do_differ():
-    """If two of them ever become identical they should move to training_common.py."""
-    service = {n.name: n for n in _methods(SERVICE_FILE, "TrainingService")}
-    core = {n.name: n for n in _methods(CORE_FILE, "TrainingCore")}
-    for name in SAME_NAME_DIFFERENT_BEHAVIOUR:
-        assert ast.dump(service[name]) != ast.dump(core[name]), name
-
-
-def test_timed_is_no_longer_imported_and_was_not_needed():
-    tree = ast.parse(SERVICE_FILE.read_text(encoding="utf-8"))
-    imported = {alias.asname or alias.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
-                for alias in n.names}
-    used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-    assert "timed" not in imported and "timed" not in used
-
-
-# ---- against the original source, when the checkout has it ------------------
-
 def _baseline_source(path):
     relative = path.relative_to(ROOT).as_posix()
     try:
@@ -301,7 +271,7 @@ def _baseline_source(path):
     return shown.stdout
 
 
-@pytest.mark.parametrize("path,class_name", [(SERVICE_FILE, "TrainingService"), (CORE_FILE, "TrainingCore")])
+@pytest.mark.parametrize("path,class_name", [(SERVICE_FILE, "TrainingService")])
 @pytest.mark.parametrize("unsloth", [False, True])
 def test_shared_helpers_match_the_original_methods_run_side_by_side(common, path, class_name, unsloth):
     source = _baseline_source(path)
@@ -314,13 +284,13 @@ def test_shared_helpers_match_the_original_methods_run_side_by_side(common, path
 
 # ---- the real modules, imported with the GPU stack stubbed -------------------
 #
-# The tests above run single methods. This one imports training_service.py and
-# training_service_core.py whole, in a child process whose torch, Unsloth,
-# transformers and service-local packages are stand-ins, to check what cutting
-# methods out cannot: that ``from services.training_common import ...`` resolves,
-# that both classes can be built on the mixin, and that the callers of the
-# helpers (``_create_adaptive_training_args``) still pass on the same values.
-# A child process, because importing those modules sets environment variables.
+# The tests above run single methods. This one imports training_service.py
+# whole, in a child process whose torch, Unsloth, transformers and service-local
+# packages are stand-ins, to check what cutting methods out cannot: that
+# ``from services.training_common import ...`` resolves, that the class can be
+# built on the mixin, and that the caller of the helpers
+# (``_create_adaptive_training_args``) still passes on the same values.
+# A child process, because importing the module sets environment variables.
 
 HARNESS = r'''
 import importlib, json, sys, types
@@ -362,13 +332,12 @@ module("utils.hardware_detection", hardware_detector=MagicMock(), AdaptiveTraini
 module("config"); module("config.settings", settings=MagicMock())
 module("common"); module("common.gpu_client", GPUClient=MagicMock(), GPULockManager=MagicMock(),
                          GPUOperationType=MagicMock(), GPULockPriority=MagicMock(), get_service_id=lambda: "svc")
-# A bare package, so services/__init__.py (which pulls in model_service and the worker) does not run.
+# A bare package, so services/__init__.py does not run.
 package = module("services")
 package.__path__ = [str(Path(src) / "services")]
 
 service_module = importlib.import_module("services.training_service")
-core_module = importlib.import_module("services.training_service_core")
-assert service_module.UNSLOTH_AVAILABLE is unsloth and core_module.UNSLOTH_AVAILABLE is unsloth
+assert service_module.UNSLOTH_AVAILABLE is unsloth
 
 request = types.SimpleNamespace(learning_rate=2e-4, max_seq_length=2048, epochs=3, output_dir=scratch)
 TYPE_HELPERS = ["_get_instruction_training_args", "_get_chat_completion_args", "_get_reasoning_training_args"]
@@ -382,18 +351,12 @@ def helpers(obj):
 
 service = service_module.TrainingService.__new__(service_module.TrainingService)  # __init__ probes hardware
 service.logger = MagicMock()
-core = core_module.TrainingCore.__new__(core_module.TrainingCore)
-core.logger, core.task_id, core.adaptive_config = MagicMock(), "task-1234-abcd", MagicMock()
-core.adaptive_config.generate_optimal_config.return_value = config
 
 result = {
     "service_helpers": helpers(service),
-    "core_helpers": helpers(core),
     "service_training_args": {kind: service._create_adaptive_training_args(request, "task-1234-abcd", config, kind)
                               for kind in ("instruction", "chat", "reasoning")},
-    "core_training_args": core._create_adaptive_training_args(request),
     "service_mro": [c.__name__ for c in service_module.TrainingService.__mro__],
-    "core_mro": [c.__name__ for c in core_module.TrainingCore.__mro__],
 }
 # The flag is read when a helper runs, not when the class is built.
 service_module.UNSLOTH_AVAILABLE = not unsloth
@@ -418,7 +381,7 @@ def _import_real_modules(src_dir, unsloth, tmp_path):
     done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=300, env=env)
     assert done.returncode == 0, done.stderr[-3000:]
     result = json.loads(done.stdout.strip().splitlines()[-1])  # the modules print while importing
-    for built in [*result["service_training_args"].values(), result["core_training_args"]]:
+    for built in result["service_training_args"].values():
         assert built.pop("output_dir") == str(scratch / "checkpoints")
     return result
 
@@ -444,63 +407,49 @@ SERVICE_ARGS_BY_TYPE = {
 }
 # Added by _apply_training_type_optimizations for chat (reasoning enabled in the config) and reasoning.
 SERVICE_ARGS_UNSLOTH_EXTRA = {"group_by_length": False, "prediction_loss_only": False}
-CORE_ARGS = {
-    False: {"bf16": False, "fp16": False, "optim": "adamw_hf", "lr_scheduler_type": "linear"},
-    True: {"bf16": True, "fp16": False, "optim": "adamw_8bit", "lr_scheduler_type": "cosine",
-           "gradient_checkpointing": True, "max_grad_norm": 0.3, "warmup_ratio": 0.05},
-}
-CORE_ARGS_SHARED = {"dataloader_num_workers": 0, "dataloader_pin_memory": False, "eval_strategy": "no",
-                    "gradient_accumulation_steps": 2, "learning_rate": 0.0002, "logging_steps": 7,
-                    "num_train_epochs": 3, "per_device_train_batch_size": 4, "remove_unused_columns": False,
-                    "report_to": [], "run_name": "llmforge_task-123", "save_steps": 250, "save_total_limit": 2,
-                    "seed": 3407, "warmup_steps": 5, "weight_decay": 0.01}
 
 
 @pytest.mark.parametrize("unsloth", [False, True])
-def test_both_real_modules_import_and_build_the_same_training_arguments(tmp_path, unsloth):
+def test_the_real_module_imports_and_builds_the_recorded_training_arguments(tmp_path, unsloth):
     result = _import_real_modules(SERVICES.parent, unsloth, tmp_path)
 
     assert result["service_mro"] == ["TrainingService", "TrainingArgsMixin", "object"]
-    assert result["core_mro"] == ["TrainingCore", "TrainingArgsMixin", "object"]
 
-    # The helpers, reached through the real classes.
-    for helpers in (result["service_helpers"], result["core_helpers"]):
-        for name in MERGED[:3]:
-            assert helpers[name] == TYPE_ARGS[(name, "full")]
-        assert helpers["get_chat_sft_config"] == SFT_CONFIG[(unsloth, "full")]
-        assert helpers["optimize:instruction"] == {"seed": 1}
-        extra = {"gradient_checkpointing": True, **SERVICE_ARGS_UNSLOTH_EXTRA} if unsloth else {}
-        assert helpers["optimize:chat"] == helpers["optimize:reasoning"] == {"seed": 1, **extra}
+    # The helpers, reached through the real class.
+    helpers = result["service_helpers"]
+    for name in MERGED[:3]:
+        assert helpers[name] == TYPE_ARGS[(name, "full")]
+    assert helpers["get_chat_sft_config"] == SFT_CONFIG[(unsloth, "full")]
+    assert helpers["optimize:instruction"] == {"seed": 1}
+    extra = {"gradient_checkpointing": True, **SERVICE_ARGS_UNSLOTH_EXTRA} if unsloth else {}
+    assert helpers["optimize:chat"] == helpers["optimize:reasoning"] == {"seed": 1, **extra}
     assert result["service_sft_after_flag_flip"] == SFT_CONFIG[(not unsloth, "full")]
 
-    # Their caller in each class: every keyword argument TrainingArguments is built with.
+    # Their caller: every keyword argument TrainingArguments is built with.
     for kind, built in result["service_training_args"].items():
         extra = SERVICE_ARGS_UNSLOTH_EXTRA if unsloth and kind != "instruction" else {}
         assert built == {**SERVICE_ARGS_SHARED, **SERVICE_ARGS_ALWAYS[unsloth], **SERVICE_ARGS_BY_TYPE[kind], **extra}
-    assert result["core_training_args"] == {**CORE_ARGS_SHARED, **CORE_ARGS[unsloth]}
 
 
 @pytest.mark.parametrize("unsloth", [False, True])
-def test_both_real_modules_build_what_the_original_modules_built(tmp_path, unsloth):
+def test_the_real_module_builds_what_the_original_module_built(tmp_path, unsloth):
     baseline = tmp_path / "baseline"
     (baseline / "services").mkdir(parents=True)
-    for path in (SERVICE_FILE, CORE_FILE):
-        (baseline / "services" / path.name).write_text(_baseline_source(path), encoding="utf-8")
+    (baseline / "services" / SERVICE_FILE.name).write_text(_baseline_source(SERVICE_FILE), encoding="utf-8")
     before = _import_real_modules(baseline, unsloth, tmp_path)
     after = _import_real_modules(SERVICES.parent, unsloth, tmp_path)
     assert before.pop("service_mro") == ["TrainingService", "object"]
-    assert before.pop("core_mro") == ["TrainingCore", "object"]
-    del after["service_mro"], after["core_mro"]
+    del after["service_mro"]
     assert after == before
 
 
 # ---- log streaming ----------------------------------------------------------
 
-def _stream_service(source=None):
+def _stream_service():
     """stream_logs bound to a stand-in service, plus the module-level tables it reads."""
     module_globals = {"asyncio": asyncio, "json": json, "queue": queue, "time": time,
                       "task_log_queues": {}, "task_completion_flags": {}}
-    exec(_method_source(SERVICE_FILE, "TrainingService", "stream_logs", text=source), module_globals)
+    exec(_method_source(SERVICE_FILE, "TrainingService", "stream_logs"), module_globals)
     errors = []
 
     class Service:
@@ -549,12 +498,6 @@ def test_stream_logs_yields_queued_entries_then_new_ones_as_json_strings_in_orde
     assert received == [json.dumps(entry) for entry in ENTRIES]
     assert [json.loads(item) for item in received] == ENTRIES
     assert errors == [] and queues["job"].empty()
-
-
-def test_stream_logs_yields_the_same_sequence_as_the_original_implementation():
-    original, old_queues, old_flags, _ = _stream_service(source=_baseline_source(SERVICE_FILE))
-    service, queues, flags, _ = _stream_service()
-    assert _stream_entries_scenario(service, queues, flags) == _stream_entries_scenario(original, old_queues, old_flags)
 
 
 def test_stream_logs_keeps_the_event_loop_running_while_it_waits_for_an_entry():

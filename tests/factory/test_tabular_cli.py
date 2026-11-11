@@ -123,6 +123,9 @@ def test_recommend_rules():
     assert any("under 300 rows" in m for m in models(n_rows=120, n_features=8))
     assert FOUNDATION_MODEL_LICENCES["tabpfn-2.5+"]["commercial"] is False
     assert FOUNDATION_MODEL_LICENCES["tabicl"]["commercial"] is True
+    noncommercial = [k for k, v in FOUNDATION_MODEL_LICENCES.items() if not v["commercial"]]
+    assert f"(excluded: {', '.join(noncommercial)})" in default
+    assert "(excluded: tabpfn-2.5+, tabfm, limix-2, sap-rpt-1-oss)" in default
 
 
 def test_cli_doctor_and_plan(capsys):

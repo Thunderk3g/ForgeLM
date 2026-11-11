@@ -15,8 +15,8 @@ setup(
     version="1.0.0",
     description="Modules shared by the LLMForge microservices (one copy instead of one per service)",
     packages=["llmforge_common"],
-    # Deliberately empty. The modules need different things (gpu_inference_wrapper
-    # needs torch, schemas needs pydantic, performance needs nothing), and a light
+    # Deliberately empty. The modules need different things (gpu_client needs
+    # aiohttp, schemas needs pydantic, performance needs nothing), and a light
     # service must not be made to install torch. Each image already installs what
     # its service imports, and the package is installed with --no-deps so it cannot
     # disturb a pinned ML stack. llmforge_common/__init__.py lists the needs per module.

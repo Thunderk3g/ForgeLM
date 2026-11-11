@@ -2,8 +2,6 @@
 # Use: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
 # Optimized for: RTX 3050 4GB Laptop, i5 11th Gen, 32GB RAM
 
-version: '3.8'
-
 services:
   training-service:
     environment:
@@ -11,12 +9,6 @@ services:
       - CONTAINER_MEMORY_LIMIT_GB=16  # Generous limit with 32GB RAM
       - WORKER_MEMORY_GB=12           # Plenty of room for training
       - OMP_NUM_THREADS=4             # i5 11th gen has 4-6 cores
-      - GPU_MEMORY_LIMIT_MB=3072      # 75% of 4GB GPU (GPU is the bottleneck)
-
-      # Development-specific settings
-      - LOG_LEVEL=DEBUG               # More verbose logging
-      - PROMETHEUS_ENABLED=false      # Disable metrics overhead
-      - MAX_TRAINING_JOBS=1           # Only 1 job at a time (GPU limited)
 
     deploy:
       resources:

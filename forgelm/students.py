@@ -156,9 +156,6 @@ class Student:
     def load(cls, directory: str) -> "Student":
         raise NotImplementedError
 
-    def size_bytes(self, directory: str) -> int:
-        return sum(p.stat().st_size for p in Path(directory).rglob("*") if p.is_file())
-
 
 # --------------------------------------------------------------------------
 # Rung 1: TF-IDF

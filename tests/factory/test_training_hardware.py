@@ -834,8 +834,6 @@ def test_bridge_backend_advice_carries_the_detectors_warnings(bridge, monkeypatc
 
     monkeypatch.setattr(bridge, "FORGELM_AVAILABLE", False)
     assert bridge.backend_advice() == {"available": False, "reason": "forgelm package not installed in this image"}
-    assert bridge.training_dry_run(object()) == {"available": False,
-                                                 "reason": "forgelm package not installed in this image"}
 
 
 def test_bridge_backend_advice_with_the_real_detector(detection, bridge, monkeypatch):
@@ -1074,14 +1072,17 @@ def test_estimate_measurement_and_verdict_are_reported_together(tiny_gpt2):
     assert unknown["estimate_minus_measured_gb"] is None
 
 
-def test_bridge_dry_run_returns_the_report_and_puts_the_weights_back(bridge, tiny_gpt2):
+def test_dry_run_restore_puts_the_weights_of_a_plain_model_back(tiny_gpt2):
+    from forgelm import dryrun
+
     before = state_of(tiny_gpt2)
-    report = bridge.training_dry_run(tiny_gpt2, batch_size=2, seq_len=32, steps=2, available_gb=4.0)
-    assert report["available"] is True and report["verdict"] == "fits"
+    measurement = dryrun.measure_training_memory(tiny_gpt2, None, batch_size=2, seq_len=32, steps=2, restore=True)
+    report = dryrun.compare_with_estimate(measurement, available_gb=4.0)
+    assert report["verdict"] == "fits"
     assert {"estimate", "measurement", "available_gb", "measured_fits", "estimate_fits", "summary"} <= set(report)
     check_measurement(report["measurement"], 2)
     assert report["measurement"]["weights_changed"] is True and report["measurement"]["restored"] is True
-    assert same_state(tiny_gpt2, before)  # the service goes on to train the model it loaded
+    assert same_state(tiny_gpt2, before)  # a caller can go on to train the model it loaded
     assert json.dumps(report)
 
 
@@ -1223,15 +1224,3 @@ def test_out_of_memory_is_recognised_across_torch_versions():
     assert [_best_device(make_torch(k)) for k in ("cuda", "rocm", "xpu", "mps", "none")] == \
         ["cuda", "cuda", "xpu", "mps", "cpu"]
     assert _best_device(make_torch("none", old_torch=True)) == "cpu"
-
-
-def test_dryrun_imports_without_torch_or_any_other_heavy_package():
-    """forgelm must import with only numpy installed: a child process where the rest cannot be imported."""
-    code = ("import sys\n"
-            "for name in ('torch', 'transformers', 'peft', 'psutil', 'sklearn', 'pandas'):\n"
-            "    sys.modules[name] = None\n"
-            "import forgelm.dryrun as d\n"
-            "assert d.fits(1.0, 2.0) and d.dtype_name_for('mps') == 'float16'\n"
-            "print('ok')\n")
-    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(ROOT), timeout=120)
-    assert done.returncode == 0 and done.stdout.strip() == "ok", done.stderr

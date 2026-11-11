@@ -12,6 +12,8 @@ import os
 import logging
 from typing import Optional, Dict, Any, AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from enum import Enum
 import aiohttp
 
 # Each service used to keep its own copy of this module, and __name__ there gave
@@ -19,12 +21,31 @@ import aiohttp
 # so log lines, and anything that searches or filters them, read as they did.
 _LOGGER_NAME = "common.gpu_client"
 
-from .gpu_orchestrator import (
-    GPULockRequest, 
-    GPULock, 
-    GPUOperationType, 
-    GPULockPriority
-)
+
+class GPUOperationType(Enum):
+    TRAINING = "training"
+    INFERENCE = "inference"
+    MODEL_LOADING = "model_loading"
+    GENERAL = "general"
+
+
+class GPULockPriority(Enum):
+    LOW = 1
+    NORMAL = 2
+    HIGH = 3
+    CRITICAL = 4
+
+
+@dataclass
+class GPULock:
+    token: str
+    key: str
+    holder_service: str
+    operation: GPUOperationType
+    acquired_at: float  # time.time()
+    expires_at: float  # time.time()
+    priority: GPULockPriority
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 class GPUClient:
@@ -189,45 +210,6 @@ class GPUClient:
             self.logger.error(f"Error releasing GPU lock: {e}")
             return False
     
-    async def extend_gpu_lock(self, lock: GPULock, additional_seconds: int) -> bool:
-        """
-        Extend GPU lock duration
-        
-        Args:
-            lock: GPU lock to extend
-            additional_seconds: Additional duration in seconds
-            
-        Returns:
-            True if successfully extended
-        """
-        if not lock or lock.key not in self.active_locks:
-            self.logger.warning("Attempting to extend unknown lock")
-            return False
-        
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.post(
-                    f"{self.orchestrator_url}/gpu/extend",
-                    json={
-                        "token": lock.token,
-                        "key": lock.key,
-                        "additional_seconds": additional_seconds
-                    }
-                ) as response:
-                    if response.status == 200:
-                        result = await response.json()
-                        if result.get("extended"):
-                            lock.expires_at += additional_seconds
-                            self.logger.info(f"GPU lock extended by {additional_seconds}s")
-                            return True
-                    
-                    self.logger.error(f"Failed to extend GPU lock: {await response.text()}")
-                    return False
-                    
-        except Exception as e:
-            self.logger.error(f"Error extending GPU lock: {e}")
-            return False
-    
     async def get_gpu_status(self) -> Dict[str, Any]:
         """Get current GPU orchestration status"""
         try:
@@ -240,18 +222,6 @@ class GPUClient:
         except Exception as e:
             self.logger.error(f"Error getting GPU status: {e}")
             return {"error": str(e)}
-    
-    async def heartbeat_lock(self, lock: GPULock) -> bool:
-        """Send heartbeat to keep lock alive (extend by 60s)"""
-        if not lock or lock.key not in self.active_locks:
-            return False
-        
-        # Only extend if lock is expiring soon (within 5 minutes)
-        time_until_expiry = lock.expires_at - time.time()
-        if time_until_expiry > 300:  # 5 minutes
-            return True
-        
-        return await self.extend_gpu_lock(lock, 300)  # Extend by 5 minutes
     
     async def cleanup_all_locks(self):
         """Release all active locks held by this client"""
@@ -269,11 +239,10 @@ class GPUClient:
         estimated_duration: int = 3600,
         priority: GPULockPriority = GPULockPriority.NORMAL,
         metadata: Dict[str, Any] = None,
-        wait_for_availability: bool = True,
-        heartbeat_enabled: bool = True
+        wait_for_availability: bool = True
     ) -> AsyncGenerator[Optional[GPULock], None]:
         """
-        Context manager for GPU lock with automatic cleanup and heartbeat
+        Context manager for GPU lock with automatic cleanup
         
         Usage:
             async with gpu_client.gpu_lock_context(GPUOperationType.TRAINING) as lock:
@@ -282,7 +251,6 @@ class GPUClient:
                     pass
         """
         lock = None
-        heartbeat_task = None
         
         try:
             # Acquire lock
@@ -294,35 +262,12 @@ class GPUClient:
                 wait_for_availability=wait_for_availability
             )
             
-            if lock and heartbeat_enabled:
-                # Start heartbeat task
-                heartbeat_task = asyncio.create_task(self._heartbeat_loop(lock))
-            
             yield lock
             
         finally:
             # Cleanup
-            if heartbeat_task:
-                heartbeat_task.cancel()
-                try:
-                    await heartbeat_task
-                except asyncio.CancelledError:
-                    pass
-            
             if lock:
                 await self.release_gpu_lock(lock)
-    
-    async def _heartbeat_loop(self, lock: GPULock):
-        """Background heartbeat loop to keep lock alive"""
-        try:
-            while True:
-                await asyncio.sleep(240)  # Heartbeat every 4 minutes
-                success = await self.heartbeat_lock(lock)
-                if not success:
-                    self.logger.warning(f"Heartbeat failed for lock {lock.key}")
-                    break
-        except asyncio.CancelledError:
-            pass
 
 
 class GPULockManager:
@@ -355,36 +300,6 @@ class GPULockManager:
                     raise
             else:
                 raise RuntimeError("Could not acquire GPU lock for training")
-    
-    async def with_gpu_for_inference(
-        self,
-        func,
-        estimated_duration: int = 300,
-        priority: GPULockPriority = GPULockPriority.HIGH
-    ):
-        """Execute function with GPU lock for inference operations"""
-        async with self.client.gpu_lock_context(
-            GPUOperationType.INFERENCE,
-            estimated_duration=estimated_duration,
-            priority=priority
-        ) as lock:
-            if lock:
-                self.logger.info("Starting GPU inference operation")
-                try:
-                    result = await func() if asyncio.iscoroutinefunction(func) else func()
-                    self.logger.info("GPU inference operation completed")
-                    return result
-                except Exception as e:
-                    self.logger.error(f"GPU inference operation failed: {e}")
-                    raise
-            else:
-                raise RuntimeError("Could not acquire GPU lock for inference")
-
-
-# Convenience functions for quick integration
-async def create_gpu_client(service_id: str) -> GPUClient:
-    """Create and initialize GPU client"""
-    return GPUClient(service_id)
 
 
 def get_service_id() -> str:

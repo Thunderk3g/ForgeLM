@@ -1,8 +1,9 @@
 """Teachers: sources of labels that are too slow or costly to serve directly.
 
 A teacher turns unlabelled text into (soft) labels. It can be a local LLM, a
-hosted LLM behind an OpenAI-compatible endpoint, a larger fine-tuned model, a
-zero-shot model, or any Python callable. The factory only needs ``label``.
+hosted LLM behind an OpenAI-compatible endpoint, a larger fine-tuned model (wrap
+its ``predict_proba`` in :class:`CallableTeacher`), a zero-shot model, or any
+Python callable. The factory only needs ``label``.
 
 Soft labels matter: a teacher that reports "60% complaint, 40% query" passes
 more information to the student than one that reports "complaint".
@@ -63,18 +64,6 @@ class CallableTeacher(Teacher):
             onehot[np.arange(len(texts)), out.astype(int)] = 1.0
             return onehot
         return out
-
-
-class StudentTeacher(Teacher):
-    """Use an already-trained (usually larger) student as the teacher."""
-
-    def __init__(self, student, name: Optional[str] = None):
-        super().__init__(student.labels)
-        self.student = student
-        self.name = name or f"student:{student.kind}"
-
-    def _label(self, texts):
-        return self.student.predict_proba(texts)
 
 
 class LocalLLMTeacher(Teacher):
@@ -149,8 +138,9 @@ class LocalLLMTeacher(Teacher):
         if self._model is not None:
             return
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
+        from transformers import AutoTokenizer
 
+        from .finetune import _load_causal_lm
         from .students import pick_device
 
         self._tok = AutoTokenizer.from_pretrained(self.model_name)
@@ -169,7 +159,7 @@ class LocalLLMTeacher(Teacher):
         else:
             dtype = torch.bfloat16
         self.resolved_dtype = str(dtype).replace("torch.", "")
-        self._model = AutoModelForCausalLM.from_pretrained(self.model_name, dtype=dtype).to(device).eval()
+        self._model = _load_causal_lm(self.model_name, self.resolved_dtype).to(device).eval()
         ids = [self._tok.encode(ch, add_special_tokens=False) for ch in string.ascii_uppercase[: self.max_options]]
         if any(len(i) != 1 for i in ids) or len({i[0] for i in ids}) != len(ids):
             raise ValueError(f"tokenizer of {self.model_name} does not map option letters to distinct single tokens")

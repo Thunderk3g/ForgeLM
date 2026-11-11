@@ -146,17 +146,6 @@ def distill(
     )
 
 
-def uncertainty_order(probs: np.ndarray) -> np.ndarray:
-    """Indices sorted most-uncertain first (smallest top-2 margin).
-
-    Use a cheap provisional student to rank an unlabelled pool, then spend the
-    teacher (or human) budget on the head of this ordering.
-    """
-    p = np.sort(np.asarray(probs), axis=1)
-    margin = p[:, -1] - p[:, -2]
-    return np.argsort(margin, kind="mergesort")
-
-
 # --------------------------------------------------------------------------
 # Synthetic data: prompt construction and quality checks
 # --------------------------------------------------------------------------

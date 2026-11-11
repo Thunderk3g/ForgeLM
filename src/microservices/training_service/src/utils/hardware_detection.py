@@ -7,8 +7,8 @@ for optimal performance across different hardware profiles.
 Vendor awareness
 ----------------
 The VRAM tiers in ``AdaptiveTrainingConfig`` were tuned on specific NVIDIA
-cards (see FINAL_CONFIG_RTX3050.md and RTX_3050_4GB_SETUP.md at the repository
-root). They are kept exactly as they were for NVIDIA CUDA: a test compares
+cards (an RTX 3050 4GB laptop with 32GB RAM; the old setup notes are in git
+history). They are kept exactly as they were for NVIDIA CUDA: a test compares
 every setting against the version of this file before vendor awareness was
 added. What changed is what happens on everything else:
 

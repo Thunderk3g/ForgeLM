@@ -1,10 +1,10 @@
-"""Training-argument helpers shared by the two training implementations.
+"""Training-argument helpers used by ``TrainingService`` (``training_service.py``).
 
-The training flow exists twice: ``TrainingService`` (``training_service.py``,
-in-process, used by the API) and ``TrainingCore`` (``training_service_core.py``,
-used by the worker process). Five methods were copied word for word between
-the two classes. They live here once, as a mixin both classes inherit, so the
-method names and every call site stay as they were:
+Five methods were once copied word for word between ``TrainingService`` and
+``TrainingCore``, a second training path meant for a worker process. Nothing
+ever started that path and it has been removed. The helpers stay here as a
+mixin ``TrainingService`` inherits, so the method names and every call site
+are as they were:
 
     _get_instruction_training_args      per-type TrainingArguments values
     _get_chat_completion_args
@@ -12,32 +12,14 @@ method names and every call site stay as they were:
     _apply_training_type_optimizations  per-type additions when Unsloth is used
     get_chat_sft_config                 SFTConfig values for chat training
 
-Only methods whose two copies were identical were moved. Four more share a
-name but not a behaviour, and stay in their own classes:
-
-    _create_adaptive_training_args   different parameters; the worker's version
-                                     ignores the training type and, with
-                                     Unsloth, forces a cosine schedule and a
-                                     warm-up ratio
-    _detect_model_precision          different order of checks; falls back to
-                                     "float16" in one class, "unknown" in the other
-    _get_optimal_precision_settings  only the worker's version looks at the model
-    _validate_precision_settings     the two take (training_args, model) and
-                                     (model, training_args), and correct
-                                     different sets of mismatches
-
-Merging any of those would change what one of the two paths trains with, and
-neither path can be run without a GPU to check.
-
 This module imports nothing heavy, and that is deliberate. The helpers build
 plain dictionaries; the one thing they need from the ML stack is the answer to
-"is Unsloth available?". The two modules do not answer that the same way:
-``training_service.py`` imports Unsloth under a temporarily patched ``exec``
-and also counts an ``AttributeError`` as "not available", while the worker
-module does a plain import. An import of Unsloth here would also run before
-the patched one, because ``training_service.py`` imports this module first,
-and so would undo the patch's purpose. So each class supplies its own
-module's answer through ``_unsloth_available`` and nothing is decided here.
+"is Unsloth available?". ``training_service.py`` imports Unsloth under a
+temporarily patched ``exec`` and also counts an ``AttributeError`` as "not
+available". An import of Unsloth here would run before the patched one,
+because ``training_service.py`` imports this module first, and so would undo
+the patch's purpose. So the class supplies its module's answer through
+``_unsloth_available`` and nothing is decided here.
 """
 
 from __future__ import annotations
@@ -49,7 +31,7 @@ if TYPE_CHECKING:  # annotation only; the helpers read learning_rate and max_seq
 
 
 class TrainingArgsMixin:
-    """Per-training-type argument dictionaries, shared by both training classes.
+    """Per-training-type argument dictionaries for ``TrainingService``.
 
     A class using this mixin must define ``_unsloth_available`` and return its
     own module's ``UNSLOTH_AVAILABLE`` from it.

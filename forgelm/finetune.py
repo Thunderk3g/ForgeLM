@@ -504,8 +504,7 @@ def merge_adapter(base_model: Optional[str], adapter_dir: str, out_dir: str, dty
 # Generation and evaluation
 # --------------------------------------------------------------------------
 
-def generate(model, tokenizer, messages: Sequence[dict], max_new_tokens: int = 64, return_details: bool = False,
-             **generate_kwargs):
+def generate(model, tokenizer, messages: Sequence[dict], max_new_tokens: int = 64, return_details: bool = False):
     """Greedy-decode the assistant's reply to ``messages``.
 
     Greedy with no repetition penalty, whatever the model's own generation
@@ -521,7 +520,6 @@ def generate(model, tokenizer, messages: Sequence[dict], max_new_tokens: int = 6
     # generation_config.json neither apply nor draw a warning under greedy.
     settings = dict(max_new_tokens=max_new_tokens, do_sample=False, num_beams=1, repetition_penalty=1.0,
                     temperature=None, top_p=None, top_k=None, pad_token_id=_pad_id(tokenizer))
-    settings.update(generate_kwargs)
     started = time.time()
     with torch.no_grad():
         out = model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), **settings)
@@ -735,11 +733,11 @@ def write_mlx_config(recipe: FineTuneRecipe, data_dir: str, n_train: int) -> str
     return str(path)
 
 
-def mlx_lora_command(recipe: FineTuneRecipe, data_dir: str, adapter_dir: str, n_train: Optional[int] = None,
-                     python: str = "python") -> List[str]:
+def mlx_lora_command(recipe: FineTuneRecipe, data_dir: str, adapter_dir: str, n_train: Optional[int] = None
+                     ) -> List[str]:
     """The argument list that trains this recipe with Apple's mlx-lm.
 
-    Returns ``[python, "-m", "mlx_lm", "lora", ...]`` for a Mac with
+    Returns ``["python", "-m", "mlx_lm", "lora", ...]`` for a Mac with
     ``pip install "mlx-lm[train]"``. It writes nothing. ``data_dir`` must hold
     the ``train.jsonl`` from :func:`write_mlx_dataset` and the
     ``lora_config.yaml`` from :func:`write_mlx_config`; the command passes that
@@ -763,7 +761,7 @@ def mlx_lora_command(recipe: FineTuneRecipe, data_dir: str, adapter_dir: str, n_
             raise FileNotFoundError(f"{train_file} not found: call write_mlx_dataset first, or pass n_train")
         n_train = sum(1 for line in train_file.read_text(encoding="utf-8").splitlines() if line.strip())
     argv = [
-        python, "-m", "mlx_lm", "lora",
+        "python", "-m", "mlx_lm", "lora",
         "--model", recipe.base_model,
         "--train",
         "--data", str(data_dir),

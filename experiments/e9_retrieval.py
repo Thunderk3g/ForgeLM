@@ -53,14 +53,13 @@ Protocol
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import time
 
 import numpy as np
 import pandas as pd
 
-from common import ARTIFACTS, environment, hub_file, rounded, write_result
+from common import ARTIFACTS, hub_file, rounded, write_result
 from forgelm.retrieval import BM25Index, DenseIndex, HybridIndex, Passage, evaluate_rankings, ndcg_at_k
 from forgelm.students import Embedder
 
@@ -262,12 +261,6 @@ result = {
                  "omp_num_threads": os.environ.get("OMP_NUM_THREADS"), "torch_threads": torch_threads()},
 }
 
-if args.smoke:
-    path = ARTIFACTS / "e9_retrieval_smoke.json"
-    payload = dict(result, environment=environment(), generated_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                   warning=f"SMOKE RUN: {len(test_qids)} queries, {len(passages)} passages. Proves the pipeline "
-                           "runs; measures nothing.")
-    path.write_text(json.dumps(payload, indent=2, default=float))
-    log("wrote", path)
-else:
-    write_result("e9_retrieval", result)
+write_result("e9_retrieval", result, smoke=args.smoke,
+             warning=f"SMOKE RUN: {len(test_qids)} queries, {len(passages)} passages. Proves the pipeline "
+                     "runs; measures nothing." if args.smoke else None)

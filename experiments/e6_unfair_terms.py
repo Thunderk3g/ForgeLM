@@ -22,8 +22,8 @@ import time
 
 import numpy as np
 
-from common import ARTIFACTS, load_unfair_tos, rounded, write_result
-from forgelm.metrics import binary_report, roc_auc
+from common import ARTIFACTS, load_unfair_tos, write_result
+from forgelm.metrics import binary_report
 from forgelm.students import EmbeddingStudent, FineTunedStudent, TfidfStudent
 from forgelm.teachers import LocalLLMTeacher
 

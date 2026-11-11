@@ -7,7 +7,6 @@ path and torch's device queries are simulated with monkeypatch.
 import ast
 import importlib.util
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -85,14 +84,10 @@ def test_cpu_loads_float32(bridge, monkeypatch):
     assert plan["kwargs"] == {"torch_dtype": torch.float32}
 
 
-@pytest.mark.parametrize("filename,method", [
-    ("training_service.py", "_fine_tune_with_unsloth"),
-    ("training_service_core.py", "_train_with_unsloth"),
-])
-def test_both_loaders_use_the_plan_and_guard_kbit_preparation(filename, method):
-    source = (SERVICES / filename).read_text()
+def test_the_loader_uses_the_plan_and_guards_kbit_preparation():
+    source = (SERVICES / "training_service.py").read_text()
     func = next(n for n in ast.walk(ast.parse(source))
-                if isinstance(n, ast.FunctionDef) and n.name == method)
+                if isinstance(n, ast.FunctionDef) and n.name == "_fine_tune_with_unsloth")
     body = ast.get_source_segment(source, func)
     assert "causal_lm_load_plan(" in body
     # Every call to prepare_model_for_kbit_training sits under `if load_plan["kbit"]:`.

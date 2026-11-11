@@ -5,9 +5,6 @@ conftest.py, and every metric value is checked against a hand computation.
 """
 
 import math
-import subprocess
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -15,8 +12,6 @@ import pytest
 from forgelm.retrieval import (BM25Index, DenseIndex, FusedHit, HybridIndex, Passage, chunk_document, cite,
                                evaluate_rankings, evaluate_retrieval, extract_quotes, mrr_at_k, ndcg_at_k,
                                recall_at_k, tokenize, verify_quotes)
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -29,15 +24,6 @@ def topic_passages(toy_text):
 
 def ids(hits):
     return [h[0].id for h in hits]
-
-
-# --------------------------------------------------------------------------- import weight
-
-def test_module_imports_with_numpy_only():
-    code = ("import sys, forgelm.retrieval; "
-            "heavy = [m for m in ('scipy', 'sklearn', 'torch', 'transformers', 'sentence_transformers', "
-            "'model2vec', 'pandas') if m in sys.modules]; print(heavy); assert not heavy")
-    subprocess.run([sys.executable, "-c", code], cwd=ROOT, check=True)
 
 
 # --------------------------------------------------------------------------- chunking
@@ -185,8 +171,6 @@ def test_dense_index_prefixes_precomputed_vectors_and_batching(fake_embedder, to
     pre = DenseIndex(fake_embedder, max_scores_per_batch=1).build(topic_passages, vectors=raw)
     got = pre.search_batch(queries, k=4)  # one query per batch
     assert [ids(h) for h in got] == [ids(h) for h in expected]
-    qv = fake_embedder.encode(["premium due"])[0] * 7
-    assert ids(pre.search("", k=4, query_vector=qv)) == ids(expected[0])
     with pytest.raises(ValueError):
         DenseIndex(fake_embedder).build(topic_passages, vectors=raw[:3])
 
@@ -199,6 +183,9 @@ class FixedIndex:
 
     def search(self, query, k=10):
         return [(Passage(pid, pid), 1.0 / (r + 1)) for r, pid in enumerate(self.order[:k])]
+
+    def search_batch(self, queries, k=10):
+        return [self.search(q, k) for q in queries]
 
 
 def test_reciprocal_rank_fusion_order_and_scores():

@@ -3,7 +3,8 @@
 This document records what the platform was, what was found wrong with it,
 what was changed, and what is still owed. Research behind the decisions is in
 [RESEARCH.md](RESEARCH.md); measurements are in
-[../experiments/RESULTS.md](../experiments/RESULTS.md).
+[../experiments/RESULTS.md](../experiments/RESULTS.md); how to build and
+deploy the services is in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## 1. What the platform was
 
@@ -53,7 +54,8 @@ Found by reading the code. Items marked **fixed** were changed in this pass.
   and PiSSA layers (about 200 lines) that no code path called.
 - **Shadowed methods.** (fixed) `TrainingCore` defined
   `_detect_model_precision`, `_get_optimal_precision_settings` and
-  `_validate_precision_settings` twice each; 150 unreachable lines.
+  `_validate_precision_settings` twice each; 150 unreachable lines. The
+  whole class was later removed as unreachable (see Maintainability).
 - **`exec` is monkey-patched at import** to work around one Unsloth release
   (`training_service.py`, top of file). Left in place: it cannot be tested
   without that Unsloth version. Remove it once the pinned version is upgraded.
@@ -74,31 +76,64 @@ Found by reading the code. Items marked **fixed** were changed in this pass.
   Counting every byte-identical Python file of 20 lines or more, 13 groups of
   files were duplicated, about 11,000 of the 42,000 Python lines. (fixed: one
   installable package, `src/shared/llmforge_common`, holds each module once;
-  the 60 former copies are 13- to 17-line shims that keep every import path working,
-  and every service image installs the package. About 14,500 lines removed. A
+  the 60 former copies became 13- to 17-line shims that keep every import path
+  working (those nothing imported were later removed with the code in the next
+  bullet), and every service image that shares modules installs the package.
+  About 14,500 lines removed. A
   test fails if two byte-identical Python files of 20+ lines reappear.)
-  Near-duplicates that have genuinely diverged were left alone: the three
-  `model_service.py` files (80-90% similar), the training service's and the
-  orchestrator's `service_orchestrator.py`, the visualization service's
-  `research_logger.py`, and the data-generation service's `schemas.py`.
-  `model_pairs.yaml` still exists in five identical copies.
-- `training_service.py` and `training_service_core.py` implement the same
-  training flow twice, in-process and in a worker. (partly fixed: the five
-  helper methods that were word-for-word identical now live once in
-  `services/training_common.py`. Five same-named methods differ in behaviour
-  and stay separate; merging them needs a GPU to verify.)
-- The model loader in both training paths always used 4-bit bitsandbytes with
+  Near-duplicates that have genuinely diverged were left alone: the two
+  `model_service.py` files of the chat-comparison and model-management
+  services (80-90% similar), the visualization service's `research_logger.py`,
+  and the data-generation service's `schemas.py`. The training service's copy
+  of `service_orchestrator.py` is now a shim like the others, and the shared
+  module is only the `register_with_orchestrator` client the services call.
+- **Code nothing used.** (fixed: removed) The legacy top-level tree that no
+  image or import reached (`src/common/`, `src/utils/`, `src/config/`,
+  `config/model_pairs.yaml`, and `models/__init__.py` and `models/schemas.py`;
+  the `models/` directory stays as the model and cache mount); the training
+  service's own `model_service.py`, a chat-inference model cache it never
+  called, with its `model_pairs.yaml` copy and three shims only it imported;
+  the `src/shared/llmforge_contracts` package, which nothing installed or
+  imported; and the NVIDIA MPS suite (`scripts/setup_mps.sh`, `deploy_mps.sh`
+  and three Python helpers, `.env.mps`, `MPS_IMPLEMENTATION_GUIDE.md`), which
+  no compose file, image or service ran. A later pass removed more of the
+  same kind: a second Redis GPU-lock implementation (`GPUOrchestrator`) and
+  the unused `gpu_monitoring` module; the orchestrator's FastAPI app that was
+  built but never served; `model_config` and the last `model_pairs.yaml`
+  copies, which only dead methods read; gateway authentication and rate-limit
+  scaffolding that never ran, and an undocumented `/api/v1/agents` alias;
+  data-generation hooks for modules that never existed; requirements no image
+  installs or no code imports; a duplicate Kubernetes training manifest,
+  unused volume claims and deploy scripts for services that do not exist; and
+  settings nothing reads.
+- `training_service.py` and `training_service_core.py` implemented the same
+  training flow twice, in-process and in a worker. (fixed: nothing ever
+  started the worker, so `training_service_core.py` (`TrainingCore`) and
+  `training_worker.py` were removed as unused, and the in-process
+  `TrainingService` is the only path. The five helpers that had been copied
+  word for word stay in `services/training_common.py`, as a mixin
+  `TrainingService` inherits.)
+- The training model loader always used 4-bit bitsandbytes with
   `device_map="auto"`, whatever the hardware. (fixed: `causal_lm_load_plan` in
   the bridge keeps that for NVIDIA, and loads 16-bit on AMD unless quantising
   is asked for, and plain device dtype on Intel, Apple and CPU.)
 - No `pyproject.toml`, no root requirements file. (fixed: `pyproject.toml`)
 - `.gitignore` ignored every `test_*.py`, so no unit test could be committed.
-  The existing tests are integration scripts that need a running GPU stack.
-  (fixed for `tests/factory/`)
+  The existing tests were integration scripts that needed a running GPU stack,
+  and four of the five modules their runner imported were never committed.
+  (fixed: `tests/factory/` is the suite; the old runner was removed and the
+  live-stack load test is now `scripts/load_test_gpu.py`.)
 - `README.md` was UTF-16 and described a monolith (`app.py`,
   `fine_tuning.py`) that no longer exists. (fixed)
-- Seven fix-log documents at the repository root (`EXIT_CODE_139_FIX.md`,
-  `RTX_3050_4GB_SETUP.md` ...) and a 44 KB `issue.txt` log dump. Left in place.
+- Clutter at the repository root: six fix-log and setup notes for one
+  RTX 3050 laptop (`EXIT_CODE_139_FIX.md`, `RTX_3050_4GB_SETUP.md` ...), two
+  older deployment guides, `issue.txt` (a 44 KB prompt asking an AI agent to
+  build the MPS GPU sharing, not a log), an empty `error.txt` and a Postman
+  collection for the legacy routes; also a static design mockup
+  (`frontend/style.html`) and a data-preparation guide only an unrendered
+  component linked to. (fixed: removed; several contradicted the compose
+  files or pointed at scripts that no longer existed. What is still true is
+  in [DEPLOYMENT.md](DEPLOYMENT.md). Git history keeps the originals.)
 
 ## 3. What it is now
 
@@ -193,7 +228,8 @@ without any of them.
 | training-service changes | unit tests with stubbed GPU libraries. **Not run end to end**: no GPU, Unsloth or Redis here |
 | Shared package and images | base and gateway images built and run; the Debian `apt` layer could not run here (package mirror blocked by this sandbox's network policy), so images that need it were built without it |
 | ML images (CUDA base) | Dockerfiles linted only, **not built** |
-| Kubernetes manifest for factory-service | YAML validated, **not applied** to a cluster |
+| Kubernetes manifest, compose settings and `.env.example` for factory-service | YAML validated, **not applied** to a cluster |
+| Apple MLX training path (`forgelm.finetune`) | MLX-LM command and data generated and tested; the MLX run itself needs a Mac, **not run** |
 | Backend selection and loading for NVIDIA / AMD / Apple / Intel | tested against simulated devices, **not on real hardware** |
 | Front end | the Factory page type-checks and renders with mocked API responses in a headless browser. The project's `npm run build` still fails on 75 TypeScript errors in older files, none in the Factory code |
 
@@ -219,11 +255,23 @@ most:
   any model id a request named.
 - Two experiments compared numbers computed under different settings.
 
-The completion work in section 5 went through the same process: each
+Later completion work (shared package, training helpers, loading plan,
+finetune and GGUF, retrieval and gate, Factory page, deployment) went
+through the same process: each
 workstream was built by one agent, checked by an independent reviewer, and
 repaired and re-checked where the reviewer found a real problem (two needed
 that: a timing figure that was a total rather than a per-item value, and a
 results table that could show predictions from an earlier request).
+
+An over-engineering review then went through the whole repository from four
+angles (core package; services and infrastructure; experiments and tests;
+documentation), with a separate reviewer arguing for keeping each item before
+anything was removed. About 21,000 lines went: code nothing reached, copies,
+speculative scaffolding, stale documents and settings nothing read. Removals
+were applied in seven workstreams and checked the same way. The things the
+review kept on purpose: `forgelm.dryrun` (the planner tells users to run it,
+and its device branches guard real measurement errors), the evidence registry
+and evaluation gates, and the `.claude/agents` prompts.
 
 Known and not fixed: cancelling a job that is already running sets a flag
 but does not stop the trainer thread (stopping it cleanly needs changes to
@@ -231,19 +279,7 @@ the trainer callbacks that cannot be tested without a GPU). Log streaming now
 waits off the event loop, but each open stream holds a worker thread for up
 to a second at a time.
 
-## 5. What was owed, and where it stands
-
-| Item | Status |
-|---|---|
-| De-duplicate the services | done (`llmforge_common`); near-duplicates listed above remain |
-| Collapse the two training implementations | partly: identical helpers shared; behaviour-different methods left for a GPU-verified pass |
-| Vendor-aware hardware handling and a measured dry run | done in `hardware_detection.py`, the bridge's loading plan and `forgelm.dryrun`; simulated devices only |
-| Apple Silicon training path and GGUF export | done as `forgelm.finetune` (MLX-LM command and data; the MLX run itself needs a Mac) and `forgelm.gguf` with a chat-template round-trip check |
-| Front end for the factory | done (Factory page) |
-| Prompting and retrieval baselines before fine-tuning | done in-house and small: few-shot prompting with retrieved demonstrations, a statistical gate, and BM25 / dense / hybrid retrieval. No DSPy-style prompt optimiser and no reranker |
-| Deployment of the factory service | done: Kubernetes manifest, compose settings, `.env.example` |
-
-## 6. Still owed, in order
+## 5. Still owed, in order
 
 1. **Run the training service on a real GPU** before merging to a release
    branch: confirm a job request returns at once, a `dora` request trains an
@@ -252,12 +288,29 @@ to a second at a time.
 2. **Rebuild and push every image**, base images first (`docker compose build
    base ml-base`, then the services). The training service image only works
    with a rebuilt image now that its shared modules come from `llmforge_common`.
-3. **Merge the remaining duplicated training methods** once item 1 gives a
-   way to verify them.
-4. **Real BFSI evaluation data.** Label a few hundred reviewed call
+3. **Real BFSI evaluation data.** Label a few hundred reviewed call
    utterances, including ASR transcripts and Hinglish, and replace the
    illustrative seed set. Nothing in the BFSI pack has been validated on real
    calls.
-5. **Prompt optimisation** (for example DSPy) and a **reranker** for
+4. **Prompt optimisation** (for example DSPy) and a **reranker** for
    retrieval, if E8 and E9 show the simple baselines fall short.
-6. **Fix the 75 pre-existing TypeScript errors** so the front end builds.
+5. **Fix the 75 pre-existing TypeScript errors** so the front end builds.
+6. **Bugs the over-engineering review found and left alone**, because fixing
+   them changes behaviour:
+   - The gateway registers `/services`, `/routes`, `/metrics` and
+     `/api/v1/status/overview` after its catch-all routes, so they are never
+     reached. The front end's system-health call and the Prometheus scrape of
+     the gateway depend on them. Moving the four handlers above the catch-all
+     routes fixes it.
+   - The training service always reports `active_jobs` as 0 in `/health` and
+     in the `active_training_jobs` gauge. Use
+     `len(training_service.active_trainings)` instead.
+   - `orchestrator/main.py` calls `deregister_service`,
+     `add_websocket_connection`, `remove_websocket_connection` and
+     `release_connection`, which do not exist, so those paths raise
+     `AttributeError`.
+   - The data-generation service's websocket sends pass a string to a
+     Starlette `send()` that expects a dict.
+   - `deploy-windows.ps1` checks the GPU with the image tag
+     `nvidia/cuda:12.8-base-ubuntu22.04`, which is probably not a real tag
+     (`12.8.0-base-...`), so the check silently degrades to a warning.

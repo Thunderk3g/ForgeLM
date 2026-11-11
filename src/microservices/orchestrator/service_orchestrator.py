@@ -19,10 +19,7 @@ from dataclasses import dataclass, asdict, field
 from enum import Enum
 from datetime import datetime, timedelta
 import aiohttp
-import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+from fastapi import WebSocket
 import weakref
 
 # Try Redis import, make it optional

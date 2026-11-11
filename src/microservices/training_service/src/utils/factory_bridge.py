@@ -178,41 +178,6 @@ def estimate_memory_gb(params_billion: float, bits: int = 16, batch_size: int = 
     return _generative.estimate_memory_gb(params_billion, bits, batch_size, seq_len)
 
 
-def training_dry_run(model, tokenizer_or_vocab_size=None, batch_size: int = 1, seq_len: int = 1024, steps: int = 3,
-                     device: Optional[str] = None, lora: Optional[Dict[str, Any]] = None,
-                     available_gb: Optional[float] = None, params_billion: Optional[float] = None,
-                     restore: bool = True) -> Dict[str, Any]:
-    """Measure what a few real training steps cost on a loaded model.
-
-    The memory figures the service plans with are estimates. This runs
-    ``steps`` real optimisation steps on synthetic token ids, at the batch
-    size and sequence length the job will use, and returns the estimate, the
-    measurement and the verdict together (see ``forgelm.dryrun``):
-
-        {"available": True, "estimate": {...}, "measurement": {...},
-         "available_gb": ..., "measured_fits": True, "verdict": "fits", ...}
-
-    ``model`` is the loaded model, with its adapter already attached if there
-    is one, or a Hugging Face id to load for the measurement only. With
-    ``restore`` (the default here) the trainable weights are put back
-    afterwards, so the model the job goes on to train is the model it loaded.
-
-    Returns ``{"available": False, "reason": ...}`` when forgelm, or the
-    ``forgelm.dryrun`` module, is not installed in this image.
-    """
-    if not FORGELM_AVAILABLE:
-        return {"available": False, "reason": "forgelm package not installed in this image"}
-    try:
-        from forgelm import dryrun
-    except Exception as exc:  # an older forgelm without the module
-        return {"available": False, "reason": f"forgelm.dryrun is not available: {exc}"}
-
-    measurement = dryrun.measure_training_memory(model, tokenizer_or_vocab_size, batch_size, seq_len, steps=steps,
-                                                 device=device, lora=lora, restore=restore)
-    report = dryrun.compare_with_estimate(measurement, available_gb=available_gb, params_billion=params_billion)
-    return {"available": True, **report}
-
-
 def _detector_warnings() -> List[str]:
     """Vendor warnings from the service's own hardware detector, or [] if it cannot be asked.
 

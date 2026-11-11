@@ -143,3 +143,38 @@ def test_document_qa_recommends_retrieval_not_fine_tuning():
 def test_unknown_task_kind_rejected():
     with pytest.raises(ValueError):
         TaskSpec(kind="image_generation")
+
+
+def test_every_forgelm_module_imports_with_numpy_only():
+    """CLAUDE.md: forgelm/ must import with only numpy installed. A child process imports every module
+    while any import of a heavy package is recorded and refused, so both an unconditional import and a
+    guarded ``try: import scipy`` at module level fail the test."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code = (
+        "import sys\n"
+        "HEAVY = {'torch', 'transformers', 'peft', 'psutil', 'sklearn', 'scipy', 'pandas', 'sentence_transformers',\n"
+        "         'model2vec', 'llama_cpp', 'gguf', 'jinja2', 'tokenizers', 'huggingface_hub', 'onnxruntime',\n"
+        "         'lightgbm', 'interpret', 'tabicl'}\n"
+        "tried = []\n"
+        "class Block:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name.split('.')[0] in HEAVY:\n"
+        "            tried.append(name.split('.')[0])\n"
+        "            raise ImportError('blocked ' + name)\n"
+        "sys.meta_path.insert(0, Block())\n"
+        "import importlib, pkgutil, forgelm\n"
+        "for m in pkgutil.walk_packages(forgelm.__path__, 'forgelm.'):\n"
+        "    if not m.name.endswith('__main__'):\n"
+        "        importlib.import_module(m.name)\n"
+        "import forgelm.cli, forgelm.dryrun as d\n"
+        "assert d.fits(1.0, 2.0) and d.dtype_name_for('mps') == 'float16'\n"
+        "forgelm.cli.build_parser().parse_args(['export-gguf', '--model', 'm', '--out', 'o'])\n"
+        "assert not tried, tried\n"
+        "print('ok')\n")
+    root = Path(__file__).resolve().parents[2]
+    done = subprocess.run([sys.executable, "-c", code], cwd=str(root), capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "ok"

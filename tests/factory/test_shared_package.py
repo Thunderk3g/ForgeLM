@@ -6,8 +6,8 @@ one copy, in ``src/shared/llmforge_common``, and each old file is a shim of a fe
 lines that makes the old import path resolve to the package module. Three things
 keep that true:
 
-(a) no two Python files of 20 lines or more under ``src/`` or ``models/`` are
-    byte-identical, so a copy cannot quietly come back;
+(a) no two Python files of 20 lines or more under ``src/`` are byte-identical, so
+    a copy cannot quietly come back;
 (b) every shim names a module that exists in the package;
 (c) loaded the way a service loads it (the service's ``src`` directory first on
     ``sys.path``), each shim *is* the package module and has the names the service
@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PACKAGE_ROOT = ROOT / "src" / "shared" / "llmforge_common"
 PACKAGE_DIR = PACKAGE_ROOT / "llmforge_common"
 SERVICES_DIR = ROOT / "src" / "microservices"
-SCAN_DIRS = ("src", "models")
+SCAN_DIRS = ("src",)
 
 # A shim is 13 to 17 lines, and the shims for one module are identical to each
 # other by design. Twenty lines is the smallest file that counts as a real copy.
@@ -54,7 +54,7 @@ _NOT_SOURCE = {"__pycache__", "build", "dist", "node_modules", ".git"}
 
 @functools.lru_cache(maxsize=None)
 def _python_files():
-    """Every Python source file under src/ and models/: tracked, or new and not ignored.
+    """Every Python source file under src/: tracked, or new and not ignored.
 
     New files are included so a copy is caught before it is committed, not after.
     Without git (a source archive, a container) the directories are walked instead.
@@ -100,7 +100,7 @@ def test_duplicate_detector_counts_only_files_of_twenty_lines_or_more(tmp_path):
     assert [[p.name for p in group] for group in groups] == [["a.py", "b.py"]]
 
 
-def test_no_two_python_files_under_src_or_models_are_byte_identical():
+def test_no_two_python_files_under_src_are_byte_identical():
     files = _python_files()
     # The services alone hold more than this; a listing that comes back nearly
     # empty means the scan is broken, and an empty scan would pass for no reason.
@@ -116,7 +116,7 @@ def test_no_two_python_files_under_src_or_models_are_byte_identical():
 
 @functools.lru_cache(maxsize=None)
 def _shims():
-    """(path, package module name) for every shim under src/ and models/."""
+    """(path, package module name) for every shim under src/."""
     found = []
     for path in _python_files():
         if PACKAGE_ROOT in path.parents:
@@ -165,13 +165,10 @@ def _import_roots():
     """Where each tree's absolute imports start: name -> directories put first on sys.path.
 
     A service runs as ``python src/main.py`` (or ``python main.py`` inside src), so
-    its ``src`` directory is ``sys.path[0]``. The legacy top-level copies were
-    written for a process started at the repository root with ``src`` importable.
+    its ``src`` directory is ``sys.path[0]``.
     """
-    roots = {service.name: (service / "src",)
-             for service in sorted(SERVICES_DIR.iterdir()) if (service / "src").is_dir()}
-    roots["legacy"] = (ROOT / "src", ROOT)
-    return roots
+    return {service.name: (service / "src",)
+            for service in sorted(SERVICES_DIR.iterdir()) if (service / "src").is_dir()}
 
 
 def _dotted(path, roots):
@@ -179,11 +176,6 @@ def _dotted(path, roots):
     for root in roots:
         if root in path.parents:
             parts = path.relative_to(root).with_suffix("").parts
-            # src/microservices and src/shared are not import packages of the legacy tree.
-            if root == ROOT / "src" and parts[0] in ("microservices", "shared", "docker"):
-                return None
-            if root == ROOT and parts[0] != "models":
-                return None
             return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
     return None
 
@@ -254,9 +246,9 @@ for name, (target, names) in plan.items():
         for part in name.split(".")[1:]:
             attribute = getattr(attribute, part)
         # "import a.b" leaves a.b as an attribute of a. That is the module, unless
-        # a/__init__.py rebinds the name: the legacy config/__init__.py does
-        # "from .settings import settings", so config.settings is the settings
-        # object there, as it was before the move.
+        # a/__init__.py rebinds the name: a config/__init__.py that does
+        # "from .settings import settings" makes config.settings the settings
+        # object, as it was before the move.
         leaf = name.split(".")[-1]
         attribute_ok = attribute is impl or attribute is getattr(impl, leaf, None)
         missing = []
@@ -281,9 +273,8 @@ print("\n@@RESULT@@" + json.dumps(results))
 @functools.lru_cache(maxsize=None)
 def _load_tree(tree_name):
     roots = _import_roots()[tree_name]
-    # Some of these modules act on import (research_logger creates logs/research,
-    # model_config looks for config/model_pairs.yaml), all relative to the working
-    # directory. An empty temporary directory keeps that out of the repository.
+    # research_logger acts on import (it creates logs/research) relative to the
+    # working directory. An empty temporary directory keeps that out of the repository.
     with tempfile.TemporaryDirectory(prefix="llmforge_shim_") as workdir:
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         done = subprocess.run(
@@ -301,14 +292,6 @@ def _is_first_party(module_name, roots):
     return top == "llmforge_common" or any((root / top).is_dir() or (root / f"{top}.py").is_file() for root in roots)
 
 
-# The legacy top-level ``models`` package could never be imported: models/__init__.py
-# does ``from .entities import *`` and there has never been a models/entities.py.
-# That was so before the shims and is not theirs to fix. The first import of
-# ``models`` fails that way; a later ``from models.schemas import ...`` in the same
-# process can succeed, because the submodule is already in sys.modules by then. So
-# for these two legacy names the old failure is accepted, and a load is checked.
-_LEGACY_ALREADY_BROKEN = {"models.schemas": "models.entities", "utils.research_logger": "models.entities"}
-
 _LOAD_CASES = [(tree, name) for tree, shims in _shim_plan().items() for name in shims]
 
 
@@ -320,9 +303,6 @@ def test_shim_loads_as_the_package_module_with_the_names_the_service_imports(tre
 
     missing_module = result.get("missing_module")
     if missing_module:
-        if tree == "legacy" and _LEGACY_ALREADY_BROKEN.get(name) == missing_module:
-            pytest.skip(f"legacy {name}: models/__init__.py imports models/entities.py, which never existed; "
-                        "it failed the same way before the move")
         top = missing_module.split(".")[0]
         if not _is_first_party(missing_module, roots) and importlib.util.find_spec(top) is None:
             # The import may be the module's own or one made by the service package

@@ -25,7 +25,7 @@ import time
 
 import numpy as np
 
-from common import ARTIFACTS, load_banking77, rounded, stratified_sample, write_result
+from common import ARTIFACTS, e2_draws, load_banking77, rounded, stratified_sample, write_result
 from forgelm.distill import distill
 from forgelm.metrics import classification_report
 from forgelm.students import Embedder, EmbeddingStudent, ZeroShotStudent
@@ -38,9 +38,7 @@ parser.add_argument("--teacher", default="Qwen/Qwen2.5-1.5B-Instruct")
 args = parser.parse_args()
 
 train, test, names = load_banking77()
-rng = np.random.default_rng(7)
-pool_idx = np.sort(rng.choice(len(train), size=args.pool, replace=False))
-anchor_idx = np.sort(rng.choice(len(test), size=args.anchor, replace=False))
+pool_idx, anchor_idx = e2_draws(len(train), len(test), args.pool, args.anchor)
 pool_texts, pool_y = [train.text.iloc[i] for i in pool_idx], train.label.values[pool_idx]
 anchor_texts, anchor_y = [test.text.iloc[i] for i in anchor_idx], test.label.values[anchor_idx]
 descriptions = [n.replace("_", " ") for n in names]

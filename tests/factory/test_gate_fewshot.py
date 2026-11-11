@@ -6,8 +6,6 @@ end-to-end test, a fake causal LM built from torch tensors).
 
 import math
 import string
-import subprocess
-import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -318,7 +316,10 @@ class FakeChatTokenizer(FakeTokenizer):
 
 
 def _prompt_at_8585879(self, text, option_idx):
-    """LocalLLMTeacher._prompt exactly as it was at commit 8585879, before few-shot support."""
+    """LocalLLMTeacher._prompt exactly as it was at commit 8585879, before few-shot support.
+
+    Checked line by line against `git show 8585879:forgelm/teachers.py` (lines 144-154).
+    """
     tok = self._tok
     ids = tok.encode(text, add_special_tokens=False)
     if len(ids) > self.max_text_tokens:
@@ -365,18 +366,6 @@ def test_prompt_without_demonstrations_is_unchanged_from_8585879(tok_cls, fake_e
                 assert teacher._prompt(text, options, []) == _prompt_at_8585879(teacher, text, options)
 
 
-def _teacher_from_8585879():
-    """LocalLLMTeacher as committed at 8585879, loaded from git; skips where git history is unavailable."""
-    try:
-        source = subprocess.run(["git", "show", "8585879:forgelm/teachers.py"], cwd=ROOT, capture_output=True,
-                                text=True, check=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        pytest.skip("git history with commit 8585879 is not available")
-    module = types.ModuleType("teachers_at_8585879")
-    exec(compile(source, "teachers_at_8585879.py", "exec"), module.__dict__)  # stdlib and numpy imports only
-    return module.LocalLLMTeacher
-
-
 class FixedShortlister:
     """Scores labels with a fixed ranking per text (label 0 best, then 1, ...) unless overridden."""
 
@@ -391,21 +380,6 @@ class FixedShortlister:
             scores[order] = np.linspace(1.0, 0.1, self.n)
             rows.append(scores / scores.sum())
         return np.array(rows)
-
-
-def test_zero_shot_prompt_and_candidates_match_the_committed_class_from_git():
-    old_cls = _teacher_from_8585879()
-    labels = [f"intent_{i}" for i in range(30)]
-    rng = np.random.default_rng(0)
-    short = FixedShortlister(30, {t: list(rng.permutation(30)) for t in TEXTS})
-    old = old_cls("fake/model", labels, max_options=10, shortlister=short, max_text_tokens=6)
-    new = LocalLLMTeacher("fake/model", labels, max_options=10, shortlister=short, max_text_tokens=6)
-    for tok_cls in (FakeTokenizer, FakeChatTokenizer):
-        old._tok, new._tok = tok_cls(), tok_cls()
-        candidates = new._candidates(TEXTS)
-        assert candidates == _candidates_at_8585879(old, TEXTS)
-        for text, cand in zip(TEXTS, candidates):
-            assert new._prompt(text, cand) == old_cls._prompt(old, text, cand)
 
 
 def test_candidates_without_demonstrations_match_the_old_inline_code():

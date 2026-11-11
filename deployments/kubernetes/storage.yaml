@@ -72,60 +72,6 @@ spec:
       storage: 200Gi
 
 ---
-# Comparison Service Data PVC
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: comparison-data-pvc
-  namespace: llmforge
-  labels:
-    app: llmforge-chat-comparison
-    component: storage
-spec:
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 50Gi
-
----
-# Data Generation PVC
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: generation-data-pvc
-  namespace: llmforge
-  labels:
-    app: llmforge-data-generation
-    component: storage
-spec:
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 100Gi
-
----
-# Visualization Data PVC
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: visualization-data-pvc
-  namespace: llmforge
-  labels:
-    app: llmforge-visualization
-    component: storage
-spec:
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 50Gi
-
----
 # Prometheus Data PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -162,24 +108,6 @@ spec:
       storage: 10Gi
 
 ---
-# Redis Data PVC
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: redis-data-pvc
-  namespace: llmforge
-  labels:
-    app: redis
-    component: cache
-spec:
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 20Gi
-
----
 # Storage Classes
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -211,37 +139,3 @@ parameters:
 allowVolumeExpansion: true
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
-
----
-# Shared model storage for read-only base models
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: shared-model-storage-pvc
-  namespace: llmforge
-  labels:
-    component: shared-storage
-spec:
-  accessModes:
-  - ReadOnlyMany
-  storageClassName: fast-ssd
-  resources:
-    requests:
-      storage: 1Ti
-
----
-# Backup storage for critical data
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: backup-storage-pvc
-  namespace: llmforge
-  labels:
-    component: backup
-spec:
-  accessModes:
-  - ReadWriteOnce
-  storageClassName: standard
-  resources:
-    requests:
-      storage: 2Ti

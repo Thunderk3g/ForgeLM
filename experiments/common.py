@@ -68,6 +68,30 @@ def stratified_sample(labels: np.ndarray, per_class: int, rng: np.random.Generat
     return np.array(sorted(idx))
 
 
+# Display names of the E1 students. report.py joins E1's rows to the E1/E1c serving rows on these strings.
+STUDENT_LABELS = {"tfidf": "tfidf + LR", "static": "static potion-32M + LR", "encoder": "frozen bge-small + LR",
+                  "finetuned": "fine-tuned MiniLM-L6 (22M)", "modernbert": "fine-tuned ModernBERT-base (149M)"}
+
+
+def banking77_anchor(labels: np.ndarray) -> np.ndarray:
+    """The Banking77 calibration anchor: 5 training texts per class, seed 1234.
+
+    E1 saves anchor probabilities for this draw, and E5 fits temperatures on them against these labels.
+    """
+    return stratified_sample(labels, 5, np.random.default_rng(1234))
+
+
+def e2_draws(n_train: int, n_test: int, pool: int = 2000, anchor: int = 1000) -> tuple[np.ndarray, np.ndarray]:
+    """E2's draws, seed 7: the unlabelled training pool first, then the test anchor, both sorted.
+
+    E8 reuses E2's cached teacher labels, so it must get the same anchor items.
+    """
+    rng = np.random.default_rng(7)
+    pool_idx = np.sort(rng.choice(n_train, size=pool, replace=False))
+    anchor_idx = np.sort(rng.choice(n_test, size=anchor, replace=False))
+    return pool_idx, anchor_idx
+
+
 def environment() -> dict:
     """Hardware and package versions, stored with every result file."""
     from forgelm.hardware import probe
@@ -81,9 +105,12 @@ def environment() -> dict:
             "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"}
 
 
-def write_result(name: str, payload: dict) -> Path:
+def write_result(name: str, payload: dict, smoke: bool = False, warning: str | None = None) -> Path:
     payload = dict(payload, environment=environment(), generated_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    path = RESULTS / f"{name}.json"
+    if warning:
+        payload["warning"] = warning
+    # Smoke output never goes to RESULTS: the evidence registry treats results/ as measured.
+    path = (ARTIFACTS / f"{name}_smoke.json") if smoke else (RESULTS / f"{name}.json")
     path.write_text(json.dumps(payload, indent=2, default=float))
     print(f"wrote {path}")
     return path

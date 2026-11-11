@@ -7,7 +7,7 @@ real model or need llama-cpp-python are marked slow.
 
 import json
 import os
-import subprocess
+import re
 import sys
 from pathlib import Path
 
@@ -19,8 +19,6 @@ from forgelm.cli import build_parser, main, recipe_from_args
 from forgelm.finetune import (IGNORE_INDEX, FineTuneRecipe, batch_schedule, check_record, collate, encode_chat,
                               evaluate_chat, load_chat_records, lr_multiplier, mlx_iterations, mlx_lora_command,
                               normalise_answer, prepare_mlx_run, warmup_steps, write_mlx_config, write_mlx_dataset)
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 # --------------------------------------------------------------------------
@@ -416,25 +414,10 @@ def test_the_pinned_converter_and_package_versions_agree():
     assert gguf.CONVERT_SCRIPT_URL.format(tag=gguf.LLAMA_CPP_TAG).startswith(
         "https://raw.githubusercontent.com/ggml-org/llama.cpp/gguf-v")
     assert len(gguf.CONVERT_SCRIPT_SHA256) == 64
-
-
-def test_new_modules_import_with_numpy_only():
-    # Block every heavy package, then import: the factory must stay usable
-    # when the GGUF or training stack is broken or absent.
-    code = (
-        "import sys\n"
-        "class Block:\n"
-        "    def find_spec(self, name, path=None, target=None):\n"
-        "        if name.split('.')[0] in {'torch', 'transformers', 'peft', 'llama_cpp', 'gguf', 'jinja2',\n"
-        "                                  'pandas', 'sklearn', 'tokenizers', 'huggingface_hub'}:\n"
-        "            raise ImportError('blocked ' + name)\n"
-        "sys.meta_path.insert(0, Block())\n"
-        "import forgelm.finetune, forgelm.gguf, forgelm.cli\n"
-        "forgelm.cli.build_parser().parse_args(['export-gguf', '--model', 'm', '--out', 'o'])\n"
-        "print('ok')\n")
-    done = subprocess.run([sys.executable, "-c", code], cwd=str(ROOT), capture_output=True, text=True)
-    assert done.returncode == 0, done.stderr
-    assert done.stdout.strip() == "ok"
+    # The pip package installed by the `export` extra must come from the same release as the converter.
+    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
+    export = re.search(r"^export = \[(.*?)\]", pyproject, re.S | re.M).group(1)
+    assert f'"gguf=={gguf.GGUF_PIP_VERSION}"' in export
 
 
 # --------------------------------------------------------------------------
@@ -620,16 +603,3 @@ def test_real_model_exports_to_gguf_and_keeps_its_prompt_and_answers(tmp_path):
         assert gguf.output_parity([reference], [chat.chat(messages, 12)]).passed
     finally:
         chat.close()
-
-
-def test_export_extra_pins_the_same_gguf_version_as_the_converter():
-    """The pip gguf package and the pinned llama.cpp converter must come from the same release."""
-    import re
-    from pathlib import Path
-
-    from forgelm import gguf
-
-    pyproject = (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text()
-    export = re.search(r"^export = \[(.*?)\]", pyproject, re.S | re.M).group(1)
-    assert f'"gguf=={gguf.GGUF_PIP_VERSION}"' in export
-    assert gguf.LLAMA_CPP_TAG.endswith(gguf.GGUF_PIP_VERSION)

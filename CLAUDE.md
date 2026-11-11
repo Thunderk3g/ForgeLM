@@ -7,6 +7,7 @@ Read `docs/ARCHITECTURE.md` first.
 ## Commands
 
 - Tests (no GPU, network or model downloads): `python -m pytest tests/factory -q`
+- Load test against a running stack: `python scripts/load_test_gpu.py` (needs aiohttp)
 - Slow tests that download a small model: `python -m pytest tests/factory -q -m slow`
 - Hardware report: `python -m forgelm doctor`
 - Experiments: `bash experiments/run_all.sh` (skips steps whose result file exists; `FORCE=1` re-runs),
@@ -16,7 +17,8 @@ Read `docs/ARCHITECTURE.md` first.
 ## Conventions
 
 - `forgelm/` must import with only numpy installed. Import torch, transformers,
-  scikit-learn and the rest inside the function that needs them.
+  scikit-learn and the rest inside the function that needs them
+  (`tests/factory/test_planner.py` checks every module).
 - Every planner rule cites an entry in `forgelm/evidence.py`. An entry may be
   `measured` only if its result file exists in `experiments/results/`; a test
   enforces this. Do not write a measured claim before the experiment has run.
@@ -33,13 +35,13 @@ Read `docs/ARCHITECTURE.md` first.
 
 - Modules the services share live once, in `src/shared/llmforge_common`. The
   same-named files under `src/microservices/*/src/{common,utils,services,models,config}`
-  and `src/{common,utils,config}` are short shims that import it: edit the
-  package, not the shims. A test fails if byte-identical copies reappear.
-- Near-duplicates that have diverged remain: the three `model_service.py` files,
-  the training service's and the orchestrator's `service_orchestrator.py`, the
-  visualization `research_logger.py`, the data-generation `schemas.py`, and the
-  two training paths (`training_service.py`, `training_service_core.py`; shared
-  helpers in `services/training_common.py`). `model_pairs.yaml` still exists in
-  five identical copies: change all or none.
+  are short shims that import it: edit the package, not the shims. A test fails
+  if byte-identical copies reappear.
+- Near-duplicates that have diverged remain: the two `model_service.py` files
+  (chat-comparison and model-management), the visualization `research_logger.py`
+  and the data-generation `schemas.py`. The training service has one training
+  path, `TrainingService`; its argument helpers are in `services/training_common.py`.
 - GPU training paths cannot be run in a CPU-only environment. Say so when
   changing them.
+- Known bugs, deliberately left unfixed because fixing them changes behaviour,
+  are listed in `docs/ARCHITECTURE.md` section 5.

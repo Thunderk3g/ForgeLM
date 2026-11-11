@@ -52,21 +52,6 @@ spec:
             configMapKeyRef:
               name: llmforge-config
               key: ORCHESTRATOR_URL
-        - name: LOG_LEVEL
-          valueFrom:
-            configMapKeyRef:
-              name: llmforge-config
-              key: LOG_LEVEL
-        - name: RATE_LIMIT_REQUESTS_PER_MINUTE
-          valueFrom:
-            configMapKeyRef:
-              name: api-gateway-config
-              key: RATE_LIMIT_REQUESTS_PER_MINUTE
-        - name: CORS_ORIGINS
-          valueFrom:
-            configMapKeyRef:
-              name: api-gateway-config
-              key: CORS_ORIGINS
         resources:
           requests:
             cpu: "200m"
@@ -168,18 +153,6 @@ spec:
   selector:
     matchLabels:
       app: llmforge-api-gateway
-
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: api-gateway-config
-  namespace: llmforge
-data:
-  RATE_LIMIT_REQUESTS_PER_MINUTE: "1000"
-  CORS_ORIGINS: "*"
-  REQUEST_TIMEOUT_SECONDS: "30"
-  MAX_REQUEST_SIZE_MB: "10"
 
 ---
 apiVersion: networking.k8s.io/v1

@@ -282,12 +282,6 @@ EVIDENCE: Dict[str, dict] = {
 }
 
 
-def cite(key: str) -> dict:
-    if key not in EVIDENCE:
-        raise KeyError(f"unknown evidence key {key!r}")
-    return dict(EVIDENCE[key], key=key)
-
-
 def weakest_level(keys) -> str:
     """The weakest evidence level among ``keys`` (a chain is as strong as that)."""
     if not keys:

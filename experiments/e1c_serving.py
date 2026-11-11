@@ -14,17 +14,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from common import ARTIFACTS, load_banking77, rounded, write_result
+from common import ARTIFACTS, STUDENT_LABELS, load_banking77, rounded, write_result
 from forgelm.bench import benchmark, directory_size_mb
 from forgelm.students import load_student
 
 train, test, names = load_banking77()
 texts, y = test.text.tolist(), test.label.values
 bench_texts = texts[:400]
-labels_of = {"tfidf": "tfidf + LR", "static": "static potion-32M + LR", "encoder": "frozen bge-small + LR",
-             "finetuned": "fine-tuned MiniLM-L6 (22M)", "modernbert": "fine-tuned ModernBERT-base (149M)"}
 serving = []
-for key, label in labels_of.items():
+for key, label in STUDENT_LABELS.items():
     directory = ARTIFACTS / f"e1_{key}"
     if not (directory / "student.json").exists():
         print(f"skip {label}: {directory} not found")

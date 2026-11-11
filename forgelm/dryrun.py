@@ -37,9 +37,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 GIB = 1024**3
 
-# Share of unified memory budgeted for a model on Apple Silicon. The same
-# figure forgelm.generative.select_backend uses.
-MPS_MEMORY_FRACTION = 0.65
+from .generative import MPS_MEMORY_FRACTION  # one budget for unified memory, shared with select_backend
 
 
 # --------------------------------------------------------------------------

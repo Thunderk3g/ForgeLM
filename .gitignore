@@ -5,9 +5,8 @@
 # =============================================================================
 
 # Downloaded models (can be very large) - only ignore in root directory
-/models/
-/models/base/
-/models/finetuned/
+/models/*
+!/models/.gitkeep
 
 # Dataset files
 data/input/

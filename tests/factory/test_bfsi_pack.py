@@ -1,6 +1,5 @@
 from collections import Counter
 
-import pytest
 
 from forgelm.evidence import EVIDENCE
 from forgelm.packs import bfsi

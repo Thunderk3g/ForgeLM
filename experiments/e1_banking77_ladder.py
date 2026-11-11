@@ -22,9 +22,9 @@ import time
 
 import numpy as np
 
-from common import ARTIFACTS, environment, load_banking77, rounded, stratified_sample, write_result
+from common import ARTIFACTS, STUDENT_LABELS, banking77_anchor, load_banking77, rounded, stratified_sample, write_result
 from forgelm.bench import benchmark, directory_size_mb
-from forgelm.metrics import apply_temperature, classification_report, expected_calibration_error, fit_temperature
+from forgelm.metrics import apply_temperature, classification_report, fit_temperature
 from forgelm.students import Embedder, EmbeddingStudent, FineTunedStudent, TfidfStudent, ZeroShotStudent
 
 parser = argparse.ArgumentParser()
@@ -36,8 +36,7 @@ args = parser.parse_args()
 
 train, test, names = load_banking77()
 y_all = train.label.values
-rng0 = np.random.default_rng(1234)
-anchor_idx = stratified_sample(y_all, 5, rng0)
+anchor_idx = banking77_anchor(y_all)
 pool_idx = np.setdiff1d(np.arange(len(train)), anchor_idx)
 texts_all = train.text.tolist()
 anchor_texts, anchor_y = [texts_all[i] for i in anchor_idx], y_all[anchor_idx]
@@ -137,8 +136,6 @@ if args.only_modernbert:
 
 # ---- serving cost on the full-data students ---------------------------------
 serving = []
-labels_of = {"tfidf": "tfidf + LR", "static": "static potion-32M + LR", "encoder": "frozen bge-small + LR",
-             "finetuned": "fine-tuned MiniLM-L6 (22M)", "modernbert": "fine-tuned ModernBERT-base (149M)"}
 for key, (student, p_test) in saved.items():
     out_dir = ARTIFACTS / f"e1_{key}"
     student.save(str(out_dir))
@@ -149,7 +146,7 @@ for key, (student, p_test) in saved.items():
     note = ""
     if key in ("static", "encoder"):
         note = "size is the classifier head only; the shared embedding model is separate"
-    serving.append({"student": labels_of[key], "artefact_mb": round(size, 2), "note": note, **rounded(b, 3)})
+    serving.append({"student": STUDENT_LABELS[key], "artefact_mb": round(size, 2), "note": note, **rounded(b, 3)})
     print(serving[-1], flush=True)
 
 write_result("e1b_modernbert_full" if args.only_modernbert else "e1_banking77_ladder", {

@@ -1,4 +1,4 @@
-"""Deployment cost measurement: latency, throughput, size, memory.
+"""Deployment cost measurement: latency, throughput, size.
 
 Numbers are only meaningful for the machine they were measured on, so every
 result carries the hardware it came from (see :mod:`forgelm.provenance`).
@@ -6,8 +6,6 @@ result carries the hardware it came from (see :mod:`forgelm.provenance`).
 
 from __future__ import annotations
 
-import os
-import sys
 import time
 from pathlib import Path
 from typing import Callable, Dict, Sequence
@@ -20,29 +18,6 @@ def directory_size_mb(path: str) -> float:
     if p.is_file():
         return p.stat().st_size / 1e6
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) / 1e6
-
-
-def peak_rss_mb() -> float:
-    """Peak resident memory of this process so far (high-water mark), or NaN where unavailable.
-
-    ``resource`` exists only on Unix, so it is imported here rather than at module
-    level, which would make forgelm.bench (and anything importing it) fail on Windows.
-    """
-    try:
-        import resource
-    except ImportError:
-        return float("nan")
-    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / (1024 * 1024) if sys.platform == "darwin" else peak / 1024
-
-
-def current_rss_mb() -> float:
-    try:
-        import psutil
-
-        return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
-    except Exception:
-        return float("nan")
 
 
 def benchmark(predict: Callable[[Sequence[str]], object], texts: Sequence[str], batch_size: int = 32,

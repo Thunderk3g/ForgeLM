@@ -19,6 +19,9 @@ from typing import Dict, List, Optional, Tuple
 
 from .hardware import HardwareProfile
 
+# Share of unified memory budgeted for the model on Apple Silicon.
+MPS_MEMORY_FRACTION = 0.65
+
 
 # --------------------------------------------------------------------------
 # Memory
@@ -102,8 +105,8 @@ class BackendChoice:
         return asdict(self)
 
 
-def select_backend(hw: HardwareProfile, params_billion: float, batch_size: int = 2, seq_len: int = 1024,
-                   prefer: Optional[str] = None) -> BackendChoice:
+def select_backend(hw: HardwareProfile, params_billion: float, batch_size: int = 2, seq_len: int = 1024
+                   ) -> BackendChoice:
     """Pick the training stack, load precision and serving path for this machine.
 
     The rules follow the hardware matrix in docs/RESEARCH.md section 4.
@@ -119,7 +122,7 @@ def select_backend(hw: HardwareProfile, params_billion: float, batch_size: int =
     if cls == "nvidia":
         device, avail = "cuda", acc.memory_gb
         bits, precision = 4, "bf16"
-        if hw.has("unsloth") and prefer != "peft_trl":
+        if hw.has("unsloth"):
             backend = "unsloth"
             reasons.append("Unsloth is installed and is the fastest single-GPU path on NVIDIA")
         else:
@@ -149,7 +152,7 @@ def select_backend(hw: HardwareProfile, params_billion: float, batch_size: int =
             reasons.append("model fits unquantised: LoRA on 16-bit weights avoids the 4-bit path entirely")
         serve_format, serve_runtime = "GGUF Q4_K_M", "llama.cpp (HIP or Vulkan) or Ollama"
     elif cls == "apple":
-        device, avail = "mps", acc.memory_gb * 0.65  # unified memory is shared with the OS
+        device, avail = "mps", acc.memory_gb * MPS_MEMORY_FRACTION  # unified memory is shared with the OS
         bits, precision = 4, "fp16"
         if hw.has("mlx_lm"):
             backend = "mlx_lm"
@@ -160,7 +163,7 @@ def select_backend(hw: HardwareProfile, params_billion: float, batch_size: int =
             install.append("mlx-lm")
             warnings.append("PyTorch MPS works for small models but lacks mature 4-bit loading; "
                             "install mlx-lm for LLM fine-tuning on a Mac")
-        reasons.append("budgeting 65% of unified memory for the model")
+        reasons.append(f"budgeting {MPS_MEMORY_FRACTION:.0%} of unified memory for the model")
         serve_format, serve_runtime = "MLX 4-bit, or GGUF Q4_K_M", "mlx-lm, or llama.cpp (Metal) / Ollama"
     elif cls == "intel_gpu":
         device, avail, backend = "xpu", acc.memory_gb, "peft_trl"
@@ -218,9 +221,9 @@ def capacity(hw: HardwareProfile, batch_size: int = 2, seq_len: int = 1024) -> D
 # PEFT
 # --------------------------------------------------------------------------
 
-# How each method name maps onto Hugging Face ``peft``. The previous
-# ``peft_methods.py`` re-implemented DoRA, OFT and PiSSA as custom layers that
-# the training path never used; ``peft`` ships maintained versions of all three.
+# How each method name maps onto Hugging Face ``peft``. The training service once
+# re-implemented DoRA, OFT and PiSSA as custom layers that nothing called; ``peft``
+# ships maintained versions of all three.
 #
 # Every key here is offered to API callers, so each one must build a working
 # ``peft`` config from the arguments of ``lora_config`` alone (the tests check
@@ -244,16 +247,15 @@ DEFAULT_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "
 
 
 def lora_config(method: str = "lora", rank: int = 16, alpha: Optional[int] = None, dropout: float = 0.0,
-                target_modules: Optional[List[str]] = None, task_type: str = "CAUSAL_LM",
-                auto_rslora: bool = False) -> Tuple[str, dict, List[str]]:
+                target_modules: Optional[List[str]] = None, task_type: str = "CAUSAL_LM"
+                ) -> Tuple[str, dict, List[str]]:
     """Return ``(config_class_name, kwargs, notes)`` for Hugging Face ``peft``.
 
     The rank and alpha that are asked for are the rank and alpha that come
     back: by default nothing here changes how the adapter is scaled.
 
-    Rank-stabilised scaling (rsLoRA) is opt-in, either with the ``"rslora"``
-    method or with ``auto_rslora=True``, which turns it on for LoRA, QLoRA and
-    DoRA when rank >= 32. It is not a free switch. It changes the adapter scale
+    Rank-stabilised scaling (rsLoRA) is opt-in through the ``"rslora"``
+    method. It is not a free switch. It changes the adapter scale
     from alpha/rank to alpha/sqrt(rank): with alpha = 2 * rank, rank 64 goes
     from a scale of 2 to a scale of 16, an 8 times larger effective update at
     the same learning rate. The PEFT project's benchmark shows rsLoRA ahead of
@@ -274,11 +276,8 @@ def lora_config(method: str = "lora", rank: int = 16, alpha: Optional[int] = Non
     kwargs = {"r": rank, "lora_alpha": alpha if alpha is not None else 2 * rank, "lora_dropout": dropout,
               "target_modules": modules, "bias": "none", "task_type": task_type}
     kwargs.update(spec["kwargs"])
-    if auto_rslora and rank >= 32 and "use_rslora" not in kwargs and key in ("lora", "qlora", "dora"):
-        kwargs["use_rslora"] = True
     if kwargs.get("use_rslora"):
-        # Said for the explicit method as well as the automatic switch: either
-        # way the same rank and alpha now mean a different effective step size.
+        # The same rank and alpha now mean a different effective step size.
         notes.append("rank-stabilised scaling (use_rslora) is on: the adapter scale is alpha/sqrt(rank) instead "
                      "of alpha/rank, so re-tune the learning rate")
     return "LoraConfig", kwargs, notes

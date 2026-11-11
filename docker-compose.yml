@@ -49,8 +49,6 @@ services:
     environment:
       - SERVICE_HOST=0.0.0.0
       - SERVICE_PORT=8080
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - PROMETHEUS_ENABLED=true
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
@@ -99,9 +97,6 @@ services:
       - SERVICE_PORT=8000
       - SERVICE_ADVERTISED_HOST=llmforge-api-gateway
       - ORCHESTRATOR_URL=http://orchestrator:8080
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - RATE_LIMIT_REQUESTS_PER_MINUTE=1000
-      - CORS_ORIGINS=*
       # Timeout for synchronous factory classifier training through the gateway (seconds).
       - GATEWAY_LONG_REQUEST_TIMEOUT_S=${GATEWAY_LONG_REQUEST_TIMEOUT_S:-1800}
     volumes:
@@ -143,27 +138,19 @@ services:
       - TOKENIZERS_PARALLELISM=false
       - CUDA_LAUNCH_BLOCKING=0
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:256,expandable_segments:True,backend:cudaMallocAsync
-      # CRITICAL: Disable PyTorch Inductor to prevent compilation hangs
+      # CRITICAL: Disable PyTorch Inductor; with it, training hung at step 0 (PyTorch 2.8 + Unsloth, RTX 3050 4GB)
       - TORCH_COMPILE_DISABLE=1
       - TORCHINDUCTOR_MAX_AUTOTUNE=0
       - TORCHINDUCTOR_COMPILE_THREADS=1
       - TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6;8.9;9.0"
-      - MAX_TRAINING_JOBS=1
       # Hold the Redis-backed cross-service GPU lock for each fine-tuning job (see .env.example).
       - TRAINING_USE_GPU_LOCK=${TRAINING_USE_GPU_LOCK:-false}
-      - HUGGINGFACE_TOKEN=${HUGGINGFACE_TOKEN:-}
       - HF_TOKEN=${HF_TOKEN:-${HUGGINGFACE_TOKEN:-}}
       # Container stability environment variables - RTX 3050 4GB Laptop with 32GB RAM
       - CONTAINER_MEMORY_LIMIT_GB=16
       - WORKER_MEMORY_GB=12
       - TRITON_CACHE_DIR=/tmp/.triton_cache
       - OMP_NUM_THREADS=4
-      # GPU Orchestration for laptop GPU
-      - GPU_ORCHESTRATION_ENABLED=true
-      - GPU_SHARING_MODE=native
-      - GPU_MEMORY_LIMIT_MB=3072  # 75% of 4GB GPU for training
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -179,7 +166,7 @@ services:
         limits:
           memory: 16G # RTX 3050 4GB Laptop with 32GB RAM - optimized for better performance
         reservations:
-          memory: 12G # CRITICAL: Must reserve enough for model loading + Triton compilation
+          memory: 12G # CRITICAL: model loading + Triton compilation need ~6-8G; at 3G the container crashed with exit 139
           devices:
             - driver: nvidia
               count: 1 # Shared GPU access
@@ -218,14 +205,7 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
       - TOKENIZERS_PARALLELISM=false
       - CUDA_LAUNCH_BLOCKING=0
-      - MAX_CACHED_PAIRS=${MAX_CACHED_PAIRS:-4}
       - MAX_HBM_GB=${MAX_HBM_GB:-1}  # Reduced for 4GB GPU
-      # GPU Orchestration for RTX 3050 4GB
-      - GPU_ORCHESTRATION_ENABLED=true
-      - GPU_SHARING_MODE=native
-      - GPU_MEMORY_LIMIT_MB=512  # ~12.5% of 4GB GPU for chat comparison
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
     volumes:
       - ./models:/app/models
       - ./logs:/app/logs
@@ -267,8 +247,6 @@ services:
       - SERVICE_PORT=8003
       - SERVICE_ADVERTISED_HOST=llmforge-data-generation
       - ORCHESTRATOR_URL=http://orchestrator:8080
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
     volumes:
       - ./data:/app/data
       - ./datasets:/app/datasets
@@ -333,7 +311,6 @@ services:
       - SERVICE_ADVERTISED_HOST=llmforge-visualization
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - MPLCONFIGDIR=/home/llmforge/.config/matplotlib
-      - MATPLOTLIB_CACHE_DIR=/home/llmforge/.cache/matplotlib
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -375,14 +352,6 @@ services:
       - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128,expandable_segments:True
       - TOKENIZERS_PARALLELISM=false
       - CUDA_LAUNCH_BLOCKING=0
-      - MAX_CACHED_MODELS=${MAX_CACHED_MODELS:-1}
-      - CACHE_SIZE_GB=${CACHE_SIZE_GB:-2}  # Reduced for 4GB GPU
-      # GPU Orchestration for RTX 3050 4GB
-      - GPU_ORCHESTRATION_ENABLED=true
-      - GPU_SHARING_MODE=native
-      - GPU_MEMORY_LIMIT_MB=512  # ~12.5% of 4GB GPU for model management
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
     volumes:
       - ./models:/app/models
       - ./logs:/app/logs

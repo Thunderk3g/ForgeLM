@@ -2,7 +2,7 @@
 LLMForge API Gateway
 
 Central entry point for all microservices with intelligent routing,
-load balancing, authentication, and request aggregation.
+load balancing, and request aggregation.
 """
 
 import asyncio
@@ -10,13 +10,12 @@ import os
 import json
 import time
 from contextlib import asynccontextmanager
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import aiohttp
 
-from fastapi import FastAPI, Request, HTTPException, Depends, Response, BackgroundTasks
+from fastapi import FastAPI, Request, HTTPException, Response, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from prometheus_client import Counter, Histogram, Gauge, generate_latest
 import uvicorn
 
@@ -30,9 +29,6 @@ gateway_requests_total = Counter('gateway_requests_total', 'Total gateway reques
 gateway_request_duration_seconds = Histogram('gateway_request_duration_seconds', 'Gateway request duration')
 gateway_errors_total = Counter('gateway_errors_total', 'Total gateway errors', ['service', 'error_type'])
 active_connections = Gauge('gateway_active_connections', 'Active gateway connections')
-
-# Security
-security = HTTPBearer(auto_error=False)
 
 logger = get_logger(__name__)
 
@@ -78,13 +74,6 @@ SERVICE_ROUTES = {
     '/api/v1/config': 'llmforge-model-management',
     '/config': 'llmforge-model-management',  # Backward compatibility
     
-    # Agent routes (part of chat comparison service)
-    '/api/v1/agents': 'llmforge-chat-comparison',
-    '/agents': 'llmforge-chat-comparison',  # Backward compatibility
-    
-    # Chat comparison service routes
-    '/chat': 'llmforge-chat-comparison',
-
     # Factory service routes (hardware, planning, LLM-free classifiers, BFSI screening)
     '/api/v1/factory': 'llmforge-factory',
 }
@@ -235,8 +224,7 @@ async def register_service():
             health_endpoint="/health",
             metadata={
                 "type": "api_gateway",
-                "routes": list(SERVICE_ROUTES.keys()),
-                "rate_limiting": True
+                "routes": list(SERVICE_ROUTES.keys())
             }
         )
         logger.info(f"Registered API Gateway with orchestrator as {service_id}")
@@ -306,13 +294,6 @@ def get_service_name(path: str) -> Optional[str]:
     return None
 
 
-async def authenticate_request(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Optional[Dict[str, Any]]:
-    """Authenticate request (optional for now)"""
-    # For now, just return None to allow all requests
-    # In production, implement proper JWT validation
-    return None
-
-
 @app.get("/health")
 async def health_check():
     """API Gateway health check"""
@@ -347,8 +328,7 @@ async def root():
 async def proxy_request(
     request: Request,
     service_name: str,
-    target_path: str,
-    user: Dict[str, Any] = Depends(authenticate_request)
+    target_path: str
 ) -> Response:
     """Proxy request to target microservice"""
     gateway_requests_total.labels(method=request.method, service=service_name).inc()
@@ -587,33 +567,6 @@ async def get_system_overview():
     }
     
     return overview
-
-
-@app.post("/api/v1/batch")
-async def batch_requests(requests: List[Dict[str, Any]]):
-    """Execute multiple requests in batch"""
-    results = []
-    
-    for req_data in requests:
-        try:
-            method = req_data.get('method', 'GET')
-            path = req_data.get('path', '')
-            data = req_data.get('data', {})
-            
-            # This is a simplified batch implementation
-            # In production, you'd want more sophisticated batching
-            service_name = get_service_name(path)
-            if service_name:
-                # Execute the request (simplified)
-                result = {"path": path, "status": "queued"}
-            else:
-                result = {"path": path, "status": "invalid_path"}
-            
-            results.append(result)
-        except Exception as e:
-            results.append({"path": req_data.get('path', 'unknown'), "status": "error", "error": str(e)})
-    
-    return {"batch_results": results}
 
 
 if __name__ == "__main__":

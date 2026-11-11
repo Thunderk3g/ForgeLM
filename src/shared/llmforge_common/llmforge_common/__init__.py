@@ -14,25 +14,22 @@ After the shim runs, common.gpu_client *is* llmforge_common.gpu_client: one modu
 object, one set of classes, one copy of any module-level state.
 
 Module                  Old path in a service             Third-party imports
-gpu_orchestrator        common/gpu_orchestrator.py        aiohttp (redis optional)
 gpu_client              common/gpu_client.py              aiohttp
-gpu_monitoring          common/gpu_monitoring.py          aiohttp, psutil (torch, pynvml optional)
-gpu_inference_wrapper   common/gpu_inference_wrapper.py   torch, aiohttp
-service_orchestrator    services/service_orchestrator.py  aiohttp, fastapi, uvicorn (redis optional)
+gpu_inference_wrapper   common/gpu_inference_wrapper.py   aiohttp
+service_orchestrator    services/service_orchestrator.py  aiohttp
 research_logger         utils/research_logger.py          whatever the service's models.schemas needs
 memory                  utils/memory.py                   psutil (torch optional)
 performance             utils/performance.py              none
 logging                 utils/logging.py                  none
-model_config            utils/model_config.py             pyyaml
 schemas                 models/schemas.py                 pydantic
 entities                models/entities.py                none
 settings                config/settings.py                none
 
 Rules for code in this package:
 
-- A module here imports another module here relatively (gpu_client imports
-  .gpu_orchestrator).
-- research_logger and model_config import models.schemas and utils.logging by those
+- A module here imports another module here relatively (gpu_inference_wrapper
+  imports .gpu_client).
+- research_logger imports models.schemas and utils.logging by those
   absolute names, exactly as they did inside a service. The names resolve in the
   service that is running (its src directory is on sys.path), so each service
   supplies its own. That matters: the data generation service has its own, different
@@ -40,9 +37,9 @@ Rules for code in this package:
 - Nothing is imported here at package level. A light service that only needs
   performance must not pay for, or fail on, torch.
 
-Files that only look like copies were left in their services: the training
-service's service_orchestrator.py, the visualization service's research_logger.py
-and the chat comparison service's entities.py each differ from the shared version.
+Files that only look like copies were left in their services: the visualization
+service's research_logger.py and the chat comparison service's entities.py each
+differ from the shared version.
 """
 
 __version__ = "1.0.0"

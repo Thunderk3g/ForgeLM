@@ -22,7 +22,7 @@ from typing import Dict, List, Optional
 
 from . import generative, tabular
 from .evidence import EVIDENCE, weakest_level
-from .hardware import HardwareProfile
+from .hardware import KNOWN_PACKAGES, HardwareProfile
 
 TASK_KINDS = ("text_classification", "tabular_classification", "generation", "document_qa")
 
@@ -126,14 +126,10 @@ class Plan:
 
 # --------------------------------------------------------------------------
 
-_PIP = {"sklearn": "scikit-learn", "sentence_transformers": "sentence-transformers", "interpret": "interpret-core",
-        "mlx_lm": "mlx-lm"}
-
-
 def _step(hw: HardwareProfile, name: str, action: str, why: str, evidence: List[str],
           requires: Optional[List[str]] = None, feasible: bool = True, **detail) -> Step:
     requires = requires or []
-    missing = [_PIP.get(p, p) for p in requires if not hw.has(p)]
+    missing = [KNOWN_PACKAGES.get(p, p) for p in requires if not hw.has(p)]
     return Step(name, action, why, evidence, requires, missing, feasible, detail)
 
 

@@ -323,30 +323,20 @@ class DenseIndex:
         self.passages, self.vectors = passages, _normalise(vectors)
         return self
 
-    def search(self, query: str, k: int = 10, query_vector: Optional[np.ndarray] = None
-               ) -> List[Tuple[Passage, float]]:
-        qv = None if query_vector is None else np.asarray(query_vector)[None, :]
-        return self.search_batch([query], k, query_vectors=qv)[0]
+    def search(self, query: str, k: int = 10) -> List[Tuple[Passage, float]]:
+        return self.search_batch([query], k)[0]
 
-    def search_batch(self, queries: Sequence[str], k: int = 10, query_vectors: Optional[np.ndarray] = None
-                     ) -> List[List[Tuple[Passage, float]]]:
+    def search_batch(self, queries: Sequence[str], k: int = 10) -> List[List[Tuple[Passage, float]]]:
         """Top ``k`` passages for each query.
 
         A blank query returns no passages (an encoder would still produce a
-        vector for it, but the ranking would mean nothing), unless its vector
-        is given in ``query_vectors``.
+        vector for it, but the ranking would mean nothing).
         """
         if self.vectors is None:
             raise RuntimeError("call build() first")
         out: List[List[Tuple[Passage, float]]] = [[] for _ in queries]
-        if query_vectors is not None:
-            if len(query_vectors) != len(queries):
-                raise ValueError(f"{len(query_vectors)} query vectors for {len(queries)} queries")
-            todo = list(range(len(queries)))
-            Q = _normalise(query_vectors)
-        else:
-            todo = [i for i, q in enumerate(queries) if q.strip()]
-            Q = self.encode_queries([queries[i] for i in todo]) if todo else None
+        todo = [i for i, q in enumerate(queries) if q.strip()]
+        Q = self.encode_queries([queries[i] for i in todo]) if todo else None
         if not todo or not len(self.passages):
             return out
         step = max(1, self.max_scores_per_batch // len(self.passages))
@@ -372,11 +362,6 @@ class FusedHit(NamedTuple):
     passage: Passage
     score: float
     ranks: Dict[str, Optional[int]]
-
-
-def _search_batch(index, queries: Sequence[str], k: int):
-    fn = getattr(index, "search_batch", None)
-    return fn(list(queries), k) if fn is not None else [index.search(q, k) for q in queries]
 
 
 class HybridIndex:
@@ -425,7 +410,7 @@ class HybridIndex:
 
     def search_batch(self, queries: Sequence[str], k: int = 10) -> List[List[FusedHit]]:
         depth = max(self.depth, k)
-        per_component = {n: _search_batch(ix, queries, depth) for n, ix in self.components.items()}
+        per_component = {n: ix.search_batch(list(queries), depth) for n, ix in self.components.items()}
         out = []
         for qi in range(len(queries)):
             fused: Dict[str, List[Any]] = {}  # id -> [score, best rank, first seen, passage, ranks]
@@ -543,10 +528,10 @@ def evaluate_retrieval(index, queries: Mapping[str, str], qrels: Qrels, ks: Sequ
     """Search every query in ``queries`` ({query id: text}) and score the rankings.
 
     See ``evaluate_rankings`` for the metric definitions and which queries
-    count. Queries are searched with ``search_batch`` when the index has it.
+    count. The index must provide ``search_batch``.
     """
     qids = list(queries)
-    results = _search_batch(index, [queries[q] for q in qids], max(ks))
+    results = index.search_batch([queries[q] for q in qids], max(ks))
     return evaluate_rankings({q: [hit[0].id for hit in hits] for q, hits in zip(qids, results)}, qrels, ks)
 
 

@@ -3,6 +3,12 @@ Load Testing Suite for MPS-enabled GPU Services
 
 Tests concurrent requests, performance under sustained load,
 response time consistency, and error rate monitoring.
+
+Usage, against a stack started with `docker-compose up -d`:
+    python scripts/load_test_gpu.py [basic|intensive|endurance]
+It needs aiohttp (`pip install aiohttp`), which pyproject.toml does not declare.
+It targets http://localhost on ports 8001 (training), 8002 (chat comparison)
+and 8005 (model management): /health, /system/gpu and /gpu/info.
 """
 
 import asyncio

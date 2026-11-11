@@ -126,10 +126,6 @@ class HardwareProfile:
     def has_vnni(self) -> bool:
         return any(f in self.cpu_flags for f in ("avx512_vnni", "avx_vnni", "amx_int8", "asimddp", "i8mm"))
 
-    @property
-    def is_arm(self) -> bool:
-        return self.arch.lower() in ("arm64", "aarch64")
-
     def has(self, package: str) -> bool:
         return package in self.packages
 
@@ -453,7 +449,8 @@ def probe(use_torch: bool = True) -> HardwareProfile:
 # and by the test-suite. Values are representative, not measured.
 # --------------------------------------------------------------------------
 
-def reference_profile(name: str) -> HardwareProfile:
+def _reference_table() -> Dict[str, dict]:
+    """The reference profiles' fields, built afresh on every call because callers change the profiles they get."""
     base = dict(os="Linux", arch="x86_64", python="3.12.0", cpu_model="reference", physical_cores=8,
                 logical_cores=16, cpu_flags=["avx", "avx2", "fma", "f16c"], ram_total_gb=32.0,
                 ram_available_gb=28.0, in_container=False)
@@ -488,12 +485,14 @@ def reference_profile(name: str) -> HardwareProfile:
         "intel-arc-16gb": dict(base, accelerators=[Accelerator("xpu", "intel", "Arc A770", 16.0, torch_usable=True)],
                                packages=dict(full_stack, openvino="ref")),
     }
+    return table
+
+
+def reference_profile(name: str) -> HardwareProfile:
+    table = _reference_table()
     if name not in table:
         raise KeyError(f"unknown reference profile {name!r}; choose from {sorted(table)}")
     return HardwareProfile(**table[name])
 
 
-REFERENCE_PROFILES = (
-    "cpu-laptop", "cpu-server", "nvidia-4gb", "nvidia-24gb", "nvidia-2x80gb",
-    "amd-16gb", "apple-16gb", "apple-64gb", "intel-arc-16gb",
-)
+REFERENCE_PROFILES = tuple(_reference_table())

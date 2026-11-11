@@ -109,7 +109,7 @@ def export_classifier_onnx(model_dir: str, out_path: str, max_length: int = 128,
     return out_path
 
 
-def quantize_dynamic_int8(fp32_path: str, int8_path: str, has_vnni: bool = True, per_channel: bool = False) -> str:
+def quantize_dynamic_int8(fp32_path: str, int8_path: str, has_vnni: bool = True) -> str:
     """Dynamic int8 quantisation of an ONNX file.
 
     ``has_vnni=False`` enables ``reduce_range``: on AVX2/AVX-512 CPUs without
@@ -119,7 +119,7 @@ def quantize_dynamic_int8(fp32_path: str, int8_path: str, has_vnni: bool = True,
     """
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
-    quantize_dynamic(fp32_path, int8_path, weight_type=QuantType.QInt8, per_channel=per_channel,
+    quantize_dynamic(fp32_path, int8_path, weight_type=QuantType.QInt8, per_channel=False,
                      reduce_range=not has_vnni)
     return int8_path
 

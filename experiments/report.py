@@ -33,6 +33,10 @@ def table(header, rows):
     return "\n".join(out)
 
 
+def grid(row_keys, col_keys, cell):
+    return [[r] + [cell(r, c) for c in col_keys] for r in row_keys]
+
+
 def mean_std(values, as_pct=True, nd=1):
     m, s = float(np.mean(values)), float(np.std(values))
     if as_pct:
@@ -64,8 +68,8 @@ e1 = load("e1_banking77_ladder")
 if e1:
     ds = e1["dataset"]
     out += ["## E1. Student ladder on Banking77", "",
-            f"**Question.** With 8, 32 or all labels per class, which LLM-free student is most accurate, how "
-            f"well calibrated is it, and what does it cost on a CPU?", "",
+            "**Question.** With 8, 32 or all labels per class, which LLM-free student is most accurate, how "
+            "well calibrated is it, and what does it cost on a CPU?", "",
             f"**Setup.** {ds['classes']} banking intents, {ds['test']} test texts. {ds['calibration_anchor']} "
             f"training texts (5 per class) are held out to fit the confidence temperature and are never "
             f"trained on. Few-shot rows are the mean ± standard deviation over 3 random draws; full-data rows "
@@ -80,34 +84,19 @@ if e1:
         if r["student"] not in students:
             students.append(r["student"])
     regimes = ["0", "8", "32", "full"]
-    rows = []
-    for s in students:
-        row = [s]
-        for k in regimes:
-            g = groups.get((s, k))
-            row.append(mean_std([x["accuracy"] for x in g]) if g else "")
-        rows.append(row)
+
+    def e1_cell(fmt):
+        return lambda s, k: fmt(groups[(s, k)]) if (s, k) in groups else ""
+
+    rows = grid(students, regimes, e1_cell(lambda g: mean_std([x["accuracy"] for x in g])))
     out += ["Accuracy (%) by labels per class:", "",
             table(["Student", "0 labels", "8 per class", "32 per class", f"all (~{ds['train_pool'] // ds['classes']} per class)"], rows), ""]
-    rows = []
-    for s in students:
-        row = [s]
-        for k in regimes:
-            g = groups.get((s, k))
-            row.append(f"{np.mean([x['ece'] for x in g]):.3f} → {np.mean([x['ece_calibrated'] for x in g]):.3f}"
-                       if g else "")
-        rows.append(row)
+    rows = grid(students, regimes, e1_cell(
+        lambda g: f"{np.mean([x['ece'] for x in g]):.3f} → {np.mean([x['ece_calibrated'] for x in g]):.3f}"))
     out += ["Expected calibration error, before → after temperature scaling on the 385-example anchor "
             "(lower is better):", "", table(["Student", "0 labels", "8 per class", "32 per class", "all"], rows), ""]
-    rows = []
-    for s in students:
-        if not any((s, k) in groups for k in regimes[1:]):
-            continue  # the zero-shot student is not trained
-        row = [s]
-        for k in regimes[1:]:
-            g = groups.get((s, k))
-            row.append(f"{np.mean([x['train_seconds'] for x in g]):.0f} s" if g else "")
-        rows.append(row)
+    trained = [s for s in students if any((s, k) in groups for k in regimes[1:])]  # zero-shot is not trained
+    rows = grid(trained, regimes[1:], e1_cell(lambda g: f"{np.mean([x['train_seconds'] for x in g]):.0f} s"))
     out += ["Training time on 4 CPU cores (embedding time included for the embedding students):", "",
             table(["Student", "8 per class", "32 per class", "all"], rows), ""]
     e1b = load("e1b_modernbert_full")
@@ -117,7 +106,6 @@ if e1:
     if e1b:
         for r in e1b["rows"]:
             acc[r["student"]] = r["accuracy"]
-            out_mb = r
     rows = [[s["student"], pct(acc.get(s["student"])), f"{s['latency_ms_p50']:.2f}", f"{s['latency_ms_p95']:.2f}",
              f"{s['throughput_per_s']:,.0f}", f"{s['artefact_mb']:.1f}", s.get("note", "")] for s in serving]
     out += ["Serving cost of the full-data students (PyTorch / numpy, before any ONNX export"
@@ -196,32 +184,20 @@ if e4:
         sizes = sorted({r["n_train"] for r in rows_ds})
         models = ["logreg", "hist_gbdt", "lightgbm", "ebm", "tabicl"]
         cell = {(r["model"], r["n_train"]): r for r in rows_ds}
-        rows = []
-        for m in models:
-            row = [m]
-            for n in sizes:
-                r = cell.get((m, n))
-                best = max((cell[(mm, n)]["roc_auc"] for mm in models if (mm, n) in cell), default=None)
-                txt = f"{r['roc_auc']:.3f}" if r else "not run"
-                row.append(f"**{txt}**" if r and abs(r["roc_auc"] - best) < 1e-9 else txt)
-            rows.append(row)
+
+        def e4_cell(fmt):
+            return lambda m, n: fmt(cell[(m, n)], n) if (m, n) in cell else "not run"
+
+        def auc(r, n):
+            best = max(cell[(mm, n)]["roc_auc"] for mm in models if (mm, n) in cell)
+            return f"**{r['roc_auc']:.3f}**" if abs(r["roc_auc"] - best) < 1e-9 else f"{r['roc_auc']:.3f}"
+
+        rows = grid(models, sizes, e4_cell(auc))
         out += [f"**{title}** - ROC AUC (best per column in bold):", "",
                 table(["Model"] + [f"{n:,} rows" for n in sizes], rows), ""]
-        rows = []
-        for m in models:
-            row = [m]
-            for n in sizes:
-                r = cell.get((m, n))
-                row.append(f"{r['brier']:.3f} / {r['ece']:.3f}" if r else "not run")
-            rows.append(row)
+        rows = grid(models, sizes, e4_cell(lambda r, n: f"{r['brier']:.3f} / {r['ece']:.3f}"))
         out += ["Brier score / ECE (lower is better):", "", table(["Model"] + [f"{n:,} rows" for n in sizes], rows), ""]
-        rows = []
-        for m in models:
-            row = [m]
-            for n in sizes:
-                r = cell.get((m, n))
-                row.append(f"{r['fit_seconds']:.1f} / {r['predict_seconds']:.1f}" if r else "not run")
-            rows.append(row)
+        rows = grid(models, sizes, e4_cell(lambda r, n: f"{r['fit_seconds']:.1f} / {r['predict_seconds']:.1f}"))
         out += [f"Seconds to fit / to score {e4['test_rows']:,} rows:", "",
                 table(["Model"] + [f"{n:,} rows" for n in sizes], rows), ""]
 

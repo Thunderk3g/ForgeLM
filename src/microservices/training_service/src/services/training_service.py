@@ -355,12 +355,12 @@ class TrainingService(TrainingArgsMixin):
     The per-training-type argument helpers (``_get_instruction_training_args``,
     ``_get_chat_completion_args``, ``_get_reasoning_training_args``,
     ``_apply_training_type_optimizations``, ``get_chat_sft_config``) come from
-    ``TrainingArgsMixin``. ``TrainingCore`` inherits the same ones.
+    ``TrainingArgsMixin``.
     """
 
     def _unsloth_available(self) -> bool:
         # The mixin asks the class instead of importing Unsloth itself, because
-        # this module and the worker module decide the flag differently (see
+        # an import there would run before this module's patched one (see
         # training_common.py). Read on each call, as the helpers always did.
         return UNSLOTH_AVAILABLE
 

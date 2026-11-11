@@ -12,4 +12,3 @@ accelerate>=0.34.0        # a newer version; to stay current
 
 # Common utilities
 psutil>=5.9.0
-httpx>=0.25.0

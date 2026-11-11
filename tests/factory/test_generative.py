@@ -32,7 +32,6 @@ def test_largest_model_that_fits_is_consistent_with_the_estimate():
 
 def test_backend_per_vendor():
     assert select_backend(reference_profile("nvidia-24gb"), 8).backend == "unsloth"
-    assert select_backend(reference_profile("nvidia-24gb"), 8, prefer="peft_trl").backend == "peft_trl"
     amd = select_backend(reference_profile("amd-16gb"), 3)
     assert (amd.backend, amd.device, amd.load_bits) == ("peft_trl", "rocm", 16)
     assert any("NaN" in w for w in amd.warnings)
@@ -94,16 +93,11 @@ def test_explicit_rank_and_alpha_are_returned_unchanged_with_no_rescaling(method
 
 
 def test_rank_stabilised_scaling_is_opt_in_and_says_what_it_changes():
-    for kwargs in ({"method": "rslora", "rank": 8}, {"method": "rslora", "rank": 64},
-                   {"method": "lora", "rank": 64, "auto_rslora": True},
-                   {"method": "dora", "rank": 32, "auto_rslora": True}):
+    for kwargs in ({"method": "rslora", "rank": 8}, {"method": "rslora", "rank": 64}):
         _, cfg, notes = lora_config(**kwargs)
         assert cfg["use_rslora"] is True, kwargs
         assert cfg["lora_alpha"] == 2 * kwargs["rank"]  # alpha itself is left alone
         assert any("alpha/sqrt(rank)" in n and "learning rate" in n for n in notes), kwargs
-    # the automatic switch only applies from rank 32 upwards, and never to methods with their own init
-    assert "use_rslora" not in lora_config("lora", rank=31, auto_rslora=True)[1]
-    assert "use_rslora" not in lora_config("pissa", rank=64, auto_rslora=True)[1]
 
 
 def test_loftq_is_not_advertised():

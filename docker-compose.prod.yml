@@ -1,8 +1,6 @@
 # Production Docker Compose Override
 # Use: docker-compose -f docker-compose.yml -f docker-compose.prod.yml up
 
-version: '3.8'
-
 services:
   training-service:
     environment:
@@ -10,12 +8,6 @@ services:
       - CONTAINER_MEMORY_LIMIT_GB=${CONTAINER_MEMORY_GB:-32}  # Read from environment or default 32GB
       - WORKER_MEMORY_GB=${WORKER_MEMORY_GB:-24}
       - OMP_NUM_THREADS=8  # More threads for production
-      - GPU_MEMORY_LIMIT_MB=${GPU_MEMORY_MB:-15360}  # 15GB for production GPUs
-
-      # Production-specific settings
-      - LOG_LEVEL=INFO
-      - PROMETHEUS_ENABLED=true
-      - MAX_TRAINING_JOBS=2  # Can handle multiple jobs
 
     deploy:
       resources:

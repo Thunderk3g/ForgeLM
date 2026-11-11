@@ -21,11 +21,10 @@ from models.entities import ModelPair, LoRAMetadata, KVCacheEntry, CacheState
 from utils.memory import get_gpu_memory_info, cleanup_gpu_memory, estimate_model_memory
 from utils.performance import performance_monitor, timing_context, timed
 from utils.logging import get_logger
-from utils.model_config import model_config
 from config.settings import settings
 
 # Import GPU orchestration
-from common.gpu_inference_wrapper import GPUInferenceManager, gpu_orchestrated
+from common.gpu_inference_wrapper import GPUInferenceManager
 from common.gpu_client import GPUOperationType, GPULockPriority, get_service_id
 
 # Import Agent Orchestrator (will be imported when needed to avoid circular imports)
@@ -56,14 +55,6 @@ else:
     except ImportError:
         TRANSFORMERS_AVAILABLE = False
 
-# Import fallback service
-try:
-    from services.fallback_generation_service import FallbackGenerationService
-    FALLBACK_AVAILABLE = True
-except ImportError:
-    FALLBACK_AVAILABLE = False
-    print("Fallback generation service not available")
-
 # Import PEFT for LoRA adapter support
 try:
     from peft import PeftModel, PeftConfig
@@ -80,40 +71,20 @@ class DependencyGraph:
     def __init__(self):
         self.lora_to_kv_cache = defaultdict(set)  # LoRA -> set of KV cache IDs
         self.kv_cache_to_loras = defaultdict(set)  # KV cache -> set of LoRA IDs
-        self.access_history = defaultdict(list)   # Track access patterns
     
     def add_dependency(self, lora_id: str, kv_cache_id: str):
         """Add dependency between LoRA and KV cache"""
         self.lora_to_kv_cache[lora_id].add(kv_cache_id)
         self.kv_cache_to_loras[kv_cache_id].add(lora_id)
-        self.access_history[lora_id].append(time.time())
     
     def remove_dependency(self, lora_id: str, kv_cache_id: str):
         """Remove dependency between LoRA and KV cache"""
         self.lora_to_kv_cache[lora_id].discard(kv_cache_id)
         self.kv_cache_to_loras[kv_cache_id].discard(lora_id)
     
-    def get_dependent_caches(self, lora_id: str) -> set:
-        """Get all KV caches dependent on a LoRA"""
-        return self.lora_to_kv_cache.get(lora_id, set())
-    
     def get_dependent_loras(self, kv_cache_id: str) -> set:
         """Get all LoRAs dependent on a KV cache"""
         return self.kv_cache_to_loras.get(kv_cache_id, set())
-    
-    def calculate_usage_score(self, item_id: str, current_time: float) -> float:
-        """Calculate usage score based on access patterns (FastLibra cost model)"""
-        history = self.access_history.get(item_id, [])
-        if not history:
-            return 0.0
-        
-        # Recent access weight (higher = more recent)
-        recent_weight = max(0, 1.0 - (current_time - max(history)) / 3600)  # 1 hour decay
-        
-        # Frequency weight
-        frequency_weight = len(history) / (current_time - min(history) + 1)
-        
-        return recent_weight * 0.7 + frequency_weight * 0.3
 
 
 class PerformanceDrivenCacheSwapper:
@@ -124,31 +95,6 @@ class PerformanceDrivenCacheSwapper:
         self.current_hbm_usage = 0
         self.swap_costs = {}  # Cache swap operation costs
         
-    def calculate_swap_cost(self, item_size_mb: float, is_swap_in: bool) -> float:
-        """Calculate cost of swapping item in/out of HBM"""
-        base_cost = item_size_mb * 0.1  # Base transfer cost
-        
-        if is_swap_in:
-            # Cost increases with current memory pressure
-            memory_pressure = self.current_hbm_usage / self.max_hbm_bytes
-            return base_cost * (1.0 + memory_pressure)
-        else:
-            # Swap-out cost is lower
-            return base_cost * 0.5
-    
-    def should_swap_in(self, lora_metadata: LoRAMetadata, kv_entries: List[KVCacheEntry]) -> bool:
-        """Decide if LoRA should be swapped into HBM"""
-        current_time = time.time()
-        
-        # Calculate expected benefit
-        access_frequency = lora_metadata.access_count / max(1, current_time - (current_time - 3600))
-        recency_score = max(0, 1.0 - (current_time - lora_metadata.last_access_time) / 1800)  # 30 min decay
-        
-        benefit_score = access_frequency * recency_score
-        swap_cost = self.calculate_swap_cost(lora_metadata.size_mb, is_swap_in=True)
-        
-        return benefit_score > swap_cost
-    
     def select_eviction_candidates(self, required_memory_mb: float, 
                                  active_loras: Dict[str, LoRAMetadata],
                                  active_kv_caches: Dict[str, KVCacheEntry]) -> List[str]:
@@ -519,142 +465,6 @@ class ModelService:
                 return family
         
         return None
-    
-    def _create_configured_pairs(self, base_models: List[Path], finetuned_models: List[Path]) -> List[ModelPair]:
-        """Create pairs from YAML configuration"""
-        pairs = []
-        configured_pairs = model_config.get_configured_pairs()
-        
-        for pair_config in configured_pairs:
-            if not pair_config.get("enabled", True) or pair_config.get("auto_discover", False):
-                continue
-            
-            base_config = pair_config.get("base_model", {})
-            ft_config = pair_config.get("finetuned_model", {})
-            
-            base_path = Path(base_config.get("path", ""))
-            ft_path = Path(ft_config.get("path", ""))
-            
-            # Check if both models exist
-            if base_path.exists() and ft_path.exists():
-                base_size_mb = self._calculate_directory_size(base_path)
-                ft_size_mb = self._calculate_directory_size(ft_path)
-                
-                pair = ModelPair(
-                    pair_id=pair_config.get("pair_id", f"config_{base_path.name}_{ft_path.name}"),
-                    base_model_name=base_config.get("name", base_path.name),
-                    adapter_name=ft_config.get("name", ft_path.name),
-                    base_model_path=str(base_path),
-                    adapter_path=str(ft_path),
-                    base_model_size_mb=base_size_mb,
-                    adapter_size_mb=ft_size_mb,
-                    status="available"
-                )
-                
-                pairs.append(pair)
-                self.logger.info(f"Configured pair: {pair.base_model_name} + {pair.adapter_name}")
-            else:
-                self.logger.warning(f"Configured models not found - Base: {base_path.exists()}, FT: {ft_path.exists()}")
-        
-        return pairs
-    
-    def _create_intelligent_pairs(self, base_models: List[Path], finetuned_models: List[Path]) -> List[ModelPair]:
-        """Create pairs using intelligent name matching"""
-        pairs = []
-        used_finetuned = set()
-        
-        for base_dir in base_models:
-            base_model_name = base_dir.name
-            base_model_path = str(base_dir)
-            base_size_mb = self._calculate_directory_size(base_dir)
-            
-            # Try to find matching finetuned model using various strategies
-            matched_finetuned = None
-            
-            # Strategy 1: Exact name match
-            for ft_dir in finetuned_models:
-                if ft_dir.name == base_model_name and ft_dir not in used_finetuned:
-                    matched_finetuned = ft_dir
-                    break
-            
-            # Strategy 2: Similar name matching (for models like qwen1.5-base vs qwen1.5-instruct)
-            if not matched_finetuned:
-                base_core = self._extract_model_core_name(base_model_name)
-                for ft_dir in finetuned_models:
-                    ft_core = self._extract_model_core_name(ft_dir.name)
-                    if base_core == ft_core and ft_dir not in used_finetuned:
-                        matched_finetuned = ft_dir
-                        break
-            
-            if matched_finetuned:
-                used_finetuned.add(matched_finetuned)
-                finetuned_size_mb = self._calculate_directory_size(matched_finetuned)
-                
-                pair = ModelPair(
-                    pair_id=f"{base_model_name}_{matched_finetuned.name}",
-                    base_model_name=base_model_name,
-                    adapter_name=matched_finetuned.name,
-                    base_model_path=base_model_path,
-                    adapter_path=str(matched_finetuned),
-                    base_model_size_mb=base_size_mb,
-                    adapter_size_mb=finetuned_size_mb,
-                    status="available"
-                )
-                
-                pairs.append(pair)
-                self.logger.info(f"Auto-paired: {base_model_name} + {matched_finetuned.name}")
-        
-        return pairs
-    
-    def _create_manual_pairs(self, base_models: List[Path], finetuned_models: List[Path]) -> List[ModelPair]:
-        """Create manual pairs for every combination so user can choose"""
-        pairs = []
-        
-        for base_dir in base_models:
-            for ft_dir in finetuned_models:
-                base_model_name = base_dir.name
-                ft_model_name = ft_dir.name
-                
-                # Skip if they're too similar (likely already auto-paired)
-                if self._extract_model_core_name(base_model_name) == self._extract_model_core_name(ft_model_name):
-                    continue
-                
-                base_size_mb = self._calculate_directory_size(base_dir)
-                ft_size_mb = self._calculate_directory_size(ft_dir)
-                
-                pair = ModelPair(
-                    pair_id=f"manual_{base_model_name}_{ft_model_name}",
-                    base_model_name=base_model_name,
-                    adapter_name=ft_model_name,
-                    base_model_path=str(base_dir),
-                    adapter_path=str(ft_dir),
-                    base_model_size_mb=base_size_mb,
-                    adapter_size_mb=ft_size_mb,
-                    status="available"
-                )
-                
-                pairs.append(pair)
-                self.logger.info(f"Manual pair: {base_model_name} + {ft_model_name}")
-        
-        return pairs
-    
-    def _extract_model_core_name(self, model_name: str) -> str:
-        """Extract core model name for matching using configured patterns"""
-        name_lower = model_name.lower()
-        
-        # Get suffixes from configuration
-        base_suffixes = model_config.get_base_suffixes()
-        instruct_suffixes = model_config.get_instruct_suffixes()
-        all_suffixes = base_suffixes + instruct_suffixes
-        
-        # Add some additional common patterns
-        all_suffixes.extend(['-chat', '-sft', '-dpo', '-finetuned', '_chat', '_sft', '_dpo', '_finetuned'])
-        
-        for suffix in all_suffixes:
-            if name_lower.endswith(suffix.lower()):
-                return model_name[:len(model_name) - len(suffix)]
-        
-        return model_name
     
     def _resolve_model_path(self, model_dir: Path) -> Path:
         """Resolve the actual model path, handling nested Hugging Face cache structures"""
@@ -1080,22 +890,18 @@ class ModelService:
             if any(keyword in str(e).lower() for keyword in ["tensorflow", "dll", "cuda", "gpu", "_pywrap_tensorflow"]):
                 self.logger.info("TensorFlow/DLL/GPU issue detected, using fallback service")
                 
-                if FALLBACK_AVAILABLE:
-                    fallback_service = FallbackGenerationService()
-                    return fallback_service.generate_fallback_response(messages)
-                else:
-                    return {
-                        "base_response": "Model generation temporarily unavailable due to system configuration issues. Please check TensorFlow installation and CUDA drivers.",
-                        "finetuned_response": "System is running in fallback mode. For full functionality, please resolve dependency issues and restart the service.",
-                        "generation_time_ms": {"base": 0, "finetuned": 0, "total": 0},
-                        "model_info": {
-                            "base_model": "fallback", 
-                            "adapter_name": "error_mode", 
-                            "pair_id": "system_error",
-                            "error": str(e)[:200]
-                        },
-                        "cache_metrics": {"cache_hits": 0, "cache_misses": 1}
-                    }
+                return {
+                    "base_response": "Model generation temporarily unavailable due to system configuration issues. Please check TensorFlow installation and CUDA drivers.",
+                    "finetuned_response": "System is running in fallback mode. For full functionality, please resolve dependency issues and restart the service.",
+                    "generation_time_ms": {"base": 0, "finetuned": 0, "total": 0},
+                    "model_info": {
+                        "base_model": "fallback", 
+                        "adapter_name": "error_mode", 
+                        "pair_id": "system_error",
+                        "error": str(e)[:200]
+                    },
+                    "cache_metrics": {"cache_hits": 0, "cache_misses": 1}
+                }
             else:
                 # Re-raise non-system configuration errors
                 raise
@@ -1748,13 +1554,6 @@ class ModelService:
             self.loaded_models_cache.clear()
             self.logger.info("Cleared all model cache")
     
-    def get_cached_models_info(self):
-        """Get information about currently cached models"""
-        return {
-            "cached_pairs": list(self.loaded_models_cache.keys()),
-            "total_cached": len(self.loaded_models_cache)
-        }
-    
     async def warmup_model_pair(self, pair: ModelPair) -> bool:
         """Preload and cache a model pair for faster subsequent access"""
         try:
@@ -1875,26 +1674,6 @@ class ModelService:
             if custom_system_prompt and custom_system_prompt.strip():
                 self.logger.info(f"Using explicit custom system prompt for session {session_id}")
                 return custom_system_prompt.strip()
-            
-            # Priority 2: Agent orchestrator (requires dynamic import to avoid circular dependency)
-            if use_agent_orchestrator:
-                try:
-                    from services.agent_orchestrator import agent_orchestrator
-                    
-                    # If no agent is set for the session, suggest one based on the query
-                    if session_id not in agent_orchestrator.session_agents and user_message:
-                        suggested_agent = agent_orchestrator.suggest_agent_for_query(user_message)
-                        if suggested_agent:
-                            agent_orchestrator.set_session_agent(session_id, suggested_agent)
-                            self.logger.info(f"Auto-assigned agent {suggested_agent} for session {session_id}")
-                    
-                    # Get system prompt from orchestrator
-                    prompt = agent_orchestrator.get_system_prompt_for_session(session_id, context=user_message)
-                    self.logger.info(f"Using agent orchestrator system prompt for session {session_id}")
-                    return prompt
-                    
-                except Exception as e:
-                    self.logger.warning(f"Failed to use agent orchestrator: {e}, falling back to default")
             
             # Fallback: Default helpful assistant prompt
             default_prompt = "You are a helpful, knowledgeable assistant that provides detailed and practical responses. Always be specific and helpful."

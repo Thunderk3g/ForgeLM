@@ -5,9 +5,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import numpy as np
 import pytest
 
-from forgelm.distill import attribute_prompts, distill, diversity_report, uncertainty_order
+from forgelm.distill import attribute_prompts, distill, diversity_report
 from forgelm.students import TfidfStudent
-from forgelm.teachers import CallableTeacher, ChatCompletionsTeacher, LocalLLMTeacher, StudentTeacher
+from forgelm.teachers import CallableTeacher, ChatCompletionsTeacher, LocalLLMTeacher
 
 
 def _keyword_teacher(labels, noise_idx=()):
@@ -115,13 +115,8 @@ def test_distill_keeps_every_row_of_a_teacher_that_always_answers(toy_text):
 def test_student_as_teacher(toy_text):
     texts, y, labels = toy_text
     big = TfidfStudent().fit(texts, y, labels)
-    probs = StudentTeacher(big).label(texts[:4])
+    probs = CallableTeacher(big.predict_proba, big.labels, name=f"student:{big.kind}").label(texts[:4])
     assert probs.shape == (4, 3) and np.allclose(probs.sum(1), 1)
-
-
-def test_uncertainty_order_puts_ties_first():
-    probs = np.array([[0.9, 0.1], [0.51, 0.49], [0.7, 0.3]])
-    assert list(uncertainty_order(probs)) == [1, 2, 0]
 
 
 def test_attribute_prompts_vary_and_diversity_report_flags_collapse():
