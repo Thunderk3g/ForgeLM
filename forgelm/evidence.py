@@ -22,22 +22,32 @@ EVIDENCE: Dict[str, dict] = {
     # ---- measured in this repository -----------------------------------
     "e1-ladder": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "On Banking77 (77 intents, 3,080 test texts) a frozen 33M encoder with a logistic-regression head was the "
+                 "most accurate LLM-free student at every data size tested: 85.8% with 8 labels per class, 90.9% with 32, "
+                 "93.1% with all. TF-IDF trailed by 15 points at 8 labels but by only 2 with all labels (91.2%). A 22M "
+                 "encoder fine-tuned end to end with fixed, untuned settings never led (78.3%, 88.5%, 90.5%).",
         "source": "experiments/results/e1_banking77_ladder.json",
     },
     "e1-static": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "A static-embedding student (potion-base-32M with a logistic-regression head) reached 78.1% / 87.7% / "
+                 "91.0% at 8 / 32 / all labels per class and served at about 0.14 ms per text and 18,000 texts per second "
+                 "on CPU with no torch at inference, 2 to 8 points below the frozen encoder at roughly 90 times its "
+                 "single-text speed.",
         "source": "experiments/results/e1_banking77_ladder.json",
     },
     "e1-zeroshot": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "Zero-shot similarity to the label names (bge-small) reached 68.0% on Banking77 with no training data, "
+                 "with confidence off by 0.30 (ECE) until calibrated: a first look and a shortlister, not a deployable "
+                 "classifier. Eight labels per class with a frozen encoder beat it by 18 points.",
         "source": "experiments/results/e1_banking77_ladder.json",
     },
     "e1-calibration": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "Before calibration every student's stated confidence was off by 0.06 to 0.45 (ECE), worst with few "
+                 "labels. Temperature scaling on 385 held-out examples brought it to 0.011-0.044 for every student and "
+                 "data size.",
         "source": "experiments/results/e1_banking77_ladder.json",
     },
     "e2-teacher": {

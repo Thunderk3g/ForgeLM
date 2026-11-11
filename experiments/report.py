@@ -69,7 +69,9 @@ if e1:
             f"**Setup.** {ds['classes']} banking intents, {ds['test']} test texts. {ds['calibration_anchor']} "
             f"training texts (5 per class) are held out to fit the confidence temperature and are never "
             f"trained on. Few-shot rows are the mean ± standard deviation over 3 random draws; full-data rows "
-            f"are one run. Library-default settings, no tuning against the test split.", ""]
+            f"are one run. No hyper-parameter search: the linear-head students use library defaults, and the "
+            f"fine-tuned encoder uses settings fixed in advance (learning rate 1e-4, batch 32, 64 tokens, "
+            f"30 / 12 / 5 epochs), so it could score higher with tuning.", ""]
     groups = defaultdict(list)
     for r in e1["rows"]:
         groups[(r["student"], str(r["labels_per_class"]))].append(r)
@@ -99,6 +101,8 @@ if e1:
             "(lower is better):", "", table(["Student", "0 labels", "8 per class", "32 per class", "all"], rows), ""]
     rows = []
     for s in students:
+        if not any((s, k) in groups for k in regimes[1:]):
+            continue  # the zero-shot student is not trained
         row = [s]
         for k in regimes[1:]:
             g = groups.get((s, k))
@@ -107,7 +111,8 @@ if e1:
     out += ["Training time on 4 CPU cores (embedding time included for the embedding students):", "",
             table(["Student", "8 per class", "32 per class", "all"], rows), ""]
     e1b = load("e1b_modernbert_full")
-    serving = list(e1["serving"]) + (e1b["serving"] if e1b else [])
+    e1c = load("e1c_serving")
+    serving = e1c["serving"] if e1c else list(e1["serving"]) + (e1b["serving"] if e1b else [])
     acc = {s: np.mean([x["accuracy"] for x in groups[(s, "full")]]) for s in students if (s, "full") in groups}
     if e1b:
         for r in e1b["rows"]:
@@ -115,7 +120,8 @@ if e1:
             out_mb = r
     rows = [[s["student"], pct(acc.get(s["student"])), f"{s['latency_ms_p50']:.2f}", f"{s['latency_ms_p95']:.2f}",
              f"{s['throughput_per_s']:,.0f}", f"{s['artefact_mb']:.1f}", s.get("note", "")] for s in serving]
-    out += ["Serving cost of the full-data students (PyTorch / numpy, before any ONNX export):", "",
+    out += ["Serving cost of the full-data students (PyTorch / numpy, before any ONNX export"
+            + ("; measured in a separate run with nothing else using the machine" if e1c else "") + "):", "",
             table(["Student", "Accuracy", "p50 ms / text", "p95 ms / text", "texts / s (batch 32)", "Artefact MB",
                    "Note"], rows), ""]
     if e1b:
