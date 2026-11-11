@@ -163,7 +163,8 @@ class HardwareDetector:
                 gpu_memory_gb=self._detect_gpu_memory(),
                 gpu_name=self._detect_gpu_name(),
                 gpu_compute_capability=self._detect_compute_capability(),
-                gpu_driver_version=self._detect_gpu_driver(),
+                # The driver query is an nvidia-smi call: there is nothing to ask on AMD, Apple or Intel.
+                gpu_driver_version="Unknown" if accelerator in _VENDOR_ACCELERATORS else self._detect_gpu_driver(),
                 cuda_available=torch.cuda.is_available(),
                 
                 # CPU Detection
