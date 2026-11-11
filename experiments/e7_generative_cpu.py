@@ -94,10 +94,10 @@ def log(*parts):
     print(f"[{time.time() - started_all:7.1f}s]", *parts, flush=True)
 
 
-def peak_rss_gb(who=resource.RUSAGE_SELF) -> float:
-    # ru_maxrss is in KiB on Linux: the high-water mark of this process (or
-    # of its finished children) since it started.
-    return round(resource.getrusage(who).ru_maxrss / 1024 ** 2, 3)
+def peak_rss_gb() -> float:
+    # ru_maxrss is in KiB on Linux: the high-water mark of this process since
+    # it started, so each reading covers every stage before it.
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 ** 2, 3)
 
 
 def size_mb(path) -> float:
@@ -319,7 +319,9 @@ def run_gguf():
         files[key]["bits_per_weight"] = round(Path(files[key]["path"]).stat().st_size * 8 / n_params, 2)
     files["gguf_q4_k_m"]["hidden_size"] = hidden
     files["gguf_q4_k_m"]["hidden_size_multiple_of_256"] = bool(hidden and hidden % 256 == 0)
-    result["peak_rss_gb"]["converter_subprocess"] = peak_rss_gb(resource.RUSAGE_CHILDREN)
+    # The converter's own peak is not recorded: RUSAGE_CHILDREN on Linux
+    # counts the child's memory before exec, which is a copy of this
+    # process's, so it would only repeat the number above.
 
     hf_tokenizer = tokenizer
     trips = {}

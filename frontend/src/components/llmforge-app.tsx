@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Toaster, toast } from "react-hot-toast"
-import { Brain, Activity, Zap, XCircle, MessageSquare, Settings, Home, Workflow, BookOpen, BarChart3 } from "lucide-react"
+import { Brain, Activity, Zap, XCircle, MessageSquare, Settings, Home, Workflow, BookOpen, BarChart3, Factory } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 import { ModelSelector } from "./model-selector"
@@ -39,7 +39,7 @@ interface MetricData {
 }
 
 interface LLMForgeAppProps {
-  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "analytics") => void
+  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "analytics" | "factory") => void
 }
 
 function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
@@ -436,6 +436,11 @@ function LLMForgeApp({ onNavigate }: LLMForgeAppProps) {
                 <Button variant="ghost" onClick={() => onNavigate("workflow")} className="text-sm">
                   <Workflow className="mr-2 h-4 w-4" />
                   Workflows
+                </Button>
+
+                <Button variant="ghost" onClick={() => onNavigate("factory")} className="text-sm">
+                  <Factory className="mr-2 h-4 w-4" />
+                  Factory
                 </Button>
 
                 <Button variant="ghost" onClick={() => onNavigate("analytics")} className="text-sm">

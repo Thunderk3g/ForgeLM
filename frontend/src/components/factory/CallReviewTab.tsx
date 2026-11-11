@@ -173,7 +173,7 @@ function ReviewResult({ result, utterances }: { result: ReviewCallResponse; utte
                       <span className="sr-only">{span === null ? ": missing" : ": found"}</span>
                     </p>
                     {span === null ? (
-                      <p className="text-xs text-destructive">missing</p>
+                      <p className="text-xs text-destructive dark:text-destructive-foreground">missing</p>
                     ) : (
                       <p className="break-words text-xs text-muted-foreground">
                         <q>{span}</q>
@@ -277,7 +277,7 @@ export function CallReviewTab({ classifiers }: { classifiers: QueryResult<Classi
 
   return (
     <div className="grid gap-6 xl:grid-cols-5">
-      <Card className="h-fit xl:col-span-2">
+      <Card className="h-fit min-w-0 xl:col-span-2">
         <CardHeader>
           <CardTitle>Screen a sales call</CardTitle>
           <CardDescription>
@@ -381,7 +381,7 @@ export function CallReviewTab({ classifiers }: { classifiers: QueryResult<Classi
         </CardContent>
       </Card>
 
-      <div className="space-y-6 xl:col-span-3">
+      <div className="min-w-0 space-y-6 xl:col-span-3">
         {review.loading && <LoadingState label="Screening the call..." />}
         {review.error !== null && <ErrorState error={review.error} />}
         {!review.loading && !review.error && !review.data && (

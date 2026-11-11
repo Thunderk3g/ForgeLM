@@ -25,7 +25,7 @@ const fetchReference = (reference: string) => factoryApi.hardware(reference)
 function usability(a: Accelerator): { text: string; className: string } {
   if (a.torch_usable === true) return { text: "usable", className: "bg-chart-2/15 text-chart-2 border-chart-2/30" }
   if (a.torch_usable === false)
-    return { text: "not usable by installed torch", className: "bg-destructive/15 text-destructive border-destructive/30" }
+    return { text: "not usable by installed torch", className: "bg-destructive/15 text-destructive dark:text-destructive-foreground border-destructive/30" }
   return { text: "torch not checked", className: "text-muted-foreground" }
 }
 
@@ -35,7 +35,7 @@ function ProfileView({ data }: { data: HardwareResponse }) {
   const packages = Object.entries(p.packages).sort(([a], [b]) => a.localeCompare(b))
   return (
     <div className="grid gap-6 lg:grid-cols-3">
-      <Card className="lg:col-span-2">
+      <Card className="min-w-0 lg:col-span-2">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Cpu className="h-5 w-5 text-primary" aria-hidden="true" />
@@ -140,7 +140,7 @@ function ProfileView({ data }: { data: HardwareResponse }) {
         </CardContent>
       </Card>
 
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-6">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -179,9 +179,9 @@ function ProfileView({ data }: { data: HardwareResponse }) {
             {packages.length ? (
               <ul className="grid grid-cols-1 gap-1 text-sm sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
                 {packages.map(([name, version]) => (
-                  <li key={name} className="flex justify-between gap-2 rounded border px-2 py-1">
-                    <span className="font-mono">{name}</span>
-                    <span className="text-muted-foreground">{version}</span>
+                  <li key={name} className="flex min-w-0 justify-between gap-2 rounded border px-2 py-1">
+                    <span className="min-w-0 break-all font-mono">{name}</span>
+                    <span className="shrink-0 text-muted-foreground">{version}</span>
                   </li>
                 ))}
               </ul>

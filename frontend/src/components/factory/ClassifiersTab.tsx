@@ -73,7 +73,7 @@ function ContractBadge({ passed }: { passed: boolean | null | undefined }) {
     )
   if (passed === false)
     return (
-      <Badge variant="outline" className="border-destructive/40 text-destructive">
+      <Badge variant="outline" className="border-destructive/40 text-destructive dark:text-destructive-foreground">
         <XCircle aria-hidden="true" /> contract failed
       </Badge>
     )
@@ -88,7 +88,7 @@ function ContractVerdictView({ verdict }: { verdict: ContractVerdict }) {
         <code className="text-xs text-muted-foreground">{verdict.contract}</code>
       </div>
       {verdict.failures.length > 0 && (
-        <ul className="list-disc space-y-1 pl-5 text-sm text-destructive">
+        <ul className="list-disc space-y-1 pl-5 text-sm text-destructive dark:text-destructive-foreground">
           {verdict.failures.map((f) => (
             <li key={f}>{f}</li>
           ))}
@@ -287,7 +287,7 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
             </Field>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-4">
             <Field
               id={`${uid}-model`}
               label="Base model"
@@ -308,7 +308,7 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
               </Select>
             </Field>
             <div className="grid grid-cols-3 gap-3">
-              <Field id={`${uid}-holdout`} label="Hold-out">
+              <Field id={`${uid}-holdout`} label="Hold-out share">
                 <Input
                   id={`${uid}-holdout`}
                   type="number"
@@ -407,7 +407,7 @@ function TrainForm({ onTrained }: { onTrained: (result: TrainResponse) => void }
                   </ul>
                 </>
               )}
-              {parsed && parsed.errors.length > 0 && <p className="text-destructive">{parsed.errors.join(" ")}</p>}
+              {parsed && parsed.errors.length > 0 && <p className="text-destructive dark:text-destructive-foreground">{parsed.errors.join(" ")}</p>}
             </div>
           </div>
 
@@ -669,11 +669,11 @@ export function ClassifiersTab({ list }: { list: QueryResult<ClassifierListRespo
 
   return (
     <div className="grid gap-6 xl:grid-cols-5">
-      <div className="space-y-6 xl:col-span-2">
+      <div className="min-w-0 space-y-6 xl:col-span-2">
         <ClassifierList list={list} selected={selected} onSelect={select} />
         <TrainForm onTrained={onTrained} />
       </div>
-      <div ref={detailRef} className="space-y-6 xl:col-span-3 scroll-mt-20">
+      <div ref={detailRef} className="min-w-0 scroll-mt-20 space-y-6 xl:col-span-3">
         {lastTrained && <TrainResult result={lastTrained} />}
         {selected === null ? (
           <Card>

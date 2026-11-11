@@ -14,7 +14,8 @@ import {
   Lightbulb,
   AlertCircle,
   CheckCircle,
-  ExternalLink
+  ExternalLink,
+  Factory
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,7 +24,7 @@ import { Separator } from "@/components/ui/separator"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 interface DocsPageProps {
-  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "chat" | "analytics") => void
+  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "chat" | "analytics" | "factory") => void
 }
 
 const docSections = [
@@ -114,6 +115,10 @@ export default function DocsPage({ onNavigate }: DocsPageProps) {
               <Button variant="ghost" onClick={() => onNavigate("workflow")} className="text-sm">
                 <Workflow className="mr-2 h-4 w-4" />
                 Workflows
+              </Button>
+              <Button variant="ghost" onClick={() => onNavigate("factory")} className="text-sm">
+                <Factory className="mr-2 h-4 w-4" />
+                Factory
               </Button>
               <Button variant="ghost" onClick={() => onNavigate("analytics")} className="text-sm">
                 <BarChart3 className="mr-2 h-4 w-4" />

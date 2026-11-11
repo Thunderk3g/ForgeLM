@@ -19,6 +19,7 @@ import {
   Zap,
   Download,
   Upload,
+  Factory,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -26,7 +27,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 
 interface WorkflowPageProps {
-  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "analytics") => void
+  onNavigate: (page: "home" | "training" | "workflow" | "docs" | "analytics" | "factory") => void
 }
 
 const workflowSteps = [
@@ -159,6 +160,10 @@ export default function WorkflowPage({ onNavigate }: WorkflowPageProps) {
               <Button variant="default" className="text-sm">
                 <Workflow className="mr-2 h-4 w-4" />
                 Workflows
+              </Button>
+              <Button variant="ghost" onClick={() => onNavigate("factory")} className="text-sm">
+                <Factory className="mr-2 h-4 w-4" />
+                Factory
               </Button>
               <Button variant="ghost" onClick={() => onNavigate("analytics")} className="text-sm">
                 <BarChart3 className="mr-2 h-4 w-4" />

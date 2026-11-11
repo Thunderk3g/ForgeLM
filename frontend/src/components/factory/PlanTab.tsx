@@ -237,7 +237,7 @@ function StepCard({ step, index }: { step: PlanStep; index: number }) {
         <div className="flex flex-wrap gap-2 pl-10 sm:pl-0">
           <EvidenceBadge level={step.evidence_level} />
           {!step.feasible && (
-            <Badge variant="outline" className="border-destructive/40 text-destructive">
+            <Badge variant="outline" className="border-destructive/40 text-destructive dark:text-destructive-foreground">
               not runnable here
             </Badge>
           )}
@@ -371,7 +371,7 @@ export function PlanTab({ referenceProfiles }: { referenceProfiles: string[] }) 
 
   return (
     <div className="grid gap-6 xl:grid-cols-5">
-      <Card className="xl:col-span-2 h-fit">
+      <Card className="h-fit min-w-0 xl:col-span-2">
         <CardHeader>
           <CardTitle>Describe the task</CardTitle>
           <CardDescription>The planner returns the cheapest approach the evidence supports, and why.</CardDescription>
@@ -467,7 +467,7 @@ export function PlanTab({ referenceProfiles }: { referenceProfiles: string[] }) 
         </CardContent>
       </Card>
 
-      <div className="space-y-6 xl:col-span-3">
+      <div className="min-w-0 space-y-6 xl:col-span-3">
         {planCall.loading && <LoadingState label="Asking the planner..." />}
         {planCall.error !== null && <ErrorState error={planCall.error} />}
         {!planCall.loading && !planCall.error && !plan && (

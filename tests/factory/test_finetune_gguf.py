@@ -485,6 +485,20 @@ def test_finetune_rejects_bad_data_before_loading_a_model(tmp_path, capsys):
     assert "last message must be the assistant" in capsys.readouterr().err
 
 
+def test_finetune_eval_exact_without_eval_data_is_refused_up_front(tmp_path, capsys):
+    data = tmp_path / "train.jsonl"
+    data.write_text(json.dumps({"messages": conversation()}) + "\n")
+    assert main(["finetune", "--data", str(data), "--base-model", "m", "--out", str(tmp_path / "o"),
+                 "--eval-exact"]) == 2
+    assert "--eval-exact needs --eval-data" in capsys.readouterr().err
+
+
+def test_export_gguf_reports_an_adapter_directory_that_is_not_one(tmp_path, capsys):
+    pytest.importorskip("peft")
+    assert main(["export-gguf", "--adapter", str(tmp_path), "--out", str(tmp_path / "out")]) == 2
+    assert "adapter_config.json" in capsys.readouterr().err
+
+
 def test_export_gguf_reports_a_missing_converter(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv(gguf.CONVERT_ENV, raising=False)
     model = tmp_path / "merged"

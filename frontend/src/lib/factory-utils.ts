@@ -71,7 +71,7 @@ export function splitCsv(source: string): string[][] {
   let row: string[] = []
   let field = ""
   let quoted = false
-  const text = source.replace(/^﻿/, "") // a byte-order mark from spreadsheet exports
+  const text = source.replace(/^\uFEFF/, "") // a byte-order mark from spreadsheet exports
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (quoted) {

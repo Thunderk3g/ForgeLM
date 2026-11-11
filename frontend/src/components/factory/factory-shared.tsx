@@ -41,9 +41,9 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   return (
     <Alert variant="destructive">
       <ServerCrash aria-hidden="true" />
-      <AlertTitle>{title}</AlertTitle>
+      <AlertTitle className="text-destructive dark:text-destructive-foreground">{title}</AlertTitle>
       <AlertDescription>
-        <p className="break-words">{message}</p>
+        <p className="break-words text-destructive dark:text-destructive-foreground">{message}</p>
         {hint && <p className="text-muted-foreground">{hint}</p>}
         {onRetry && (
           <Button variant="outline" size="sm" className="mt-2" onClick={onRetry}>
@@ -62,9 +62,9 @@ export function InputProblems({ problems }: { problems: string[] }) {
   return (
     <Alert variant="destructive">
       <AlertTriangle aria-hidden="true" />
-      <AlertTitle>Fix before sending</AlertTitle>
+      <AlertTitle className="text-destructive dark:text-destructive-foreground">Fix before sending</AlertTitle>
       <AlertDescription>
-        <ul className="list-disc space-y-1 pl-4">
+        <ul className="list-disc space-y-1 pl-4 text-destructive dark:text-destructive-foreground">
           {problems.map((p) => (
             <li key={p}>{p}</li>
           ))}
