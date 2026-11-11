@@ -1,0 +1,242 @@
+{
+  "experiment": "E9 retrieval for financial question answering on BEIR FiQA-2018 (test queries)",
+  "question": "how do lexical, static-embedding, encoder-embedding and hybrid retrieval compare, and what do they cost on a CPU?",
+  "dataset": {
+    "name": "BeIR/fiqa (corpus, queries) + BeIR/fiqa-qrels (test.tsv)",
+    "licence": "cc-by-sa-4.0 per the BeIR/fiqa dataset card",
+    "full_corpus_passages": 57638,
+    "passages_used": 15000,
+    "judged_relevant_passages": 1706,
+    "random_distractors": 13294,
+    "seed": 0,
+    "queries": 648,
+    "passage_words_mean": 137.5,
+    "passage_words_p95": 378,
+    "comparability": "SUBSAMPLED CORPUS: all 1706 judged-relevant passages plus 13294 random distractors out of 57638. With most distractors removed this is easier than the full benchmark; scores are NOT comparable with published FiQA results, only with each other."
+  },
+  "rows": [
+    {
+      "system": "BM25",
+      "recall@10": 0.4172,
+      "ndcg@10": 0.3451,
+      "mrr@10": 0.4162,
+      "recall@100": 0.6272,
+      "ndcg@10_95ci": [
+        0.3185,
+        0.3725
+      ],
+      "index_build_seconds": 1.2,
+      "query_ms_mean": 0.38,
+      "query_ms_p95": 0.53,
+      "index_size_mb": 14.9,
+      "n_queries": 648,
+      "all_metrics": {
+        "recall@1": 0.1649,
+        "mrr@1": 0.3225,
+        "ndcg@1": 0.3225,
+        "recall@5": 0.3353,
+        "mrr@5": 0.4058,
+        "ndcg@5": 0.3179,
+        "recall@10": 0.4172,
+        "mrr@10": 0.4162,
+        "ndcg@10": 0.3451,
+        "recall@100": 0.6272,
+        "mrr@100": 0.4238,
+        "ndcg@100": 0.401
+      },
+      "settings": {
+        "k1": 1.2,
+        "b": 0.75,
+        "vocabulary": 40759,
+        "model_weights_mb": 0.0
+      }
+    },
+    {
+      "system": "dense, potion-base-32M (static)",
+      "recall@10": 0.3373,
+      "ndcg@10": 0.2692,
+      "mrr@10": 0.3243,
+      "recall@100": 0.6121,
+      "ndcg@10_95ci": [
+        0.2436,
+        0.2942
+      ],
+      "index_build_seconds": 1.91,
+      "query_ms_mean": 0.74,
+      "query_ms_p95": 1.03,
+      "index_size_mb": 30.72,
+      "n_queries": 648,
+      "all_metrics": {
+        "recall@1": 0.1201,
+        "mrr@1": 0.233,
+        "ndcg@1": 0.233,
+        "recall@5": 0.2719,
+        "mrr@5": 0.3142,
+        "ndcg@5": 0.2469,
+        "recall@10": 0.3373,
+        "mrr@10": 0.3243,
+        "ndcg@10": 0.2692,
+        "recall@100": 0.6121,
+        "mrr@100": 0.3346,
+        "ndcg@100": 0.3405
+      },
+      "settings": {
+        "build_seconds_from_cache": false,
+        "model_load_seconds": 0.47,
+        "model": "minishlab/potion-base-32M",
+        "backend": "static",
+        "query_prefix": null,
+        "max_seq_length": null,
+        "model_weights_mb": 129.2,
+        "dimensions": 512
+      }
+    },
+    {
+      "system": "dense, bge-small-en-v1.5 (encoder)",
+      "recall@10": 0.5829,
+      "ndcg@10": 0.5194,
+      "mrr@10": 0.6063,
+      "recall@100": 0.8223,
+      "ndcg@10_95ci": [
+        0.4914,
+        0.5473
+      ],
+      "index_build_seconds": 720.45,
+      "query_ms_mean": 98.11,
+      "query_ms_p95": 155.41,
+      "index_size_mb": 23.04,
+      "n_queries": 648,
+      "all_metrics": {
+        "recall@1": 0.2667,
+        "mrr@1": 0.5216,
+        "ndcg@1": 0.5216,
+        "recall@5": 0.5008,
+        "mrr@5": 0.599,
+        "ndcg@5": 0.494,
+        "recall@10": 0.5829,
+        "mrr@10": 0.6063,
+        "ndcg@10": 0.5194,
+        "recall@100": 0.8223,
+        "mrr@100": 0.6124,
+        "ndcg@100": 0.5831
+      },
+      "settings": {
+        "build_seconds_from_cache": false,
+        "model_load_seconds": 5.37,
+        "model": "BAAI/bge-small-en-v1.5",
+        "backend": "sentence",
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "max_seq_length": 512,
+        "model_weights_mb": 133.4,
+        "dimensions": 384
+      }
+    },
+    {
+      "system": "hybrid, BM25 + bge-small (RRF 60)",
+      "recall@10": 0.5278,
+      "ndcg@10": 0.4591,
+      "mrr@10": 0.5462,
+      "recall@100": 0.7984,
+      "ndcg@10_95ci": [
+        0.4326,
+        0.4873
+      ],
+      "index_build_seconds": 721.66,
+      "query_ms_mean": 100.51,
+      "query_ms_p95": 155.38,
+      "index_size_mb": 37.94,
+      "n_queries": 648,
+      "all_metrics": {
+        "recall@1": 0.2298,
+        "mrr@1": 0.4552,
+        "ndcg@1": 0.4552,
+        "recall@5": 0.4557,
+        "mrr@5": 0.5374,
+        "ndcg@5": 0.4381,
+        "recall@10": 0.5278,
+        "mrr@10": 0.5462,
+        "ndcg@10": 0.4591,
+        "recall@100": 0.7984,
+        "mrr@100": 0.5545,
+        "ndcg@100": 0.5345
+      },
+      "settings": {
+        "rrf_k": 60,
+        "depth_per_component": 100,
+        "model_weights_mb": 133.4,
+        "note": "build = BM25 build + bge-small encoding"
+      }
+    }
+  ],
+  "paired_ndcg@10_differences": {
+    "hybrid, BM25 + bge-small (RRF 60) minus dense, bge-small-en-v1.5 (encoder)": {
+      "ndcg@10_difference": -0.0603,
+      "95ci": [
+        -0.0799,
+        -0.0409
+      ]
+    },
+    "hybrid, BM25 + bge-small (RRF 60) minus BM25": {
+      "ndcg@10_difference": 0.114,
+      "95ci": [
+        0.0996,
+        0.1292
+      ]
+    },
+    "dense, bge-small-en-v1.5 (encoder) minus BM25": {
+      "ndcg@10_difference": 0.1743,
+      "95ci": [
+        0.1487,
+        0.1998
+      ]
+    },
+    "dense, potion-base-32M (static) minus BM25": {
+      "ndcg@10_difference": -0.0759,
+      "95ci": [
+        -0.0984,
+        -0.054
+      ]
+    }
+  },
+  "settings": {
+    "tokenizer": "lowercase, maximal runs of Unicode word characters (\\w+), no stemming or stop words",
+    "bge_query_instruction": "Represent this sentence for searching relevant passages: ",
+    "search_k": 100,
+    "timing": "one query at a time, query encoding included, after the model is loaded",
+    "omp_num_threads": null,
+    "torch_threads": 4
+  },
+  "environment": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ram_gb": 15.71,
+    "device_class": "cpu",
+    "cpu_flags": [
+      "avx",
+      "avx2",
+      "avx512f",
+      "avx512bw",
+      "avx512_vnni",
+      "avx_vnni",
+      "amx_int8",
+      "amx_bf16",
+      "fma",
+      "f16c"
+    ],
+    "python": "3.13.18",
+    "packages": {
+      "torch": "2.15.0",
+      "transformers": "5.22.2",
+      "peft": "0.21.2",
+      "sentence_transformers": "6.2.0",
+      "model2vec": "0.10.0",
+      "onnxruntime": "1.29.0",
+      "sklearn": "1.9.1",
+      "lightgbm": "4.7.0",
+      "interpret": "0.7.8",
+      "tabicl": "2.2.0"
+    },
+    "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"
+  },
+  "generated_utc": "2026-11-11T16:54:07Z"
+}

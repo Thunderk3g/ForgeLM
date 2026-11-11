@@ -45,15 +45,15 @@ Training time on 4 CPU cores (embedding time included for the embedding students
 | frozen bge-small + LR | 5 s | 12 s | 38 s |
 | fine-tuned MiniLM-L6 (22M) | 287 s | 503 s | 790 s |
 
-Serving cost of the full-data students (PyTorch / numpy, before any ONNX export):
+Serving cost of the full-data students (PyTorch / numpy, before any ONNX export; measured in a separate run with nothing else using the machine):
 
 | Student | Accuracy | p50 ms / text | p95 ms / text | texts / s (batch 32) | Artefact MB | Note |
 |---|---|---|---|---|---|---|
-| static potion-32M + LR | 91.0% | 0.14 | 0.24 | 18,580 | 0.1 | size is the classifier head only; the shared embedding model is separate |
-| frozen bge-small + LR | 93.1% | 12.94 | 17.33 | 146 | 0.1 | size is the classifier head only; the shared embedding model is separate |
-| fine-tuned MiniLM-L6 (22M) | 90.5% | 5.50 | 7.57 | 512 | 91.7 |  |
-| tfidf + LR | 91.2% | 4.72 | 10.05 | 4,131 | 11.1 |  |
-| fine-tuned ModernBERT-base (149M) | 93.1% | 41.41 | 49.73 | 57 | 602.3 |  |
+| tfidf + LR | 91.2% | 9.63 | 15.93 | 4,038 | 11.1 |  |
+| static potion-32M + LR | 91.0% | 0.22 | 0.30 | 13,553 | 0.1 | size is the classifier head only; the shared embedding model is separate |
+| frozen bge-small + LR | 93.1% | 11.13 | 17.45 | 120 | 0.1 | size is the classifier head only; the shared embedding model is separate |
+| fine-tuned MiniLM-L6 (22M) | 90.5% | 6.20 | 8.03 | 422 | 91.7 |  |
+| fine-tuned ModernBERT-base (149M) | 93.1% | 44.13 | 55.20 | 24 | 602.3 |  |
 
 ModernBERT-base (149M), fine-tuned for 3 epochs on the full set in a separate run: 93.1% accuracy, ECE 0.023 → 0.019, 50 minutes of CPU training.
 
@@ -306,3 +306,23 @@ Costlier minus cheaper, paired bootstrap 95% interval and exact McNemar p:
 
 Recommend 'frozen bge-small + LR' (accuracy 0.875, no LLM at inference, 0.0026 s per item). Cheaper options were beaten by enough to pay for, with the bootstrap interval and the exact McNemar test agreeing: 'frozen bge-small + LR' beats 'static potion-32M + LR' (+6.1 points, 95% interval +3.9 to +8.3, McNemar p=5.7e-08). Of the costlier options, 'zero-shot embedding similarity (bge-small)' is worse (-20.0 points, 95% interval -23.0 to -16.9, McNemar p=1.5e-36); 'nearest-neighbour vote, k=5 (bge-small)' does not gain enough to be worth paying for (-1.6 points, 95% interval -3.2 to +0.0, McNemar p=0.072); 'LLM zero-shot, 10 options' is worse (-28.3 points, 95% interval -31.6 to -25.1, McNemar p=3.1e-58); 'LLM few-shot, 5 retrieved demos' is worse (-20.6 points, 95% interval -23.6 to -17.7, McNemar p=2.3e-39). The intervals on 1000 test items are narrow enough to settle these comparisons.
 ```
+
+## E9. Retrieval for financial question answering
+
+**Question.** For financial questions, how do lexical, static-embedding, encoder-embedding and hybrid retrieval compare, and what do they cost on a CPU?
+
+**Setup.** BeIR/fiqa (corpus, queries) + BeIR/fiqa-qrels (test.tsv) (cc-by-sa-4.0 per the BeIR/fiqa dataset card). 648 test queries over 15,000 passages: all 1,706 judged-relevant passages plus 13,294 random distractors from 57,638. SUBSAMPLED CORPUS: all 1706 judged-relevant passages plus 13294 random distractors out of 57638. With most distractors removed this is easier than the full benchmark; scores are NOT comparable with published FiQA results, only with each other.
+
+| System | Recall@10 | nDCG@10 | nDCG@10 95% interval | MRR@10 | Recall@100 | Index build s | ms / query | Index MB |
+|---|---|---|---|---|---|---|---|---|
+| BM25 | 0.417 | 0.345 | 0.319-0.372 | 0.416 | 0.627 | 1.2 | 0.4 | 15 |
+| dense, potion-base-32M (static) | 0.337 | 0.269 | 0.244-0.294 | 0.324 | 0.612 | 1.9 | 0.7 | 31 |
+| dense, bge-small-en-v1.5 (encoder) | 0.583 | 0.519 | 0.491-0.547 | 0.606 | 0.822 | 720.5 | 98.1 | 23 |
+| hybrid, BM25 + bge-small (RRF 60) | 0.528 | 0.459 | 0.433-0.487 | 0.546 | 0.798 | 721.7 | 100.5 | 38 |
+
+Paired differences in nDCG@10 (95% bootstrap interval over queries):
+
+- hybrid, BM25 + bge-small (RRF 60) minus dense, bge-small-en-v1.5 (encoder): -0.060 (-0.080 to -0.041)
+- hybrid, BM25 + bge-small (RRF 60) minus BM25: +0.114 (+0.100 to +0.129)
+- dense, bge-small-en-v1.5 (encoder) minus BM25: +0.174 (+0.149 to +0.200)
+- dense, potion-base-32M (static) minus BM25: -0.076 (-0.098 to -0.054)

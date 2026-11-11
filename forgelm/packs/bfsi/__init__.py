@@ -186,12 +186,13 @@ USE_CASES: Dict[str, dict] = {
     "policy_regulation_qa": {
         "title": "Policy interpretation and regulatory Q&A",
         "architecture": "retrieval with a reasoning model",
-        "recipe": "hybrid retrieval over the current text, answer with verbatim citations, human review for "
+        "recipe": "dense retrieval over the current text (measure fusion with BM25 before adopting it), answer "
+                  "with verbatim citations checked by verify_quotes, human review for "
                   "anything customer-facing",
         "why": "a knowledge task whose source text changes; retrieval beats fine-tuning for knowledge",
         "costly_error": "confident wrong answer",
-        "evidence": ["rag-over-finetune"],
-        "proxy_dataset": "ObliQA (regulatory QA), theatticusproject/cuad-qa",
+        "evidence": ["e9-retrieval", "rag-over-finetune"],
+        "proxy_dataset": "ObliQA (regulatory QA), theatticusproject/cuad-qa; BeIR/fiqa measured in E9",
     },
     "document_classification": {
         "title": "Document classification and routing (KYC, proposals, claims)",

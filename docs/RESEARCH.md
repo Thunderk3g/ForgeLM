@@ -242,7 +242,7 @@ secondary write-ups; have counsel confirm each against the regulation text.
 | Use case | Recommended | Why |
 |---|---|---|
 | Sales-call compliance, mis-selling | rules, then compact classifier, then larger model on flagged spans, then a person | LLM judges alone were modest; a fine-tuned compact judge matched them; audit needs spans **[snippet]** |
-| Policy and regulation Q&A | retrieval with a reasoning model and quoted sources | retrieval beats fine-tuning for knowledge **[snippet]** |
+| Policy and regulation Q&A | dense retrieval with a reasoning model and quoted sources | retrieval beats fine-tuning for knowledge **[snippet]**; on FiQA a dense encoder beat BM25 and beat an equal-weight hybrid **[measured]** |
 | Document classification | compact fine-tuned classifier | cheap, plentiful labels; 95%+ on public document benchmarks **[snippet]** |
 | Risk categorisation, underwriting triage | classical ML (GLM, GBDT, EBM) | not beaten in published insurance tests **[snippet]**; E4 **[measured]** |
 | Marketing-material checks | rules, retrieval, larger model, human sign-off | no benchmark exists; unproven |

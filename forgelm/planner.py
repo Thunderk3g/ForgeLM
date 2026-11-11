@@ -393,9 +393,18 @@ def _plan_document_qa(task: TaskSpec, c: Constraints, hw: HardwareProfile, deplo
                 "cite, the current text. Fine-tuning does not inject knowledge reliably")
     S = plan.steps
     S.append(_step(hw, "retrieval with quoted sources",
-                   "hybrid lexical + dense retrieval, reranker, answer with verbatim citations",
-                   "retrieval equalises knowledge across models; citations make every answer checkable",
-                   ["rag-over-finetune"]))
+                   "forgelm.retrieval.DenseIndex over chunked documents (a sentence encoder such as bge-small), "
+                   "answers with numbered citations, and verify_quotes on every generated answer",
+                   "retrieval equalises knowledge across models; citations make every answer checkable. On "
+                   "financial QA a dense encoder beat BM25 by 0.17 nDCG@10, and an equal-weight BM25 + dense "
+                   "fusion was worse than dense alone, so do not assume hybrid helps: measure it with "
+                   "evaluate_retrieval on your own questions",
+                   ["e9-retrieval", "rag-over-finetune"], ["sentence_transformers"]))
+    S.append(_step(hw, "BM25 as the near-free fallback",
+                   "forgelm.retrieval.BM25Index",
+                   "about 0.4 ms per query and no model, for when an encoder cannot run on the target; "
+                   "noticeably weaker on paraphrased questions",
+                   ["e9-retrieval"]))
     S.append(_step(hw, "compact classifiers around the retriever",
                    "FineTunedStudent / EmbeddingStudent for obligation-sentence detection, document routing, "
                    "query intent",

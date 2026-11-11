@@ -116,6 +116,15 @@ EVIDENCE: Dict[str, dict] = {
                  "model (paired bootstrap and exact McNemar agree, p < 1e-38).",
         "source": "experiments/results/e8_prompt_or_train.json",
     },
+    "e9-retrieval": {
+        "level": "measured",
+        "claim": "On FiQA financial QA (648 test queries, 15,000-passage subsample, not comparable with published "
+                 "scores), dense retrieval with bge-small reached nDCG@10 0.519 against 0.345 for BM25 and 0.269 "
+                 "for static potion embeddings. Equal-weight reciprocal-rank fusion of BM25 and bge-small scored "
+                 "0.459, significantly below dense alone (-0.060, 95% interval -0.080 to -0.041). BM25 answered "
+                 "in 0.4 ms per query, bge-small in about 100 ms on CPU.",
+        "source": "experiments/results/e9_retrieval.json",
+    },
     # ---- published -----------------------------------------------------
     "peft-benchmark": {
         "level": "published",
