@@ -329,7 +329,9 @@ def _plan_generation(task: TaskSpec, c: Constraints, hw: HardwareProfile, deploy
     name, cfg, notes = generative.lora_config("lora", rank=32)
     S.append(_step(hw, f"LoRA fine-tune a {task.model_params_billion:g}B model with {choice.backend}",
                    f"{choice.backend} on {choice.device}, {choice.load_bits}-bit weights, {choice.precision}; "
-                   f"LoRA r=32 with rank-stabilised scaling on attention and MLP projections",
+                   f"plain LoRA r={cfg['r']} (alpha {cfg['lora_alpha']}) on attention and MLP projections. Rank-stabilised scaling "
+                   f"(rsLoRA) is an option to try, together with a learning-rate sweep, because it changes "
+                   f"the adapter scale",
                    "; ".join(choice.reasons),
                    ["peft-benchmark", "lora-lr", "vram-heuristic"],
                    ["torch", "transformers", "peft", "trl"] if choice.backend != "mlx_lm" else ["mlx_lm"],
@@ -342,9 +344,11 @@ def _plan_generation(task: TaskSpec, c: Constraints, hw: HardwareProfile, deploy
     plan.deployment.append("re-run the evaluation contract on the quantised artefact; measure against your own "
                            "16-bit model rather than quoting perplexity tables")
     plan.not_recommended += [
-        {"what": "DoRA, PiSSA, OLoRA, LoftQ as defaults",
+        {"what": "DoRA, PiSSA, OLoRA as defaults",
          "why": "no consistent gain over well-tuned LoRA; available as advanced options. Sweep the learning "
                 "rate before changing the method"},
+        {"what": "LoftQ", "why": "not offered: it needs the unquantised base model, which a fine-tune request "
+                                 "does not carry"},
         {"what": "VeRA, IA3, BOFT, LoRA-FA", "why": "7-13 points worse than LoRA in the PEFT project benchmark"},
         {"what": "pruning (Wanda / SparseGPT) for deployment",
          "why": "costs far more quality than 4-bit quantisation and needs sparse kernels to be faster"},

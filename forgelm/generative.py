@@ -35,8 +35,21 @@ def estimate_memory_gb(params_billion: float, bits: int = 4, batch_size: int = 2
     requirements for 3B-70B models (see tests), and those published figures
     themselves disagree by up to 2x. Always confirm with a few real steps at
     the intended batch size and sequence length before committing a long run.
+
+    Raises ``ValueError`` for inputs the formula has no meaning for.
     """
-    weights = params_billion * bits / 8.0 * 1.15
+    # Checked up front because the formula takes a square root of the model
+    # size: a negative size gives a complex number and the caller would only
+    # see an unrelated TypeError from round(). ``not (x > 0)`` also rejects NaN.
+    if not (params_billion > 0):
+        raise ValueError(f"params_billion must be greater than 0, got {params_billion!r}")
+    if bits not in (4, 8, 16, 32):
+        raise ValueError(f"bits must be one of 4, 8, 16 or 32, got {bits!r}")
+    if not (batch_size >= 1):
+        raise ValueError(f"batch_size must be at least 1, got {batch_size!r}")
+    if not (seq_len >= 1):
+        raise ValueError(f"seq_len must be at least 1, got {seq_len!r}")
+    weights =params_billion * bits / 8.0 * 1.15
     tokens = batch_size * seq_len
     activations = 0.45 * (params_billion ** 0.5) * (tokens / 2048.0)
     if not gradient_checkpointing:
@@ -58,7 +71,7 @@ def largest_model_that_fits(memory_gb: float, bits: int = 4, batch_size: int = 2
     lo, hi = 0.0, 200.0
     budget = memory_gb * headroom
     for _ in range(40):
-        mid = (lo + hi) / 2
+        mid = (lo + hi) / 2  # always above 0, so the estimate's input check never trips here
         if estimate_memory_gb(mid, bits, batch_size, seq_len)["total_gb"] <= budget:
             lo = mid
         else:
@@ -208,6 +221,12 @@ def capacity(hw: HardwareProfile, batch_size: int = 2, seq_len: int = 1024) -> D
 # How each method name maps onto Hugging Face ``peft``. The previous
 # ``peft_methods.py`` re-implemented DoRA, OFT and PiSSA as custom layers that
 # the training path never used; ``peft`` ships maintained versions of all three.
+#
+# Every key here is offered to API callers, so each one must build a working
+# ``peft`` config from the arguments of ``lora_config`` alone (the tests check
+# every key against the installed ``peft``). LoftQ is left out for that reason:
+# ``peft`` rejects it without a ``loftq_config``, and it also needs the
+# unquantised base model, which a fine-tune request does not carry.
 PEFT_METHODS: Dict[str, dict] = {
     "lora": {"config": "LoraConfig", "kwargs": {}, "tier": "default"},
     "qlora": {"config": "LoraConfig", "kwargs": {}, "tier": "default",
@@ -218,8 +237,6 @@ PEFT_METHODS: Dict[str, dict] = {
     "pissa": {"config": "LoraConfig", "kwargs": {"init_lora_weights": "pissa_niter_16"}, "tier": "advanced",
               "note": "SVD initialisation; use a lower learning rate than plain LoRA"},
     "olora": {"config": "LoraConfig", "kwargs": {"init_lora_weights": "olora"}, "tier": "advanced"},
-    "loftq": {"config": "LoraConfig", "kwargs": {"init_lora_weights": "loftq"}, "tier": "advanced",
-              "note": "needs the unquantised base model passed in"},
     "oft": {"config": "OFTConfig", "kwargs": {}, "tier": "niche"},
 }
 
@@ -228,14 +245,21 @@ DEFAULT_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "
 
 def lora_config(method: str = "lora", rank: int = 16, alpha: Optional[int] = None, dropout: float = 0.0,
                 target_modules: Optional[List[str]] = None, task_type: str = "CAUSAL_LM",
-                auto_rslora: bool = True) -> Tuple[str, dict, List[str]]:
+                auto_rslora: bool = False) -> Tuple[str, dict, List[str]]:
     """Return ``(config_class_name, kwargs, notes)`` for Hugging Face ``peft``.
 
-    ``auto_rslora`` turns on rank-stabilised scaling when rank >= 32: with the
-    standard alpha/rank scaling the update shrinks as rank grows, and rsLoRA
-    was the only variant in the PEFT project's own benchmark to improve on
-    plain LoRA at no memory or time cost. That benchmark is a single run per
-    method, so the default is cheap to adopt, not proven.
+    The rank and alpha that are asked for are the rank and alpha that come
+    back: by default nothing here changes how the adapter is scaled.
+
+    Rank-stabilised scaling (rsLoRA) is opt-in, either with the ``"rslora"``
+    method or with ``auto_rslora=True``, which turns it on for LoRA, QLoRA and
+    DoRA when rank >= 32. It is not a free switch. It changes the adapter scale
+    from alpha/rank to alpha/sqrt(rank): with alpha = 2 * rank, rank 64 goes
+    from a scale of 2 to a scale of 16, an 8 times larger effective update at
+    the same learning rate. The PEFT project's benchmark shows rsLoRA ahead of
+    plain LoRA, but that is one untuned run per method and the gain may simply
+    be the larger step, so re-tune the learning rate whenever it is enabled.
+    The returned notes say so each time ``use_rslora`` is set.
     """
     key = method.lower()
     if key not in PEFT_METHODS:
@@ -252,7 +276,11 @@ def lora_config(method: str = "lora", rank: int = 16, alpha: Optional[int] = Non
     kwargs.update(spec["kwargs"])
     if auto_rslora and rank >= 32 and "use_rslora" not in kwargs and key in ("lora", "qlora", "dora"):
         kwargs["use_rslora"] = True
-        notes.append("rank >= 32: rank-stabilised scaling (use_rslora) enabled")
+    if kwargs.get("use_rslora"):
+        # Said for the explicit method as well as the automatic switch: either
+        # way the same rank and alpha now mean a different effective step size.
+        notes.append("rank-stabilised scaling (use_rslora) is on: the adapter scale is alpha/sqrt(rank) instead "
+                     "of alpha/rank, so re-tune the learning rate")
     return "LoraConfig", kwargs, notes
 
 
