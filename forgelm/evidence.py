@@ -63,7 +63,10 @@ EVIDENCE: Dict[str, dict] = {
     },
     "e3-int8": {
         "level": "measured",
-        "claim": "PENDING",
+        "claim": "Exporting fine-tuned Banking77 classifiers to ONNX fp32 kept every decision (100% agreement) and cut "
+                 "single-text latency from 6.1 to 2.1 ms (MiniLM-L6) and 34 to 23 ms (ModernBERT-base) on CPU. Dynamic "
+                 "int8 made MiniLM 4x smaller with 98.0% agreement and 0.9 points lost (just failing a 98% gate), but "
+                 "broke ModernBERT: 87.1% agreement and 7.9 points lost. The parity gate caught both and recommended fp32.",
         "source": "experiments/results/e3_compression.json",
     },
     "e4-tabular": {

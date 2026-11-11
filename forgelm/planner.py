@@ -253,9 +253,11 @@ def _plan_text_classification(task: TaskSpec, c: Constraints, hw: HardwareProfil
         plan.warnings.append("latency figures were measured on one 4-core x86 machine; re-measure on the target")
     if dcls == "cpu":
         plan.deployment.append("static / TF-IDF students: serve the numpy head directly (no torch, no ONNX)")
-        plan.deployment.append("encoder students: export to ONNX fp32 and serve with ONNX Runtime")
+        plan.deployment.append("encoder students: export to ONNX fp32 and serve with ONNX Runtime (lossless and "
+                               "1.4-3x faster per text than PyTorch in E3)")
         vnni = "has VNNI" if deploy.has_vnni else "has no VNNI: quantise with reduce_range"
-        plan.deployment.append(f"int8: only after the parity gate passes; this CPU {vnni}")
+        plan.deployment.append(f"int8: only after the parity gate passes; this CPU {vnni}. Dynamic int8 lost 7.9 "
+                               "points on ModernBERT in E3, so never ship it unchecked")
     elif dcls == "apple":
         plan.deployment.append("encoder students: PyTorch MPS in fp32, or ONNX Runtime CPU (arm64) for portability")
     else:

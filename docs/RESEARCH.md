@@ -127,7 +127,11 @@ hypothesis to test, not a result.
   labels and the student never trains on.
 - `forgelm.metrics` covers calibration, abstention and cascade simulation, and
   reports whether escalation actually helps.
-- `forgelm.compress.export_and_gate` refuses an int8 export that drifts.
+- `forgelm.compress.export_and_gate` refuses an int8 export that drifts. In E3
+  it did exactly that: dynamic int8 kept 98.0% of a fine-tuned MiniLM's
+  decisions (just under the 98% bar) but only 87.1% of ModernBERT-base's,
+  losing 7.9 points of accuracy, while ONNX fp32 was lossless for both and
+  1.4 to 3 times faster per text than PyTorch on a CPU. **[measured]**
 
 ## 3. Tabular foundation models
 

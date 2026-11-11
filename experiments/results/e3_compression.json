@@ -1,0 +1,206 @@
+{
+  "experiment": "E3 ONNX export and int8 quantisation behind a parity gate",
+  "gate": {
+    "min_agreement": 0.98,
+    "max_accuracy_drop": 0.01
+  },
+  "deployment_cpu_has_vnni": true,
+  "models": [
+    {
+      "model": "MiniLM-L6 (22M)",
+      "pytorch_fp32": {
+        "metrics": {
+          "n": 3080,
+          "accuracy": 0.9052,
+          "macro_precision": 0.9152,
+          "macro_recall": 0.9052,
+          "macro_f1": 0.9012,
+          "ece": 0.1373,
+          "brier": 0.17,
+          "nll": 0.4628
+        },
+        "size_mb": 90.98,
+        "latency_ms_p50": 6.06,
+        "latency_ms_p95": 8.037,
+        "throughput_per_s": 514.75,
+        "batch_size": 32,
+        "n_items": 400
+      },
+      "onnx_fp32": {
+        "metrics": {
+          "n": 3080,
+          "accuracy": 0.9052,
+          "macro_precision": 0.9152,
+          "macro_recall": 0.9052,
+          "macro_f1": 0.9012,
+          "ece": 0.1373,
+          "brier": 0.17,
+          "nll": 0.4628
+        },
+        "size_mb": 91.09,
+        "parity": {
+          "passed": true,
+          "agreement": 1.0,
+          "reference_accuracy": 0.9052,
+          "candidate_accuracy": 0.9052,
+          "accuracy_drop": 0.0,
+          "max_prob_delta": 0.0,
+          "reasons": []
+        },
+        "latency_ms_p50": 2.084,
+        "latency_ms_p95": 3.252,
+        "throughput_per_s": 393.708,
+        "batch_size": 32,
+        "n_items": 400
+      },
+      "onnx_int8": {
+        "metrics": {
+          "n": 3080,
+          "accuracy": 0.8964,
+          "macro_precision": 0.8944,
+          "macro_recall": 0.8964,
+          "macro_f1": 0.8922,
+          "ece": 0.1371,
+          "brier": 0.1765,
+          "nll": 0.478
+        },
+        "size_mb": 23.05,
+        "parity": {
+          "passed": false,
+          "agreement": 0.9795,
+          "reference_accuracy": 0.9052,
+          "candidate_accuracy": 0.8964,
+          "accuracy_drop": 0.0088,
+          "max_prob_delta": 0.4346,
+          "reasons": [
+            "decision agreement 0.9795 below 0.98"
+          ]
+        },
+        "latency_ms_p50": 1.574,
+        "latency_ms_p95": 2.426,
+        "throughput_per_s": 883.931,
+        "batch_size": 32,
+        "n_items": 400
+      },
+      "recommended": {
+        "artefact": "onnx_fp32",
+        "reason": "smallest artefact that passed the parity gate"
+      }
+    },
+    {
+      "model": "ModernBERT-base (149M)",
+      "pytorch_fp32": {
+        "metrics": {
+          "n": 3080,
+          "accuracy": 0.9308,
+          "macro_precision": 0.9335,
+          "macro_recall": 0.9308,
+          "macro_f1": 0.9308,
+          "ece": 0.0228,
+          "brier": 0.106,
+          "nll": 0.2698
+        },
+        "size_mb": 598.67,
+        "latency_ms_p50": 33.682,
+        "latency_ms_p95": 43.904,
+        "throughput_per_s": 66.05,
+        "batch_size": 32,
+        "n_items": 400
+      },
+      "onnx_fp32": {
+        "metrics": {
+          "n": 3080,
+          "accuracy": 0.9308,
+          "macro_precision": 0.9335,
+          "macro_recall": 0.9308,
+          "macro_f1": 0.9308,
+          "ece": 0.0228,
+          "brier": 0.106,
+          "nll": 0.2698
+        },
+        "size_mb": 599.3,
+        "parity": {
+          "passed": true,
+          "agreement": 1.0,
+          "reference_accuracy": 0.9308,
+          "candidate_accuracy": 0.9308,
+          "accuracy_drop": 0.0,
+          "max_prob_delta": 0.0,
+          "reasons": []
+        },
+        "latency_ms_p50": 23.412,
+        "latency_ms_p95": 34.231,
+        "throughput_per_s": 52.565,
+        "batch_size": 32,
+        "n_items": 400
+      },
+      "onnx_int8": {
+        "metrics": {
+          "n": 3080,
+          "accuracy": 0.8523,
+          "macro_precision": 0.8682,
+          "macro_recall": 0.8523,
+          "macro_f1": 0.8516,
+          "ece": 0.0618,
+          "brier": 0.2239,
+          "nll": 0.5697
+        },
+        "size_mb": 150.75,
+        "parity": {
+          "passed": false,
+          "agreement": 0.8714,
+          "reference_accuracy": 0.9308,
+          "candidate_accuracy": 0.8523,
+          "accuracy_drop": 0.0786,
+          "max_prob_delta": 0.9789,
+          "reasons": [
+            "accuracy dropped 0.0786 (limit 0.01)",
+            "decision agreement 0.8714 below 0.98"
+          ]
+        },
+        "latency_ms_p50": 8.073,
+        "latency_ms_p95": 13.077,
+        "throughput_per_s": 123.416,
+        "batch_size": 32,
+        "n_items": 400
+      },
+      "recommended": {
+        "artefact": "onnx_fp32",
+        "reason": "smallest artefact that passed the parity gate"
+      }
+    }
+  ],
+  "environment": {
+    "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+    "cores": 4,
+    "ram_gb": 15.71,
+    "device_class": "cpu",
+    "cpu_flags": [
+      "avx",
+      "avx2",
+      "avx512f",
+      "avx512bw",
+      "avx512_vnni",
+      "avx_vnni",
+      "amx_int8",
+      "amx_bf16",
+      "fma",
+      "f16c"
+    ],
+    "python": "3.13.18",
+    "packages": {
+      "torch": "2.15.0",
+      "transformers": "5.22.2",
+      "peft": "0.21.2",
+      "sentence_transformers": "6.2.0",
+      "model2vec": "0.10.0",
+      "onnxruntime": "1.29.0",
+      "sklearn": "1.9.1",
+      "lightgbm": "4.7.0",
+      "interpret": "0.7.8",
+      "tabicl": "2.2.0"
+    },
+    "note": "shared 4-core cloud VM; latency figures are indicative, not a controlled benchmark"
+  },
+  "generated_utc": "2026-11-11T15:50:11Z"
+}

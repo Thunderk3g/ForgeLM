@@ -103,6 +103,23 @@ Reference points on the same anchor (human labels):
 | frozen bge-small + LR | same 2000 texts, human labels | 91.2% |
 | frozen bge-small + LR | 8 human labels per class (616 labels, mean of 3 seeds) | 85.9% ± 1.2 |
 
+## E3. ONNX export and int8 quantisation behind a parity gate
+
+**Question.** After export and int8 quantisation, is it still the same classifier, and how much faster and smaller is it?
+
+**Setup.** Fine-tuned Banking77 classifiers from E1. Gate: decision agreement with the PyTorch model at least 98% and accuracy drop at most 1 point, on all 3,080 test texts. This CPU has VNNI.
+
+| Model | Format | Accuracy | Agreement with PyTorch | MB | p50 ms / text | texts / s (batch 32) | Gate |
+|---|---|---|---|---|---|---|---|
+| MiniLM-L6 (22M) | PyTorch fp32 | 90.5% | reference | 91 | 6.1 | 515 |  |
+| MiniLM-L6 (22M) | ONNX fp32 | 90.5% | 100.0% | 91 | 2.1 | 394 | pass |
+| MiniLM-L6 (22M) | ONNX int8 | 89.6% | 98.0% | 23 | 1.6 | 884 | FAIL: decision agreement 0.9795 below 0.98 |
+| MiniLM-L6 (22M) | **recommended** |  |  |  |  |  | onnx_fp32 |
+| ModernBERT-base (149M) | PyTorch fp32 | 93.1% | reference | 599 | 33.7 | 66 |  |
+| ModernBERT-base (149M) | ONNX fp32 | 93.1% | 100.0% | 599 | 23.4 | 53 | pass |
+| ModernBERT-base (149M) | ONNX int8 | 85.2% | 87.1% | 151 | 8.1 | 123 | FAIL: accuracy dropped 0.0786 (limit 0.01); decision agreement 0.8714 below 0.98 |
+| ModernBERT-base (149M) | **recommended** |  |  |  |  |  | onnx_fp32 |
+
 ## E4. Tabular: classical models against an in-context foundation model
 
 **Question.** On risk-style tables, which model family wins at each training-set size, how well calibrated is it, and what does inference cost?
