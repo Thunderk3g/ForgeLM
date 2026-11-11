@@ -22,8 +22,8 @@ import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { factoryApi } from "@/lib/factory-api"
 import { DEFAULT_LIMITS, fmtNumber, humanize, locateSpan, nonBlankLines } from "@/lib/factory-utils"
-import { useFactoryAction, useFactoryQuery } from "@/hooks/useFactoryRequest"
-import type { ReviewCallResponse, ReviewFlag } from "@/types/factory"
+import { useFactoryAction, type QueryResult } from "@/hooks/useFactoryRequest"
+import type { ClassifierListResponse, ReviewCallResponse, ReviewFlag } from "@/types/factory"
 import { EmptyState, ErrorState, Field, InputProblems, LoadingState } from "./factory-shared"
 
 const NO_CLASSIFIER = "__rules_only__"
@@ -242,7 +242,7 @@ function ReviewResult({ result, utterances }: { result: ReviewCallResponse; utte
   )
 }
 
-export function CallReviewTab() {
+export function CallReviewTab({ classifiers }: { classifiers: QueryResult<ClassifierListResponse> }) {
   const uid = useId()
   const [text, setText] = useState("")
   const [classifier, setClassifier] = useState(NO_CLASSIFIER)
@@ -251,7 +251,6 @@ export function CallReviewTab() {
   const [problems, setProblems] = useState<string[]>([])
   const [sent, setSent] = useState<string[]>([])
   const review = useFactoryAction(factoryApi.reviewCall)
-  const classifiers = useFactoryQuery("all", factoryApi.listClassifiers)
 
   const lines = nonBlankLines(text)
 

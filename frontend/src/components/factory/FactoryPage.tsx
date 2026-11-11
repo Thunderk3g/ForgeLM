@@ -52,6 +52,9 @@ function ServiceStatus({ loading, error }: { loading: boolean; error: unknown })
 export default function FactoryPage({ onNavigate }: FactoryPageProps) {
   const probe = useFactoryQuery("this-machine", probeThisMachine)
   const referenceProfiles = probe.data?.reference_profiles ?? []
+  // Shared by the Classifiers and Call review tabs, so a classifier trained
+  // in one is offered in the other without a reload.
+  const classifiers = useFactoryQuery("all", factoryApi.listClassifiers)
 
   return (
     <div className="min-h-screen bg-background">
@@ -105,6 +108,8 @@ export default function FactoryPage({ onNavigate }: FactoryPageProps) {
           </Badge>
         </div>
 
+        {/* Every tab stays mounted (hidden when inactive) so a plan, a training
+            result or a review survives a look at another tab. */}
         <Tabs defaultValue="hardware" className="gap-6">
           <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4 lg:w-fit" aria-label="Factory tools">
             <TabsTrigger value="hardware" className="py-1.5">
@@ -120,17 +125,17 @@ export default function FactoryPage({ onNavigate }: FactoryPageProps) {
               Call review
             </TabsTrigger>
           </TabsList>
-          <TabsContent value="hardware">
+          <TabsContent value="hardware" forceMount className="data-[state=inactive]:hidden">
             <HardwareTab probe={probe} />
           </TabsContent>
-          <TabsContent value="plan">
+          <TabsContent value="plan" forceMount className="data-[state=inactive]:hidden">
             <PlanTab referenceProfiles={referenceProfiles} />
           </TabsContent>
-          <TabsContent value="classifiers">
-            <ClassifiersTab />
+          <TabsContent value="classifiers" forceMount className="data-[state=inactive]:hidden">
+            <ClassifiersTab list={classifiers} />
           </TabsContent>
-          <TabsContent value="review">
-            <CallReviewTab />
+          <TabsContent value="review" forceMount className="data-[state=inactive]:hidden">
+            <CallReviewTab classifiers={classifiers} />
           </TabsContent>
         </Tabs>
       </main>

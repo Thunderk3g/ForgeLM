@@ -642,8 +642,7 @@ function ModelCard({ card }: { card: ClassifierCardResponse }) {
   )
 }
 
-export function ClassifiersTab() {
-  const list = useFactoryQuery("all", factoryApi.listClassifiers)
+export function ClassifiersTab({ list }: { list: QueryResult<ClassifierListResponse> }) {
   const [selected, setSelected] = useState<string | null>(null)
   const card = useFactoryQuery(selected, factoryApi.classifierCard)
   const [lastTrained, setLastTrained] = useState<TrainResponse | null>(null)

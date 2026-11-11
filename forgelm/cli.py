@@ -221,6 +221,9 @@ def cmd_finetune(args) -> int:
     except (ValueError, OSError) as exc:
         print(f"cannot fine-tune: {exc}", file=sys.stderr)
         return 2
+    if args.eval_exact and not evaluation:
+        print("--eval-exact needs --eval-data", file=sys.stderr)
+        return 2
     out = Path(args.out)
     if args.backend == "mlx":
         # Nothing is trained here: mlx-lm runs only on Apple Silicon, so this
@@ -239,8 +242,14 @@ def cmd_finetune(args) -> int:
             print(f"step {step}/{total}  loss {loss:.4f}", file=sys.stderr, flush=True)
 
     adapter_dir = out / "adapter"
-    result = finetune_lora(recipe, train, str(adapter_dir), eval_records=evaluation, device=args.device,
-                           on_progress=progress)
+    try:
+        result = finetune_lora(recipe, train, str(adapter_dir), eval_records=evaluation, device=args.device,
+                               on_progress=progress)
+    except ValueError as exc:
+        # The model has no chat template, its template cannot be masked, or
+        # no example fits in --max-seq-len: each message says what to change.
+        print(f"cannot fine-tune: {exc}", file=sys.stderr)
+        return 2
     summary = {"adapter": str(adapter_dir), "device": result["device"], "dtype": result["dtype"],
                "steps": result["steps"], "seconds": round(result["seconds"], 1),
                "first_loss": round(result["loss_history"][0], 4), "last_loss": round(result["loss_history"][-1], 4),
@@ -252,9 +261,6 @@ def cmd_finetune(args) -> int:
         merged = merge_adapter(recipe.base_model, str(adapter_dir), str(out / "merged"))
         summary["merged"] = merged["out_dir"]
         if args.eval_exact:
-            if not evaluation:
-                print("--eval-exact needs --eval-data", file=sys.stderr)
-                return 2
             from .finetune import load_model
 
             model, tokenizer = load_model(merged["out_dir"], device=args.device)
